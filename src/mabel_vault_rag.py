@@ -66,11 +66,10 @@ def _read_snapshot(root: Path) -> dict[str, tuple[str, str]]:
                     continue
                 try:
                     if file.stat().st_size > MAX_NOTE_BYTES:
-                        log.warning("Skipping oversize Mabel note: %s", file)
-                        continue
+                        raise RuntimeError(f"Mabel vault note exceeds {MAX_NOTE_BYTES} bytes: {file}")
                     raw = file.read_bytes()
                     if len(raw) > MAX_NOTE_BYTES:
-                        continue
+                        raise RuntimeError(f"Mabel vault note grew while scanning: {file}")
                     text = raw.decode("utf-8-sig")
                     relative = file.relative_to(root).as_posix()
                     notes[relative] = (hashlib.sha256(raw).hexdigest(), text)
