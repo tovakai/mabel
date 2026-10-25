@@ -111,71 +111,22 @@ scheduled execution before claiming this behavior works.
 
 
 
-### Proposed co-located Obsidian vault + Git checkout (Syncthing)
+### One-root vault layout: Git + Obsidian + Syncthing
 
-The operator proposes that the **same on-disk directory** be both the root
-of the `tovakai/mabel` Git checkout **and** the `mabel-vault` Obsidian
-vault, replicated through Syncthing. This is a deployment proposal, not
-an implemented feature; it is distinct from creating a separate nested
-`vault/` directory.
+**Chosen and scaffolded in this branch:** the top-level `tovakai/mabel`
+checkout is also the Obsidian `mabel-vault` root. A tracked `.stignore`
+allows Syncthing to transfer only `memory/`, `identity/`, `knowledge/`,
+`projects/`, `journal/` and `attachments/`. The application source uses
+Git on each machine; live databases, caches, `.git/` and `.obsidian/`
+are device-local. `.gitignore` protects untracked private knowledge from
+the public Git repository and `.dockerignore` keeps it out of image builds.
 
-It is technically possible but has a substantial maintenance cost: this
-checkout contains thousands of application files, Python source, tests,
-Markdown documentation and JavaScript. Obsidian will see application
-Markdown beside personal notes, and an unfiltered Syncthing folder would
-transfer source/build/runtime content that should be managed by Git or
-kept machine-local.
+This layout does **not** automatically synchronize chat sessions or index
+the vault into Odysseus RAG. Those remain separate services/workflows. Do not
+copy live SQLite or ChromaDB data via Syncthing.
 
-**Recommended alternative:** keep `tovakai/mabel` as a normal Git checkout
-on each device and use a separate Syncthing-synchronized `mabel-vault/`
-Obsidian folder. This avoids branch switches, builds and dependencies
-appearing as file-sync operations. The vault can live *beside* the checkout
-and be referenced by an environment setting / registered workspace.
-The application's Git repository does not need to contain private notes.
-
-**If using the exact same root anyway:**
-
-- `git` owns the code history and branches; **never Syncthing-sync `.git/`**.
-  Maintain the Git clone/branch locally on each machine. Avoid simultaneous
-  branch changes or build output in a shared working tree.
-- Syncthing is for knowledge notes, attachments and optionally carefully
-  selected Obsidian settings. Exclude per-device workspace layouts, tokens,
-  caches, virtual environments, dependencies and runtime databases.
-- Separate recognizable user-owned note directories from Odysseus source
-  directories. **Add private vault directories to `.gitignore` before
-  populating them**, since `tovakai/mabel` is public. Existing tracked
-  files are not protected retroactively by ignore rules.
-- Do **not** Syncthing-live-sync SQLite databases, ChromaDB storage, model
-  weights/cache paths or app/session state as if they were regular Markdown.
-  Use each host's local runtime DB, or an explicit single-host service.
-  In particular, synchronizing vault Markdown does **not** automatically
-  synchronize Odysseus chat sessions: those need a shared coordinator,
-  or a separately designed append-only conversation exchange mechanism.
-- Every device needs a compatible `.stignore`: Syncthing does **not** sync
-  the ignore file itself. Configure and review it on each device **before**
-  sharing the folder. A missing/incorrect ignore file can publish or delete
-  unintended content across devices.
-- `.obsidian/workspace.json` and `.obsidian/workspaces.json` are
-  per-device and frequently modified; exclude them from Sync and Git.
-  Obsidian plugin `data.json` may contain host URLs and credentials: do
-  not commit it or blindly sync it.
-- Exclude application Markdown/source from Obsidian search/graph and from the
-  knowledge RAG index. `README.md`, `docs/`, `plans/` and `specs/`
-  are application documentation, not Mabel's autobiographical memory.
-- Syncthing carries file changes, **not a distributed transaction/lock**;
-  simultaneous note edits can create conflicts. Use versioning/backups
-  and test reconciliation on a disposable vault.
-
-`.gitignore` and `.stignore` solve **different** problems: the former
-prevents Git from adding untracked private vault data, and the latter controls
-what physically syncs between devices. Neither makes a live application
-database safe for multi-writer replication.
-
-Before choosing co-location as the permanent layout, validate it on two
-machines with an expendable vault: code checkout, plugin settings, note edits
-from both machines, app startup, branch switch, indexing/reindexing and
-conflict recovery. Do not migrate the real vault based on the directory
-structure alone.
+**Setup steps, exceptions, recovery and required per-device ignore rules:**
+[docs/mabel-vault-layout.md](mabel-vault-layout.md).
 
 ### One important networking gotcha
 
