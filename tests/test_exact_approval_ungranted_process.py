@@ -180,7 +180,7 @@ def test_same_request_rebinding_narrows_without_becoming_a_child(tmp_path):
         with bind_request_authority(restricted) as same_request:
             assert same_request.request_id == parent.request_id
             assert same_request.inherited is False
-            assert not same_request.permits(ExactOperation.normalize("read_file", "notes.md"))
+            assert not same_request.permits(ExactOperation.normalize("read_file", '{"path":"notes.md"}'))
 
         # A different request is a true child even with the same workspace.
         other_request = replace(parent, request_id="different-request")
