@@ -87,11 +87,12 @@ def test_scans_only_six_private_markdown_roots(root):
 
 def test_incremental_updates_delete_old_chunks_without_touching_other_owners(root):
     note = add(root, "memory/hello.md", "old one|old two")
+    add(root, "identity/preserve.md", "keep this")
     rag = FakeRag()
     collection = rag._lanes[0].collection
     first = sync(rag, root)
-    assert first["indexed"] == 2
-    assert len(collection.rows) == 2
+    assert first["indexed"] == 3
+    assert len(collection.rows) == 3
     other = "unrelated-doc"
     collection.rows[other] = {
         "document": "private foreign content",
@@ -102,20 +103,21 @@ def test_incremental_updates_delete_old_chunks_without_touching_other_owners(roo
         },
     }
     same = sync(rag, root)
-    assert same["unchanged"] == 1
+    assert same["unchanged"] == 2
     assert same["indexed"] == 0
 
     note.write_text("new one", encoding="utf-8")
     changed = sync(rag, root)
     assert changed["indexed"] == 1
-    assert len(collection.rows) == 2
+    assert len(collection.rows) == 3
     assert other in collection.rows
     assert all("old" not in row["document"] for i, row in collection.rows.items() if i != other)
 
     note.unlink()
     result = sync(rag, root)
     assert result["removed"] == 1
-    assert list(collection.rows) == [other]
+    assert other in collection.rows
+    assert len(collection.rows) == 2
 
 
 def test_missing_folder_never_triggers_deletion(root):
