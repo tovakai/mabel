@@ -187,6 +187,14 @@ def test_same_request_rebinding_narrows_without_becoming_a_child(tmp_path):
         with bind_request_authority(other_request) as child:
             assert child.inherited is True
 
+        # Matching request IDs alone are insufficient to rebind across
+        # different session/owner/workspace identities.
+        other_session = RequestAuthority(parent.request_id, "alice", "different-session",
+                                         parent.workspace, parent.grants)
+        with bind_request_authority(other_session) as child:
+            assert child.inherited is True
+            assert child.grants == ()
+
     # Already-inherited state must never be reset by a same-ID rebind.
     inherited_parent = replace(parent, inherited=True)
     with bind_request_authority(inherited_parent):
