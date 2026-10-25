@@ -123,3 +123,29 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Mabel vault: checkout root doubles as the Obsidian vault root.
+# These folders contain PRIVATE knowledge replicated with Syncthing.
+# The public Git repository tracks only their .gitkeep scaffolding.
+# Git ignores do not protect already-tracked files or forced additions.
+# Do not commit private notes / embeddings / secrets.
+/memory/**
+!/memory/.gitkeep
+/identity/**
+!/identity/.gitkeep
+/knowledge/**
+!/knowledge/.gitkeep
+/projects/**
+!/projects/.gitkeep
+/journal/**
+!/journal/.gitkeep
+/attachments/**
+!/attachments/.gitkeep
+
+# Per-device Obsidian state, plugins and credentials.
+# Obsidian will create this when the repository root is opened as a vault.
+/.obsidian/
+
+# Machine-specific Syncthing runtime metadata is never committed.
+/.stfolder
+/.stversions/
