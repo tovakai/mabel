@@ -121,9 +121,10 @@ Git on each machine; live databases, caches, `.git/` and `.obsidian/`
 are device-local. `.gitignore` protects untracked private knowledge from
 the public Git repository and `.dockerignore` keeps it out of image builds.
 
-This layout does **not** automatically synchronize chat sessions or index
-the vault into Odysseus RAG. Those remain separate services/workflows. Do not
-copy live SQLite or ChromaDB data via Syncthing.
+This layout does **not** synchronize chat sessions through Syncthing.
+An opt-in, incremental owner-scoped RAG synchronizer is now wired to the six
+private note folders and uses local ChromaDB. Do not copy live SQLite or
+ChromaDB data via Syncthing. See [setup and indexing](mabel-vault-layout.md).
 
 **Setup steps, exceptions, recovery and required per-device ignore rules:**
 [docs/mabel-vault-layout.md](mabel-vault-layout.md).
@@ -267,11 +268,11 @@ unset ODYSSEUS_API_TOKEN
 | --- | --- |
 | Chat, sessions, model selection | Upstream API; verify end-to-end |
 | Agent, vault MCP tools | Upstream MCP; connection and permissions must be configured |
-| Odysseus document RAG | Upstream; index test notes separately |
+| Odysseus document RAG | Upstream + opt-in incremental six-folder Mabel vault sync; not live-tested |
 | Memory / skills | Upstream; `no_skills` context flag now honored |
 | Full Agent Profiles / pinned tool pools | **Not implemented yet**; don't advertise as working |
 | Voice | Existing upstream STT/TTS routes; configuration/UI parity unverified |
-| Automatic vault change sync | **Not implemented yet** |
+| Automatic vault change sync | Polling-based Markdown content-hash sync, owner-scoped, opt-in; not live-tested |
 | Active-device interactive inference / desktop task offload | Target architecture; automatic device-aware routing **not implemented yet** |
 | Remote intern with local fallback | Optional background accelerator; **not implemented yet** |
 
@@ -286,7 +287,8 @@ unset ODYSSEUS_API_TOKEN
   always-on desktop for heavyweight/background tasks, safe desktop fallback.
   Never let arbitrary client-supplied URLs bypass endpoint authorization.
 - Secure native-vs-Docker / cross-host MCP transport.
-- Add Obsidian-aware Markdown chunking, frontmatter and wikilink extraction,
-  with incremental updates/removal and retrieval provenance.
+- Improve Obsidian-aware Markdown chunking, frontmatter and wikilink extraction.
+  The initial incremental Markdown scanner preserves paths and includes
+  frontmatter as text, but is not yet syntax-aware.
 - Test agent read/write behavior against a throwaway vault and keep write access
   opt-in. Document one-click recovery/backup before enabling automated cleanup.
