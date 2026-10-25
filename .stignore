@@ -1,0 +1,44 @@
+// Mabel vault root also contains the Odysseus source repository.
+// Only synchronize the Obsidian knowledge folders below.
+// Code is updated using Git on each device; runtime DBs remain local.
+//
+// First matching rule wins. Keep the protected patterns BEFORE the includes.
+// Syncthing NEVER synchronizes .stignore itself. Each device needs this file.
+// Check Syncthing -> Folder -> Edit -> Ignore Patterns before first scan.
+
+// Never sync common temp files, credentials or live databases,
+// including if someone accidentally saves them inside a vault note folder.
+(?d).DS_Store
+(?d)Thumbs.db
+(?d)*.swp
+(?d)*.swo
+(?d)*~
+.env
+.env.*
+secrets.env
+secrets.env.*
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.pem
+*.key
+
+// Allow only these top-level Obsidian note and attachment collections.
+// Leading / keeps Syncthing from crawling the huge application source tree.
+!/memory
+!/memory/**
+!/identity
+!/identity/**
+!/knowledge
+!/knowledge/**
+!/projects
+!/projects/**
+!/journal
+!/journal/**
+!/attachments
+!/attachments/**
+
+// Ignore everything else (Git metadata, source, dependencies, .obsidian,
+// Docker volumes, logs, models, caches and arbitrary new root files).
+*

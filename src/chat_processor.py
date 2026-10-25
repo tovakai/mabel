@@ -380,6 +380,14 @@ class ChatProcessor:
         if use_rag:
             try:
                 rag_manager = getattr(self.personal_docs_manager, 'rag_manager', None)
+                if rag_manager is None:
+                    # Chroma may start *after* the application: retry lazily
+                    # using the singleton's built-in backoff. This also makes
+                    # the opt-in Mabel vault index queryable after late startup.
+                    from src.rag_singleton import get_rag_manager
+                    rag_manager = get_rag_manager()
+                    if rag_manager is not None:
+                        self.personal_docs_manager.rag_manager = rag_manager
                 if rag_manager:
                     results = rag_manager.search(message, k=5, owner=owner)
                     # Filter by similarity threshold

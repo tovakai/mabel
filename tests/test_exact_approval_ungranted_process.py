@@ -145,3 +145,58 @@ async def test_approved_write_without_a_workspace_lands_in_the_agent_workspace(a
     finally:
         if os.path.exists(written):
             os.remove(written)
+
+
+async def test_approved_ungranted_bash_runs_inside_its_own_request_context(tmp_path):
+    """A resumed approval must survive the dispatcher's nested authority binding.
+
+    Real agent turns enter execute_tool_block with the originating request
+    authority already active. The dispatcher narrows it again before the
+    process producer performs its admission check.
+    """
+    from src.agent_runtime.authority import active_request_authority, bind_request_authority
+
+    authority = _authority(tmp_path, "get_workspace")
+    _, exact = _approve(authority, "bash", "printf nested-approved-run")
+
+    with bind_request_authority(authority):
+        _, result = await _dispatch(authority, "bash", "printf nested-approved-run", exact)
+        assert active_request_authority() is authority
+
+    assert result.get("exit_code") == 0, result
+    assert "nested-approved-run" in str(result.get("output", "")), result
+
+
+def test_same_request_rebinding_narrows_without_becoming_a_child(tmp_path):
+    from dataclasses import replace
+    from src.agent_runtime.authority import (
+        ExactOperation, bind_request_authority,
+    )
+
+    parent = _authority(tmp_path, "get_workspace", "read_file")
+    restricted = parent.restrict(disabled_tools={"read_file"})
+
+    with bind_request_authority(parent):
+        with bind_request_authority(restricted) as same_request:
+            assert same_request.request_id == parent.request_id
+            assert same_request.inherited is False
+            assert not same_request.permits(ExactOperation.normalize("read_file", '{"path":"notes.md"}'))
+
+        # A different request is a true child even with the same workspace.
+        other_request = replace(parent, request_id="different-request")
+        with bind_request_authority(other_request) as child:
+            assert child.inherited is True
+
+        # Matching request IDs alone are insufficient to rebind across
+        # different session/owner/workspace identities.
+        other_session = RequestAuthority(parent.request_id, "alice", "different-session",
+                                         parent.workspace, parent.grants)
+        with bind_request_authority(other_session) as child:
+            assert child.inherited is True
+            assert child.grants == ()
+
+    # Already-inherited state must never be reset by a same-ID rebind.
+    inherited_parent = replace(parent, inherited=True)
+    with bind_request_authority(inherited_parent):
+        with bind_request_authority(inherited_parent) as child:
+            assert child.inherited is True

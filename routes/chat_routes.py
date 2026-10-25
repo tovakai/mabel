@@ -3031,6 +3031,12 @@ def setup_chat_routes(
 
         image_generation_session = _is_image_generation_session(sess, owner=effective_user(request))
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+        # Obsidian Companion sends no_skills as a per-turn form field. Suppress
+        # skills-index context for that turn without changing tool permissions.
+        from src.companion_compat import include_agent_skills_index
+        no_skills = form_data.get("no_skills")
+        if no_skills is None and isinstance(body, dict):
+            no_skills = body.get("no_skills")
         if image_generation_session:
             no_memory = True
             use_rag = "false"
@@ -3096,7 +3102,7 @@ def setup_chat_routes(
             # Skills index only ships when the model can actually call
             # manage_skills (agent mode). In plain chat or incognito the
             # index would be useless / unwanted noise.
-            agent_mode=(chat_mode == "agent"),
+            agent_mode=include_agent_skills_index(chat_mode, no_skills),
             allow_tool_preprocessing=allow_tool_preprocessing,
             defer_context_shaping=foreground_policy.enabled,
             continuation_context_message=(
