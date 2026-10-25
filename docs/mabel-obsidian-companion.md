@@ -162,7 +162,8 @@ The optional smoke checker validates token-authenticated Mabel reachability
 and Obsidian-origin streaming CORS without printing your token:
 
 ```sh
-export ODYSSEUS_API_TOKEN='paste-token-into-shell-privately'
+read -rs -p 'Odysseus API token: ' ODYSSEUS_API_TOKEN; echo
+export ODYSSEUS_API_TOKEN
 python scripts/check_obsidian_companion.py --url http://localhost:7011
 unset ODYSSEUS_API_TOKEN
 ```
