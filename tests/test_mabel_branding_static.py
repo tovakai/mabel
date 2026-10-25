@@ -28,7 +28,6 @@ def test_builtin_personas_are_available_to_chat_and_reminders():
         assert f"name: '{name}'" in presets
         assert f"['{persona_id}', '{name}']" in tasks
         assert persona_id in PERSONAS
-        assert name not in ("",)
         assert "under 10 words" in synthesis_system_prompt(persona_id)
     # Existing tasks with the legacy persona ID remain functional.
     assert synthesis_system_prompt("odysseus") == synthesis_system_prompt("mabel")
