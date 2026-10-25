@@ -22,6 +22,7 @@ import time
 import logging
 import hashlib
 from src.web_recovery import WebRecoveryBudget
+from src.workspace_edit_completion import verified_markdown_migration_summary
 from itertools import count
 from datetime import date, datetime, timedelta
 from dataclasses import replace
@@ -36051,6 +36052,25 @@ async def stream_agent_loop(
                 logger.info(
                     "[agent] preserving substantive answer after failed trailing tool batch"
                 )
+                break
+
+        # For an explicit Markdown frontmatter migration, a verified,
+        # scoped tool receipt is stronger than an additional model round.
+        # Never treat a generic successful edit as completion: the helper
+        # requires every discovered note to have been inspected and each
+        # allowed edit to have a later matching readback.
+        if _post_effectful_mutation_done:
+            _metadata_receipt = verified_markdown_migration_summary(
+                _last_user, tool_events
+            )
+            if _metadata_receipt is not None:
+                full_response = _metadata_receipt
+                yield (
+                    "data: "
+                    + json.dumps({"type": "final_response", "content": full_response})
+                    + "\\n\\n"
+                )
+                logger.info("[agent] completed evidence-verified Markdown metadata migration")
                 break
 
         if (
