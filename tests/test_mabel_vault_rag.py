@@ -192,3 +192,13 @@ def test_no_reembedding_when_content_unchanged(root):
     result = sync(rag, root)
     assert result["failed"] == 0
     assert result["unchanged"] == 1
+
+
+def test_oversize_note_does_not_trigger_delete(root):
+    note = add(root, "memory/hello.md", "original")
+    rag = FakeRag()
+    sync(rag, root)
+    note.write_bytes(b"x" * (vault.MAX_NOTE_BYTES + 1))
+    with pytest.raises(RuntimeError, match="exceeds"):
+        sync(rag, root)
+    assert len(rag._lanes[0].collection.rows) == 1
