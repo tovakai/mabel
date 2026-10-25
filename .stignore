@@ -27,11 +27,17 @@ secrets.env.*
 // Allow only these top-level Obsidian note and attachment collections.
 // Leading / keeps Syncthing from crawling the huge application source tree.
 !/memory
+!/memory/**
 !/identity
+!/identity/**
 !/knowledge
+!/knowledge/**
 !/projects
+!/projects/**
 !/journal
+!/journal/**
 !/attachments
+!/attachments/**
 
 // Ignore everything else (Git metadata, source, dependencies, .obsidian,
 // Docker volumes, logs, models, caches and arbitrary new root files).
