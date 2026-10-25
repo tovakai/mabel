@@ -149,6 +149,119 @@ publish your vault to a public Git remote or bake it into a Docker image.
   the graph. The **RAG index must scope itself to the private note folders**,
   rather than indexing every Markdown file in the source tree.
 
+
+## Mabel's Obsidian RAG: wired, opt-in, incremental
+
+This fork now includes `src/mabel_vault_rag.py`, an opt-in background indexer
+for exactly the six private note roots. It uses the existing Odysseus ChromaDB
+embedding lanes and owner-scoped RAG retrieval. It indexes **Markdown only**
+(`.md`), including subfolders and YAML frontmatter as plain text; other
+attachments remain accessible as vault files, but are not embedded yet.
+
+It is **not** a general filesystem indexer: application source, `.git/`,
+`.obsidian/`, the user's separate Obsidian vault, and live databases are
+outside the scope. Indexed excerpts preserve a `vault_path` / `source`
+metadata reference and include the note path in retrieved document text.
+
+**Incremental semantics:**
+
+- The first successful scan hashes and embeds eligible notes in the six roots.
+- Subsequent scans skip unchanged content and update edited notes.
+- Renamed/moved notes are treated as a deletion plus a new note.
+- Removed chunks are deleted **only** if their stored owner, source and Mabel
+  namespace match. Generic Odysseus Personal Docs indexes stay untouched.
+- If any expected root is missing/symlinked, a note is unreadable/oversized,
+  or the manifest points at a different vault root, sync fails closed rather
+  than treating missing content as mass deletion.
+- If an embedding lane is unavailable, the manifest retains the old hash,
+  allowing a retry. RAG retrieval still uses Odysseus' configured embedding
+  fallback lanes where available.
+- The manifest lives at `data/mabel_vault_rag_manifest.json` on each machine;
+  don't sync it with Syncthing. Do not copy ChromaDB live storage between hosts.
+
+### Before installation: check the directory selection
+
+With this Git branch checked out, from the `mabel-vault/` root:
+
+```sh
+python scripts/sync_mabel_vault_rag.py --check
+```
+
+This only lists note counts; it doesn't open ChromaDB or embed anything.
+The pre-install check requires the six directories to exist.
+
+### Native installation configuration
+
+Copy `.env.example` to local `.env` (ignored by Git) and set:
+
+```dotenv
+MABEL_VAULT_RAG_ENABLED=true
+# Leave blank to use the source checkout root, or set an absolute path:
+MABEL_VAULT_ROOT=
+# Include the account(s) who should be allowed to retrieve the private notes.
+# E.g. web login "admin" and API token's effective user "api".
+MABEL_VAULT_RAG_OWNERS=admin,api
+MABEL_VAULT_RAG_POLL_SECONDS=300
+```
+
+**Use your actual account names.** This explicit allowlist controls who can
+retrieve copies of those notes through RAG. Do not enable shared indexing for
+other user accounts. With `MABEL_VAULT_RAG_OWNERS` empty, sync refuses to
+index; it never creates an ownerless, generally readable corpus.
+
+Once Chroma is healthy, the app scans in a background thread shortly after
+startup and every five minutes by default. Indexing does not block chat. To
+perform an immediate one-time sync:
+
+```sh
+python scripts/sync_mabel_vault_rag.py --sync
+```
+
+If this fails because RAG or the embedding provider is unavailable, existing
+Markdown is untouched; retry after fixing the endpoint.
+
+### Docker installation configuration
+
+The Docker image **deliberately excludes private vault notes** via
+`.dockerignore`. To make Syncthing notes visible to the running container,
+use the read-only bind-mount overlay, not an image rebuild:
+
+```dotenv
+MABEL_VAULT_HOST_DIR=/absolute/host/path/to/mabel-vault
+MABEL_VAULT_RAG_ENABLED=true
+MABEL_VAULT_RAG_OWNERS=admin,api
+```
+
+```sh
+export ODYSSEUS_IMAGE=mabel:local
+docker compose -f docker-compose.yml -f docker-compose.mabel-vault.yml build odysseus
+docker compose -f docker-compose.yml -f docker-compose.mabel-vault.yml up -d --no-build
+```
+
+The overlay mounts `MABEL_VAULT_HOST_DIR` read-only as `/mabel-vault` and
+sets `MABEL_VAULT_ROOT=/mabel-vault` **inside the container**. Use a native
+host path on Windows where Docker Desktop can bind mount the folder.
+
+### What still needs validation
+
+The unit tests are committed, but we have not yet executed them or run a live
+Mabel + Syncthing + Chroma deployment. Run:
+
+```sh
+pytest -q tests/test_mabel_vault_rag.py tests/test_mabel_vault_layout.py
+```
+
+Then test an actual new note, edit, move and delete in a disposable vault.
+Switch to Obsidian Companion, enable its **Use RAG** option, and start a new
+session as an owner named in `MABEL_VAULT_RAG_OWNERS`. Ask a question answerable
+only from a test note. A correct answer should include the note as a retrieved
+source. If you don't enable RAG, the automatic index still exists, but it
+won't be injected into normal chat context.
+
+The indexing path is wired now; syntax-aware Markdown chunking, automatic
+web-interface status feedback, and cross-machine live E2E testing are future
+improvements.
+
 ## Local sanity checks
 
 ```sh
