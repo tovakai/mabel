@@ -36068,7 +36068,7 @@ async def stream_agent_loop(
                 yield (
                     "data: "
                     + json.dumps({"type": "final_response", "content": full_response})
-                    + "\\n\\n"
+                    + "\n\n"
                 )
                 logger.info("[agent] completed evidence-verified Markdown metadata migration")
                 break
