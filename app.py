@@ -1370,6 +1370,34 @@ async def _startup_event():
 
     _startup_tasks.append(asyncio.create_task(_null_owner_sweep_loop()))
 
+    # Mabel Obsidian vault → existing owner-filtered Odysseus RAG index.
+    # Entirely opt-in; only allowlisted Markdown notes, never the source tree.
+    # Work runs in a thread so FastEmbed/Chroma cannot freeze the HTTP loop.
+    if os.getenv("MABEL_VAULT_RAG_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        async def _mabel_vault_rag_loop():
+            from src.mabel_vault_rag import sync_configured_vault
+
+            try:
+                delay = max(60, int(os.getenv("MABEL_VAULT_RAG_POLL_SECONDS", "300")))
+            except ValueError:
+                delay = 300
+            await asyncio.sleep(15)
+            while True:
+                try:
+                    result = await asyncio.to_thread(sync_configured_vault)
+                    if result.get("indexed") or result.get("removed") or result.get("failed"):
+                        logger.info("Mabel vault RAG sync: %s", result)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Mabel vault RAG sync degraded; retrying")
+                await asyncio.sleep(delay)
+
+        app.state.mabel_vault_rag_task = asyncio.create_task(_mabel_vault_rag_loop())
+        _startup_tasks.append(app.state.mabel_vault_rag_task)
+
+
+
     # Skills Audit is scheduled per owner by TaskScheduler. Do not also start
     # an ownerless audit here: its sidecar results cannot be read back through
     # an authenticated owner's skill namespace, and its model activity can
@@ -1396,6 +1424,13 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    mabel_rag_task = getattr(app.state, "mabel_vault_rag_task", None)
+    if mabel_rag_task is not None:
+        mabel_rag_task.cancel()
+        try:
+            await mabel_rag_task
+        except asyncio.CancelledError:
+            pass
     background_delivery = getattr(app.state, 'background_tool_delivery_task', None)
     if background_delivery:
         background_delivery.cancel()
