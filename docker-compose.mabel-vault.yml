@@ -1,0 +1,16 @@
+# Mabel vault is the Git checkout root and the Obsidian vault root.
+# Use this optional Docker Compose overlay when running Mabel in Docker.
+# It mounts only the host checkout/vault READ-ONLY into the container.
+# Do not use this file unless MABEL_VAULT_HOST_DIR is configured in .env.
+services:
+  odysseus:
+    volumes:
+      - type: bind
+        source: ${MABEL_VAULT_HOST_DIR:?Set MABEL_VAULT_HOST_DIR to the absolute path of your mabel-vault checkout}
+        target: /mabel-vault
+        read_only: true
+    environment:
+      MABEL_VAULT_ROOT: /mabel-vault
+      MABEL_VAULT_RAG_ENABLED: ${MABEL_VAULT_RAG_ENABLED:-false}
+      MABEL_VAULT_RAG_OWNERS: ${MABEL_VAULT_RAG_OWNERS:-}
+      MABEL_VAULT_RAG_POLL_SECONDS: ${MABEL_VAULT_RAG_POLL_SECONDS:-300}
