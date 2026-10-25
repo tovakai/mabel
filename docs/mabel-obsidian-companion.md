@@ -23,7 +23,14 @@ end-to-end verification.
 
 - **Canonical knowledge**: your Obsidian vault. Never treat a generated memory
   summary or vector index as the canonical note.
-- **Mabel / Odysseus**: main local model, chat and agent orchestration.
+- **Mabel / Odysseus**: shared orchestration, sessions, tools and memory.
+  It is NOT inherently the inference host; inference should follow the
+  **currently used device** whenever it has an available local model.
+- **Inference endpoints**: each participating device can expose its own
+  model through a registered, privately reachable endpoint. The always-on
+  desktop handles explicitly delegated heavyweight, scheduled, long-running
+  and offline-from-the-client tasks; it is also the online fallback for
+  ordinary requests if the active device cannot serve a model.
 - **Obsidian Companion**: user-facing plugin. Its *own* HTTP MCP server exposes
   tools to operate on the open vault; it is not the same thing as the separate
   Obsidian Local REST API plugin.
@@ -34,6 +41,75 @@ end-to-end verification.
   other PC is off. Do not make the remote worker a mandatory dependency.
 - **Write permissions**: start with read-only MCP. Keep `Allow writes` and
   `Allow dangerous tools` **off** until validation on a disposable vault.
+
+### Device-first inference: target architecture (not yet implemented)
+
+The **active client device** is the preferred inference host for ordinary
+interactive chat. A ZenBook, desktop, or other client may serve different
+models and quantizations depending on its actual hardware. Opening a session
+on a new device should not silently keep sending inference to the previous
+device just because the session once bound to that endpoint.
+
+```text
+Obsidian / Mabel UI (current client)
+           |
+           v
+   Shared Mabel / Odysseus coordinator
+   (sessions, memory, tools, scheduling)
+           |
+           +--> interactive -> CURRENT DEVICE model endpoint (preferred)
+           |                          |
+           |                          +-- unavailable/unsupported --> desktop
+           |
+           +--> long / heavy / scheduled -> ALWAYS-ON DESKTOP endpoint
+           |
+           +--> optional intern -> background indexing / summarization
+```
+
+**Inference routing is not execution routing.** The model may run on the
+current device while tool calls, vault access and memory retrieval run in
+other authenticated services. Don't confuse the client-side
+`http://localhost:<port>` with the coordinator's `localhost`: those are
+different machines when Mabel is remote, and a Docker container has yet
+another loopback network. Device endpoints must be resolvable **from the
+coordinator** (for example using private Tailscale addresses or authenticated
+tunnels), not merely reachable from the browser/Obsidian client. Avoid
+binding inference endpoints publicly to 0.0.0.0 without an access-control
+boundary.
+
+#### Proposed routing policy
+
+1. The client reports a stable, authorized device identity and its
+   **advertised** local model capabilities/health. An arbitrary endpoint URL
+   supplied in a chat request must *not* be trusted or fetched directly.
+2. At the **start of each interactive request**, look up a registered healthy
+   model endpoint for that current client device. Honor a user's explicit
+   destination or model choice over the automatic preference.
+3. If the user selects a heavy/long job, or the request is an unattended
+   scheduled task, route it to the **always-on desktop**. It must continue
+   after the initiating client sleeps or closes Obsidian.
+4. If the active-device endpoint is unavailable, lacks the required capability
+   (for instance context size), or disconnects, select the desktop fallback.
+   Retrying is subject to idempotency/side-effect safety; don't automatically
+   re-execute tool calls that might have already changed files.
+5. Keep conversation/session history in the shared coordinator; preserve
+   provenance for which device/model actually answered each turn. An endpoint
+   choice is per turn, not permanent conversation ownership.
+6. RAG and persistent memory stay functional without the optional intern.
+   Embeddings and retrieval should have a reliable local path on the
+   always-on coordinator; any dedicated remote indexer is an accelerator.
+7. A completely network-isolated client requires a **separate local
+   coordinator/cache mode** to keep chats and retrieval functioning. A
+   remote shared coordinator cannot be treated as available while offline.
+
+The existing Odysseus endpoint registry, selected endpoint IDs and foreground
+model fallback are building blocks, but do **not** currently constitute
+automatic active-device discovery and routing. Design this as a provider /
+routing layer rather than by replacing the upstream chat pipeline. Test
+device switching, mid-request disconnects, context limits, streaming and
+scheduled execution before claiming this behavior works.
+
+
 
 ### One important networking gotcha
 
@@ -179,7 +255,8 @@ unset ODYSSEUS_API_TOKEN
 | Full Agent Profiles / pinned tool pools | **Not implemented yet**; don't advertise as working |
 | Voice | Existing upstream STT/TTS routes; configuration/UI parity unverified |
 | Automatic vault change sync | **Not implemented yet** |
-| Remote intern with local fallback | Architecture target; **not implemented yet** |
+| Active-device interactive inference / desktop task offload | Target architecture; automatic device-aware routing **not implemented yet** |
+| Remote intern with local fallback | Optional background accelerator; **not implemented yet** |
 
 ## Subsequent work
 
@@ -187,6 +264,10 @@ unset ODYSSEUS_API_TOKEN
   agent-runtime authorization interfaces. Tool pinning must **only narrow**
   available tools, never bypass approval, privilege checks or MCP disabling.
 - Confirm plugin request/response compatibility with automated contract tests.
+- Build opt-in device registration, health/capability advertisement and a
+  per-turn routing policy: active-device first for interactive turns,
+  always-on desktop for heavyweight/background tasks, safe desktop fallback.
+  Never let arbitrary client-supplied URLs bypass endpoint authorization.
 - Secure native-vs-Docker / cross-host MCP transport.
 - Add Obsidian-aware Markdown chunking, frontmatter and wikilink extraction,
   with incremental updates/removal and retrieval provenance.
