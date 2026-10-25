@@ -148,6 +148,9 @@ The application's Git repository does not need to contain private notes.
 - Do **not** Syncthing-live-sync SQLite databases, ChromaDB storage, model
   weights/cache paths or app/session state as if they were regular Markdown.
   Use each host's local runtime DB, or an explicit single-host service.
+  In particular, synchronizing vault Markdown does **not** automatically
+  synchronize Odysseus chat sessions: those need a shared coordinator,
+  or a separately designed append-only conversation exchange mechanism.
 - Every device needs a compatible `.stignore`: Syncthing does **not** sync
   the ignore file itself. Configure and review it on each device **before**
   sharing the folder. A missing/incorrect ignore file can publish or delete
