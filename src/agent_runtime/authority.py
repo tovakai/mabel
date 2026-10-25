@@ -248,8 +248,12 @@ class RequestAuthority:
         # would reject a user's otherwise valid one-shot exact approval at the
         # process producer. An actual child request, or an already-inherited
         # scope, must retain the non-escalation boundary.
-        inherited = (self.inherited or child.inherited
-                     or self.request_id != child.request_id)
+        same_request = (
+            self.request_id == child.request_id
+            and (self.owner, self.session_id, self.workspace)
+            == (child.owner, child.session_id, child.workspace)
+        )
+        inherited = self.inherited or child.inherited or not same_request
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
                        disable_mcp=self.disable_mcp or child.disable_mcp, inherited=inherited,
