@@ -5298,8 +5298,8 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       _afterOdysseusAttachmentsAdded(1, label || data.filename);
       if (!opts.keepOpen) _closeOdysseusAttachMenu();
     } catch (err) {
-      console.error('Failed to attach Odysseus item:', err);
-      if (uiModule) uiModule.showError('Failed to attach from Odysseus');
+      console.error('Failed to attach M.A.B.E.L. item:', err);
+      if (uiModule) uiModule.showError('Failed to attach from M.A.B.E.L.');
     }
   }
 
@@ -5344,11 +5344,11 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
           added += 1;
         }
       }
-      _afterOdysseusAttachmentsAdded(added, zip ? 'odysseus-attachments.zip' : undefined);
+      _afterOdysseusAttachmentsAdded(added, zip ? 'mabel-attachments.zip' : undefined);
       _closeOdysseusAttachMenu();
     } catch (err) {
-      console.error('Failed to attach selected Odysseus items:', err);
-      if (uiModule) uiModule.showError(added ? `Attached ${added}, then failed` : 'Failed to attach from Odysseus');
+      console.error('Failed to attach selected M.A.B.E.L. items:', err);
+      if (uiModule) uiModule.showError(added ? `Attached ${added}, then failed` : 'Failed to attach from M.A.B.E.L.');
       _renderComposeAttachments();
     } finally {
       if (btn) {
@@ -5427,7 +5427,7 @@ import { attachColorPicker } from './colorPicker.js?v=20260910eyedropper1';
       }
       _syncOdysseusAttachSelection(menu);
     } catch (err) {
-      console.error('Failed to load Odysseus attach items:', err);
+      console.error('Failed to load M.A.B.E.L. attach items:', err);
       list.innerHTML = '<div class="email-odysseus-attach-empty">Could not load</div>';
     }
   }

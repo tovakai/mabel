@@ -1390,7 +1390,8 @@ function _showForm(existing, initTaskType, initTriggerType) {
         ['tova', 'Tova'],
         ['dottie', 'Dottie'],
       ];
-      const _curPersona = (existing?.character_id || '').toLowerCase();
+      const _savedPersona = (existing?.character_id || '').toLowerCase();
+      const _curPersona = _savedPersona === 'odysseus' ? 'mabel' : _savedPersona;
       const _personaOptsHtml = _personaOpts.map(([v, label]) =>
         `<option value="${v}" ${v === _curPersona ? 'selected' : ''}>${label}</option>`).join('');
       typeOpts.innerHTML = `
