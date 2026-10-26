@@ -1700,12 +1700,37 @@ async def execute_tool_block(
     if not admitted:
         reason = "The exact operation is outside server request authority."
         if tool_policy and any(tool_policy.blocks(name) for name in email_tool_policy_names(getattr(block, "tool_type", ""))):
-            reason = f"Execution of tool '{getattr(block, 'tool_type', '')}' is forbade by the active tool policy."
+            reason = f"Execution of tool '{getattr(block, 'tool_type', '')}' is forbidden by the active tool policy."
         elif isinstance(authority, RequestAuthority) and authority.restricted(operation):
             reason = "The exact operation is disabled by user or server request authority policy."
+        # Workspace inspection is read-only. Explain which security layer
+        # denied it rather than encouraging the model to retry or use bash.
+        denial_sources = []
+        if getattr(block, "tool_type", None) == "get_workspace":
+            if not valid:
+                denial_sources.append("request_binding")
+            if isinstance(authority, RequestAuthority):
+                if authority.block_all:
+                    denial_sources.append("request_block_all")
+                if "get_workspace" in authority.denied:
+                    denial_sources.append("request_denied_tools")
+            if "get_workspace" in (disabled_tools or ()):
+                denial_sources.append("caller_disabled_tools")
+            if tool_policy is not None:
+                if tool_policy.block_all_tool_calls:
+                    denial_sources.append("tool_policy_block_all")
+                if "get_workspace" in tool_policy.disabled_tools:
+                    denial_sources.append("tool_policy_disabled")
+                if "get_workspace" in tool_policy.hidden_tools:
+                    denial_sources.append("tool_policy_hidden")
+            if not denial_sources:
+                denial_sources.append("missing_workspace_read_grant")
+            logger.warning("get_workspace admission denied by %s", ",".join(denial_sources))
+            reason = reason + " Workspace inspection denied by: " + ", ".join(denial_sources) + "."
         return f"{getattr(block, 'tool_type', '')}: BLOCKED", {
             "error": reason,
             "exit_code": 1, "blocked": True, "failure_kind": "request_authority_denied",
+            **({"denial_sources": denial_sources} if denial_sources else {}),
         }
 
     from src.turn_contract import active_turn_contract
@@ -1715,6 +1740,17 @@ async def execute_tool_block(
             "error": "Tool is outside the requested turn capabilities.",
             "exit_code": 1, "failure_kind": "turn_contract_denied",
         }
+
+    if operation.tool == "vault_batch_edit":
+        from src.agent_runtime.batch_preview_claims import consume_if_continuation
+        continuation = consume_if_continuation(
+            request_id=authority.request_id, operation=operation,
+        )
+        if continuation is False:
+            return "vault_batch_edit: BLOCKED", {
+                "error": "Batch approval has already been used or its exact apply arguments changed. Request a new preview.",
+                "exit_code": 1, "blocked": True, "failure_kind": "batch_continuation_denied",
+            }
 
     transport = operation.transport_tool
     if operation.tool == "private_browser":
@@ -2218,6 +2254,9 @@ async def _execute_tool_block_impl(
             content,
             progress_cb=progress_cb,
             owner=owner,
+            # Bind the preview to the originating chat session; other tool
+            # fallbacks retain their previous session-less behavior.
+            session_id=session_id if tool == "vault_batch_edit" else None,
             client_runtime_context=client_runtime_context,
         )) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}

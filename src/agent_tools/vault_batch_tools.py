@@ -277,6 +277,17 @@ class VaultBatchEditTool:
             if not workspace:
                 raise ValueError("a selected workspace is required for batch edits")
             result = await asyncio.to_thread(run_batch, Path(workspace), data, _resolve_tool_path)
+            if result.get("status") == "preview":
+                # A server-owned, short-lived continuation is recorded only
+                # after an authorized preview actually succeeds.
+                from src.agent_runtime.batch_preview_claims import remember_preview
+                apply_args = remember_preview(
+                    owner=ctx.get("owner"), session_id=ctx.get("session_id"),
+                    workspace=workspace, payload=data, result=result,
+                    authority=ctx.get("request_authority"),
+                )
+                if apply_args is not None:
+                    result["apply_arguments"] = apply_args
             return {"output": json.dumps(result, ensure_ascii=False), "result": result, "exit_code": 0}
         except (ValueError, OSError, TypeError, json.JSONDecodeError) as exc:
             return {"error": f"vault_batch_edit: {exc}", "exit_code": 1}

@@ -506,6 +506,48 @@ def with_request_authority(func):
                     client_runtime_context=parameters.get("client_runtime_context"))
         if not isinstance(authority, RequestAuthority):
             raise TypeError("Missing or malformed server request authority")
+        # A terse new user turn ("Apply") normally has no shell_files intent.
+        # The previous preview can instead authorize exactly its reviewed
+        # apply input, for one execution only. Never inherit other file tools.
+        current_policy = parameters.get("tool_policy")
+        currently_disabled = set(parameters.get("disabled_tools") or ())
+        if (
+            parent is None
+            and parameters.get("request_authority", MISSING_AUTHORITY) is MISSING_AUTHORITY
+            and parameters.get("exact_approval") is None
+            and not parameters.get("_parent_run_id")
+            and not parameters.get("_is_teacher_run")
+            and parameters.get("workload") != "background"
+            and not parameters.get("plan_mode")
+            and not parameters.get("delegated_credential")
+            and not authority.block_all
+            and "vault_batch_edit" not in authority.denied
+            and "vault_batch_edit" not in currently_disabled
+            and not (current_policy and current_policy.blocks("vault_batch_edit"))
+        ):
+            from src.agent_runtime.batch_preview_claims import activate_explicit_confirmation
+            # The request-id prefix lets the dispatcher reject expired claims
+            # even after their in-memory state has been evicted.
+            batch_request_id = "batch:" + authority.request_id
+            exact_input = activate_explicit_confirmation(
+                request_text=_request_text(parameters.get("messages")),
+                owner=parameters.get("owner"),
+                session_id=parameters.get("session_id"),
+                workspace=parameters.get("workspace"),
+                request_id=batch_request_id,
+            )
+            if exact_input is not None:
+                # Construct a fresh sealed authority with no generic filesystem
+                # grants. Its only mutating permission is this exact apply call.
+                narrow_grants = tuple(
+                    grant for grant in authority.grants
+                    if grant.tool in {"ask_user", "update_plan"}
+                ) + (OperationGrant("vault_batch_edit", inputs=frozenset({exact_input})),)
+                authority = RequestAuthority(
+                    batch_request_id, authority.owner, authority.session_id,
+                    authority.workspace, narrow_grants, denied=authority.denied,
+                    block_all=authority.block_all, disable_mcp=authority.disable_mcp,
+                )
         if parent is None and parameters.get("exact_approval") is not None:
             authority = replace(authority, inherited=False)
         authority = authority.restrict(parameters.get("tool_policy"), parameters.get("disabled_tools"))
