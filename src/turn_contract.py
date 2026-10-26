@@ -46,7 +46,7 @@ FAMILY_TOOLS = {
 # this small recovery surface when no family was recognized; explicit family
 # selections and policy denials remain narrower.
 CONTRACT_CORE_TOOLS = frozenset({
-    "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
+    "bash", "python", "read_file", "web_search", "web_fetch", "ask_user", "vault_batch_edit",
 })
 
 _WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.I)
