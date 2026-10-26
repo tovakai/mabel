@@ -145,7 +145,7 @@ _register(
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
 _register(
-    {"apply_patch", "edit_file", "write_file"},
+    {"apply_patch", "edit_file", "write_file", "vault_batch_edit"},
     ToolEffect.WRITE_WORKSPACE,
     # Successful writes include unified diffs that can echo arbitrary existing
     # workspace content back into the next model round.
