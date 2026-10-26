@@ -619,6 +619,30 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "vault_batch_edit",
+            "description": "Bulk edit Markdown files in the ACTIVE WORKSPACE. For more than one matching note, PREFER this over repeated grep/read_file/edit_file. Always call mode=preview first, inspect counts and sample diffs, then call mode=apply with the identical spec and preview plan_id. Supports exact-line selection, structural YAML frontmatter key changes and safe batch string replacement. The apply result gives authoritative counts. NEVER claim success from a preview.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["preview", "apply"], "description": "Preview by default; apply requires a matching plan_id from preview"},
+                    "operation": {"type": "string", "enum": ["frontmatter", "replace"], "description": "Frontmatter-aware editing or exact string replacement"},
+                    "glob": {"type": "string", "description": "Relative Markdown glob, e.g. **/*.md or Movies/*.md; scoped to selected workspace"},
+                    "contains_line": {"type": "string", "description": "Optional exact entire line; only matching files are transformed"},
+                    "set_properties": {"type": "object", "description": "Frontmatter keys and scalar values to set inside YAML delimiters"},
+                    "remove_properties": {"type": "array", "items": {"type": "string"}, "description": "Frontmatter keys to delete"},
+                    "remove_lines": {"type": "array", "items": {"type": "string"}, "description": "Exact standalone lines to remove from frontmatter or Markdown body"},
+                    "old_string": {"type": "string", "description": "Exact string to replace for operation=replace"},
+                    "new_string": {"type": "string", "description": "Replacement for operation=replace"},
+                    "replace_all": {"type": "boolean", "description": "Whether to replace multiple occurrences within a file"},
+                    "plan_id": {"type": "string", "description": "64-digit plan fingerprint returned by mode=preview, required for apply"}
+                },
+                "required": ["operation", "glob"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "apply_patch",
             "description": "Apply a multi-file source-code patch to disk. Use for real project files in the workspace when several edits belong together. Patch must use *** Begin Patch / *** End Patch with Add File, Update File, or Delete File sections. Prefer this over bash redirects/heredocs/sed.",
             "parameters": {
@@ -2207,7 +2231,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             # Preserve missing/empty intent for WriteFileTool instead of folding
             # all empty shapes into the same path-plus-newline representation.
             content = json.dumps(args)
-    elif tool_type == "edit_file":
+    elif tool_type in ("edit_file", "vault_batch_edit"):
         content = json.dumps(args)
     elif tool_type == "apply_patch":
         content = args.get("patch_text") or args.get("patchText") or args.get("patch") or ""
