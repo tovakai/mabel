@@ -252,9 +252,9 @@ def run_batch(root: Path, payload: dict[str, Any], check_path=None) -> dict[str,
             if path.is_symlink() or path.read_bytes() != old:
                 raise ValueError(f"file changed during batch: {path.name}")
             _atomic_write(path, new)
+            completed.append((path, old))
             if path.read_bytes() != new:
                 raise ValueError(f"post-write verification failed: {path.name}")
-            completed.append((path, old))
     except Exception as exc:
         rollback_errors = []
         for path, old in reversed(completed):
