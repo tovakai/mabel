@@ -2209,7 +2209,7 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await dispatched(_call_mcp_tool(tool, content, progress_cb=progress_cb, owner=owner))
-    elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell"):
+    elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell", "vault_batch_edit"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
