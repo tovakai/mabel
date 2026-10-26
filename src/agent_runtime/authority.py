@@ -526,12 +526,15 @@ def with_request_authority(func):
             and not (current_policy and current_policy.blocks("vault_batch_edit"))
         ):
             from src.agent_runtime.batch_preview_claims import activate_explicit_confirmation
+            # The request-id prefix lets the dispatcher reject expired claims
+            # even after their in-memory state has been evicted.
+            batch_request_id = "batch:" + authority.request_id
             exact_input = activate_explicit_confirmation(
                 request_text=_request_text(parameters.get("messages")),
                 owner=parameters.get("owner"),
                 session_id=parameters.get("session_id"),
                 workspace=parameters.get("workspace"),
-                request_id=authority.request_id,
+                request_id=batch_request_id,
             )
             if exact_input is not None:
                 # Construct a fresh sealed authority with no generic filesystem
@@ -541,7 +544,7 @@ def with_request_authority(func):
                     if grant.tool in {"ask_user", "update_plan"}
                 ) + (OperationGrant("vault_batch_edit", inputs=frozenset({exact_input})),)
                 authority = RequestAuthority(
-                    authority.request_id, authority.owner, authority.session_id,
+                    batch_request_id, authority.owner, authority.session_id,
                     authority.workspace, narrow_grants, denied=authority.denied,
                     block_all=authority.block_all, disable_mcp=authority.disable_mcp,
                 )
