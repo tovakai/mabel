@@ -134,14 +134,16 @@ def consume_if_continuation(*, request_id, operation):
     This is checked at the central dispatcher, even when the exact authority
     grant remains present for multiple model rounds in the same user turn.
     """
-    if not isinstance(request_id, str):
+    if not isinstance(request_id, str) or not request_id.startswith("batch:"):
         return None
     now = monotonic()
     with _lock:
         _cleanup(now)
         active = _active.get(request_id)
         if active is None:
-            return None
+            # A missing/expired/evicted continuation must NEVER become a
+            # normal request just because its in-memory claim disappeared.
+            return False
         if active.used or operation.tool != "vault_batch_edit" or operation.input != active.apply_input:
             return False
         active.used = True
