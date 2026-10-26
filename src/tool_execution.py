@@ -2254,6 +2254,9 @@ async def _execute_tool_block_impl(
             content,
             progress_cb=progress_cb,
             owner=owner,
+            # Bind the preview to the originating chat session; other tool
+            # fallbacks retain their previous session-less behavior.
+            session_id=session_id if tool == "vault_batch_edit" else None,
             client_runtime_context=client_runtime_context,
         )) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
