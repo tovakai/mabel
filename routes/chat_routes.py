@@ -3593,9 +3593,15 @@ def setup_chat_routes(
         # tries to shell out for a request that never needed it, then fails
         # (and looks broken when the shell is disabled).
         if auto_escalated and not _workspace_agent_intent and not _use_turn_contract:
-            disabled_tools.update({
-                "bash", "python", "read_file", "write_file",
-            })
+            disabled_tools.update({"bash", "python", "write_file"})
+            # Conversational reads may use an existing server-validated
+            # workspace/active-directory grant. Never manufacture a root from
+            # message wording or the client-side mode toggle.
+            _bound_read_scope = bool(workspace) or bool(
+                directory_scope and directory_scope.available_roots
+            )
+            if not _conversational_agent or not _bound_read_scope:
+                disabled_tools.add("read_file")
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
 
