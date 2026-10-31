@@ -1592,3 +1592,46 @@ def test_authorized_document_stream_precedes_completed_update(monkeypatch):
     assert event_types.index("doc_stream_open") < event_types.index("doc_update")
     assert event_types.index("doc_stream_delta") < event_types.index("doc_update")
     assert event_types.index("doc_update") < event_types.index("tool_output")
+
+
+def test_owner_granted_memory_list_survives_untrusted_tool_discovery():
+    from src.agent_runtime.authority import (
+        ExactOperation, bind_request_authority, create_request_authority,
+    )
+
+    authority = create_request_authority(
+        "Tell me what you know about me.",
+        owner="alice", session_id="chat-one", interactive_review=True,
+    )
+    operation = ExactOperation.normalize("manage_memory", "list")
+    assert authority.permits(operation)
+
+    context = ToolRunSecurityContext()
+    context.observe_tool_result(
+        "discover_tools", {"output": "external tool catalog", "exit_code": 0},
+    )
+    assert context.external_untrusted_context_seen
+    with bind_request_authority(authority):
+        assert context.decision_for("manage_memory", "list").allowed
+        assert context.decision_for("manage_memory", '{"action":"delete","id":"1"}').allowed is False
+        assert context.decision_for("read_email", '{"id":"secret"}').allowed is False
+        assert context.decision_for("bash", "echo unsafe").allowed is False
+        assert context.decision_for("send_email", '{"to":"example@example.com"}').allowed is False
+
+    # Untrusted content cannot itself mint read authorization.
+    assert context.decision_for("manage_memory", "list").allowed is False
+
+
+def test_read_authorization_never_bypasses_explicit_tool_deny():
+    from dataclasses import replace
+    from src.agent_runtime.authority import bind_request_authority, create_request_authority
+
+    authority = create_request_authority(
+        "Tell me what you know about me.",
+        owner="alice", session_id="chat-one", interactive_review=True,
+    )
+    denied = replace(authority, denied=authority.denied | frozenset({"manage_memory"}))
+    context = ToolRunSecurityContext(external_untrusted_context_seen=True,
+                                     external_sources=["discover_tools"])
+    with bind_request_authority(denied):
+        assert context.decision_for("manage_memory", "list").allowed is False
