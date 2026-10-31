@@ -115,11 +115,14 @@ async def test_real_provider_request_recovers_strata_400_after_tool_without_repl
 @pytest.mark.parametrize('runtime',['ordinary','compact'])
 async def test_production_discovery_outage_still_produces_valid_tool_continuation(tmp_path,monkeypatch,runtime):
     from tests.test_structured_audit_completion import run_agent
-    from tests.test_interactive_authorization_runtime import authority
+    from src.agent_runtime.authority import RequestAuthority, OperationGrant
     from src import tool_index
     monkeypatch.setattr(tool_index,'get_ready_tool_index',lambda:None)
     monkeypatch.setattr(tool_index,'get_tool_index_status',lambda:{'state':'degraded','retry_after_seconds':20})
-    base=authority(tmp_path,'ls','get_workspace')
+    base=RequestAuthority(
+        'interactive-task', 'alice', 'audit', str(tmp_path),
+        (OperationGrant('ls'), OperationGrant('get_workspace')),
+    )
     data,requests=await run_agent(tmp_path,monkeypatch,runtime=runtime,
         prompt='Find suitable tools for inspecting the selected workspace.',authority_override=base,
         loop_options={'authority_gap_approvals':True},text='Tool metadata is available.',

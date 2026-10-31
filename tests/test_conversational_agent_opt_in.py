@@ -76,6 +76,11 @@ async def test_opt_in_regular_model_does_not_resurrect_lexical_turn_contract(mon
     request._form["compare_mode"] = "false"
     response = await endpoint(request)
     chunks = [chunk async for chunk in response.body_iterator]
-    assert captured["turn_contract"] is None
+    contract = captured["turn_contract"]
+    assert contract is not None
+    assert contract.selection_mode == "conversational_discovery"
+    assert "discover_tools" in contract.offered
+    assert "manage_notes" in contract.executable
+    assert "manage_notes" not in contract.offered
     assert captured["policy"] is not None
     assert any('"mode": "agent"' in chunk for chunk in chunks)
