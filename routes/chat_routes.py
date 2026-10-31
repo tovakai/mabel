@@ -168,6 +168,25 @@ def _request_privileges(request, user) -> Dict[str, Any]:
     return auth_manager.get_privileges(user) or {}
 
 
+def _conversational_agent_opt_in(request, chat_mode, *, compare_mode=False,
+                                 plan_mode=False, tool_approval_id=None) -> bool:
+    """Server-owned experiment: ordinary Chat uses the existing Agent executor.
+
+    This changes only which runtime handles an authorized Chat turn. It does
+    not grant any tool permission, set a workspace root, or pre-approve an
+    action. ToolPolicy, RequestAuthority, TurnContract, and user approvals
+    remain the separate execution gates. Disabled by default.
+    """
+    if os.getenv("ODYSSEUS_CONVERSATIONAL_AGENT", "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    if chat_mode != "chat" or compare_mode or plan_mode or tool_approval_id:
+        return False
+    user = effective_user(request)
+    return _request_privileges(request, user).get("can_use_agent", True) is not False
+
+
 def _native_runtime_requires_local_browser(client_runtime_context):
     """Use the private browser to verify declared local HTML artifacts."""
     context = client_runtime_context if isinstance(client_runtime_context, dict) else {}
@@ -2593,6 +2612,19 @@ def setup_chat_routes(
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
+        _conversational_agent = _conversational_agent_opt_in(
+            request, chat_mode,
+            compare_mode=compare_mode,
+            plan_mode=plan_mode,
+            tool_approval_id=tool_approval_id,
+        )
+        if _conversational_agent:
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info(
+                "chat→agent: opt-in conversational tool runtime; owner=%s",
+                effective_user(request),
+            )
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         _explicit_web_intent = False
         _explicit_personal_store_intent = False
@@ -3315,12 +3347,19 @@ def setup_chat_routes(
                 )
             )
         )
-        _use_turn_contract = _turn_contract_enabled(
-            exact_tool_approval=exact_tool_approval,
-            runtime_surface=_runtime_surface,
-            native_workspace_contract=_native_workspace_contract,
-            clean_v3_route=_clean_v3_route_requested,
-            full_schema_route=(_effective_tool_schema_mode == "full"),
+        _use_turn_contract = (
+            _turn_contract_enabled(
+                exact_tool_approval=exact_tool_approval,
+                runtime_surface=_runtime_surface,
+                native_workspace_contract=_native_workspace_contract,
+                clean_v3_route=_clean_v3_route_requested,
+                full_schema_route=(_effective_tool_schema_mode == "full"),
+            )
+            # The experiment bypasses the lexical *turn-contract selection*
+            # for ordinary models. It does NOT override the model's configured
+            # tool transport or claim the underlying Agent RAG offered a tool.
+            # Compact models preserve their normal constrained contract.
+            and not (_conversational_agent and not _clean_v3_route_requested)
         )
         _turn_history = getattr(sess, "history", []) or []
         from src.turn_contract import corrected_browser_target
@@ -3555,9 +3594,15 @@ def setup_chat_routes(
         # tries to shell out for a request that never needed it, then fails
         # (and looks broken when the shell is disabled).
         if auto_escalated and not _workspace_agent_intent and not _use_turn_contract:
-            disabled_tools.update({
-                "bash", "python", "read_file", "write_file",
-            })
+            disabled_tools.update({"bash", "python", "write_file"})
+            # Conversational reads may use an existing server-validated
+            # workspace/active-directory grant. Never manufacture a root from
+            # message wording or the client-side mode toggle.
+            _bound_read_scope = bool(workspace) or bool(
+                directory_scope and directory_scope.available_roots
+            )
+            if not _conversational_agent or not _bound_read_scope:
+                disabled_tools.add("read_file")
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
 
