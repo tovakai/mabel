@@ -177,7 +177,11 @@ class ChatProcessor:
                 r"tell me (?:what|all|everything) you (?:know|remember) about me)\b",
                 text,
             )
-            or re.search(r"\b(?:you|there)\b.*\bmemor(?:y|ies)\b", text)
+            or re.search(
+                r"\b(?:you (?:should|must|ought to) have|there (?:should|must) be)"
+                r".{0,80}\bmemor(?:y|ies)\b",
+                text,
+            )
         )
 
     @staticmethod
