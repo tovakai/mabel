@@ -3140,8 +3140,9 @@ def test_agent_round_ignores_malformed_usage_and_uses_estimate(
         ("Recovered final answer.", "Recovered final answer."),
         (
             "",
-            "I gathered some search results but couldn't pull a clean answer together. "
-            "Want me to try a more specific question, or summarize what I did find?",
+            "No usable final answer was produced. "
+            "The Debug Console records why synthesis failed; "
+            "earlier tool results remain available.",
         ),
     ],
 )
