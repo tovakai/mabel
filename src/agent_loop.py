@@ -30040,6 +30040,9 @@ async def _stream_agent_loop_impl(
                                 None,
                             ),
                             timeout=60,
+                            session_id=session_id,
+                            thinking_mode=thinking_mode,
+                            reasoning_effort=reasoning_effort,
                         )
                         _raw_text = _raw or ""
                         _synth = _visible_response_text(_raw_text)
@@ -30074,10 +30077,42 @@ async def _stream_agent_loop_impl(
                     full_response += _synth
                 else:
                     from src.agent_runtime.source_recovery import fallback as _source_fallback
-                    _fb = _source_fallback(tool_events) or (
-                        "I gathered some search results but couldn't pull a clean "
-                        "answer together. Want me to try a more specific question, "
-                        "or summarize what I did find?")
+                    from src.agent_runtime.memory_evidence_fallback import memory_recap_evidence_fallback
+
+                    # An approved, successful memory list already contains
+                    # bounded, authorized facts. If synthesis fails, show
+                    # those entries instead of the irrelevant search apology.
+                    _verified_memory_list = False
+                    if _memory_listing_summary:
+                        for _event in tool_events:
+                            if (_event.get("tool") != "manage_memory"
+                                    or _event.get("exit_code") != 0
+                                    or _event.get("blocked")):
+                                continue
+                            _command = str(_event.get("command") or "").strip()
+                            try:
+                                _command_args = json.loads(_command)
+                                _memory_list_action = (
+                                    str(_command_args.get("action") or "").lower()
+                                    if isinstance(_command_args, dict) else ""
+                                )
+                            except (ValueError, TypeError):
+                                _memory_list_action = _command.splitlines()[0].lower() if _command else ""
+                            if _memory_list_action in {"list", "index"}:
+                                _verified_memory_list = True
+                                break
+                    _fb = (
+                        memory_recap_evidence_fallback(
+                            _last_user, _memory_listing_summary,
+                            verified=_verified_memory_list,
+                        )
+                        or _source_fallback(tool_events)
+                        or (
+                            "I gathered some search results but couldn't pull a clean "
+                            "answer together. Want me to try a more specific question, "
+                            "or summarize what I did find?"
+                        )
+                    )
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
                     round_response += _fb
                     full_response += _fb
