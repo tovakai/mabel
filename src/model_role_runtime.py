@@ -159,7 +159,7 @@ def streaming(func):
             if chunk.startswith('event: error'):
                 if data.get('status') in roles.RECOVERABLE:
                     record_failure(context,prepared[min(active,len(prepared)-1)][0],policy)
-            elif data.get('delta') or data.get('type')=='tool_calls':
+            elif (data.get('delta') and not data.get('thinking')) or data.get('type')=='tool_calls':
                 route,index=prepared[min(active,len(prepared)-1)]
                 record_success(context,route,index,failures)
             yield chunk
