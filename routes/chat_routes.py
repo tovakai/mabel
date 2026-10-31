@@ -3945,6 +3945,40 @@ def setup_chat_routes(
             tool_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools, last_user_message=message,
             )
+        if (
+            _conversational_agent
+            and _interactive_tool_review
+            and not _clean_v3_preview
+            and _turn_contract is None
+        ):
+            # Supply a real request-local discovery catalog instead of relying
+            # on a keyword tool family or an unavailable semantic index.
+            # This is schema visibility only. Operation grants remain sealed
+            # to the server-created RequestAuthority and exact user review.
+            from src.agent_runtime.conversational_catalog import conversational_catalog_contract
+            from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+            from src.tool_utils import get_mcp_manager
+            from src.tool_security import blocked_tools_for_owner
+            from src.agent_loop import _load_mcp_disabled_map
+
+            disabled_tools.update(blocked_tools_for_owner(_user))
+            tool_policy = build_effective_tool_policy(
+                disabled_tools=disabled_tools,
+                last_user_message=message,
+            )
+            _request_authority = _request_authority.restrict(tool_policy)
+            _available_schemas = list(FUNCTION_TOOL_SCHEMAS)
+            _catalog_mcp = get_mcp_manager()
+            if _catalog_mcp and not tool_policy.disable_mcp:
+                _available_schemas.extend(
+                    _catalog_mcp.get_all_openai_schemas(_load_mcp_disabled_map())
+                )
+            _turn_contract = conversational_catalog_contract(
+                _available_schemas,
+                tool_policy,
+                workspace_read=_has_fs_scope,
+            )
+
         research_blocked_by_policy = bool(
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")
