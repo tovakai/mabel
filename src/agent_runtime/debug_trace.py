@@ -430,9 +430,18 @@ class TraceObserver:
                 self.emit('MODEL','fallback','activated',severity='WARN',metadata=metadata)
             elif kind=='metrics' and isinstance(data.get('data'),dict):
                 metric=data['data']; self.usage={k:metric.get(k) for k in ('input_tokens','output_tokens','request_context_tokens','context_length','usage_source','context_usage_source') if k in metric}
-            elif kind=='tool_calls' and self.model_started is not None:
+            elif kind=='tool_calls':
                 calls=data.get('calls')
-                if isinstance(calls,list): self.stream_tool_calls+=min(len(calls),64)
+                if isinstance(calls,list):
+                    count=min(len(calls),64)
+                    if self.model_started is not None:
+                        self.stream_tool_calls+=count
+                    elif count:
+                        # Tool-call events may be emitted after the provider's
+                        # model_request completed marker. Report their presence
+                        # separately instead of silently implying no tool calls.
+                        self.emit('MODEL','tool_calls','after_model_completion',
+                                  metadata={'tool_call_count':count})
             elif 'delta' in data:
                 delta=data.get('delta')
                 if isinstance(delta,str) and self.model_started is not None:
