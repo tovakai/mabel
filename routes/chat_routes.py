@@ -4281,6 +4281,7 @@ def setup_chat_routes(
                 _actual_candidate_index = 0
                 _chat_terminal_saved = False
                 _chat_stream_failed = False
+                _chat_stream_finished = False
                 def _commit_chat_compaction(candidate_index: int) -> bool:
                     return apply_compaction_state(
                         sess,
@@ -4528,6 +4529,7 @@ def setup_chat_routes(
                                 _stream_set(session, status="error")
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
+                            _chat_stream_finished = True
                             if _chat_terminal_saved or _chat_stream_failed:
                                 # Some providers append DONE after a terminal
                                 # error.  The failed partial is already saved;
@@ -4637,6 +4639,11 @@ def setup_chat_routes(
                                 )
                             _stream_set(session, status="done")
                             yield chunk
+                    # A provider closing the stream without DONE is an incomplete
+                    # request, even if it yielded partial visible text.
+                    if not (_chat_stream_finished or _chat_stream_failed or _chat_terminal_saved):
+                        _stream_set(session, status="error")
+                        yield f'event: error\ndata: {json.dumps({"error": "Model stream ended before completion", "status": 502, "code": "incomplete_stream"})}\n\n'
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response and not incognito:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
