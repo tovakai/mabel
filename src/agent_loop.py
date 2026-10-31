@@ -30012,6 +30012,10 @@ async def _stream_agent_loop_impl(
                     )
                 elif _host_bridge_failed_turn:
                     _synth = _host_bridge_failure_response()
+                _synth_failure_kind = "not_attempted"
+                _synth_error_class = ""
+                _synth_raw_chars = 0
+                _synth_visible_chars = 0
                 if not _synth:
                     _grace_started = time.monotonic()
                     if diagnostic_events:
@@ -30045,16 +30049,28 @@ async def _stream_agent_loop_impl(
                             reasoning_effort=reasoning_effort,
                         )
                         _raw_text = _raw or ""
+                        _synth_raw_chars = len(_raw_text)
                         _synth = _visible_response_text(_raw_text)
-                        if (
-                            _synth
-                            and (
-                                _looks_like_unfinished_action_promise(_synth)
-                                or _looks_like_agent_reasoning_preamble(_synth)
-                                or _looks_like_ody_qwen_leaked_tool_text(_synth)
+                        _synth_visible_chars = len(_synth)
+                        if not _synth:
+                            _synth_failure_kind = (
+                                "nonvisible_model_output" if _raw_text
+                                else "empty_provider_response"
                             )
-                        ):
+                        elif _looks_like_ody_qwen_leaked_tool_text(_synth):
+                            _synth_failure_kind = "filtered_tool_markup"
                             _synth = ""
+                        elif _looks_like_unfinished_action_promise(_synth):
+                            _synth_failure_kind = "filtered_action_promise"
+                            _synth = ""
+                        elif _looks_like_agent_reasoning_preamble(_synth):
+                            # A planning-only turn is not a finished answer;
+                            # keep the classification observable rather than
+                            # silently pretending the model wrote an apology.
+                            _synth_failure_kind = "filtered_planning_preamble"
+                            _synth = ""
+                        else:
+                            _synth_failure_kind = "none"
                         usage_buckets.append(_usage_bucket(
                             round_num=round_num,
                             model=model,
@@ -30066,11 +30082,20 @@ async def _stream_agent_loop_impl(
                             usage_source="estimated",
                         ))
                     except Exception as _e:
-                        logger.warning(f"[agent] grace synthesis failed: {type(_e).__name__}")
+                        _synth_failure_kind = "provider_exception"
+                        _synth_error_class = type(_e).__name__
+                        logger.warning("[agent] grace synthesis failed: %s", _synth_error_class)
                     if diagnostic_events:
-                        yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'grace_synthesis',
-                            'status':'completed' if _synth else 'empty_or_failed','round':round_num,
-                            'duration_ms':round((time.monotonic()-_grace_started)*1000,3)}) + '\n\n'
+                        yield 'data: ' + json.dumps({
+                            'type':'diagnostic_event', 'operation':'grace_synthesis',
+                            'status':'completed' if _synth else 'failed',
+                            'round':round_num,
+                            'duration_ms':round((time.monotonic()-_grace_started)*1000,3),
+                            'failure_kind':_synth_failure_kind,
+                            'error_class':_synth_error_class,
+                            'raw_chars':_synth_raw_chars,
+                            'visible_chars':_synth_visible_chars,
+                        }) + '\n\n'
                 if _synth:
                     yield f'data: {json.dumps({"delta": _synth})}\n\n'
                     round_response += _synth
@@ -30101,18 +30126,26 @@ async def _stream_agent_loop_impl(
                             if _memory_list_action in {"list", "index"}:
                                 _verified_memory_list = True
                                 break
-                    _fb = (
-                        memory_recap_evidence_fallback(
-                            _last_user, _memory_listing_summary,
-                            verified=_verified_memory_list,
-                        )
-                        or _source_fallback(tool_events)
-                        or (
-                            "I gathered some search results but couldn't pull a clean "
-                            "answer together. Want me to try a more specific question, "
-                            "or summarize what I did find?"
-                        )
+                    _memory_fb = memory_recap_evidence_fallback(
+                        _last_user, _memory_listing_summary,
+                        verified=_verified_memory_list,
                     )
+                    _file_fb = "" if _memory_fb else _source_fallback(tool_events)
+                    _fb = _memory_fb or _file_fb or (
+                        "No usable final answer was produced. The Debug Console "
+                        "records why synthesis failed; earlier tool results remain available."
+                    )
+                    if diagnostic_events:
+                        _fallback_source = (
+                            "memory_evidence" if _memory_fb else
+                            "file_evidence" if _file_fb else "no_final_answer"
+                        )
+                        yield 'data: ' + json.dumps({
+                            'type':'diagnostic_event', 'operation':'answer_recovery',
+                            'status':'evidence' if (_memory_fb or _file_fb) else 'failed',
+                            'round':round_num, 'recovery_source':_fallback_source,
+                            'failure_kind':_synth_failure_kind,
+                        }) + '\n\n'
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
                     round_response += _fb
                     full_response += _fb
