@@ -2372,6 +2372,14 @@ def setup_chat_routes(
         )
         if is_internal_tool_request(request):
             _append_internal_chat_context(ctx, message)
+        else:
+            # Personal recall is a narrative question, not automatically an
+            # inventory request. Keep this cue turn-local and persona-neutral.
+            from src.agent_runtime.personal_overview_style import apply_personal_overview_style
+            apply_personal_overview_style(
+                ctx, message,
+                is_overview=chat_processor._requests_personal_overview(message),
+            )
 
         # Research injection
         research_blocked_by_policy = (
@@ -3205,6 +3213,14 @@ def setup_chat_routes(
         )
         if is_internal_tool_request(request):
             _append_internal_chat_context(ctx, message)
+        else:
+            # Personal recall is a narrative question, not automatically an
+            # inventory request. Keep this cue turn-local and persona-neutral.
+            from src.agent_runtime.personal_overview_style import apply_personal_overview_style
+            apply_personal_overview_style(
+                ctx, message,
+                is_overview=chat_processor._requests_personal_overview(message),
+            )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 
