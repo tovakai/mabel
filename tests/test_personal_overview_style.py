@@ -44,3 +44,10 @@ def test_explicit_inventory_and_other_questions_keep_their_format():
 def test_personal_overview_cue_is_not_an_authority_grant():
     assert "tool access" in PERSONAL_OVERVIEW_PRESENTATION
     assert "without inventing" in PERSONAL_OVERVIEW_PRESENTATION
+
+
+def test_personal_overview_does_not_encourage_explaining_its_own_format():
+    cue = PERSONAL_OVERVIEW_PRESENTATION.lower()
+    assert "do not explain why you are using prose" in cue
+    assert "important gaps briefly" in cue
+    assert "not tool access" in cue
