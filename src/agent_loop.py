@@ -24957,6 +24957,14 @@ async def _stream_agent_loop_impl(
     _capability_recovery = ToolRecovery()
     _failed_tool_rounds = 0
     _repeated_failure_guard = RepeatedFailureGuard(limit=2)
+    # Simple documentation lookups converge with bounded source evidence.
+    # Deep research, audits, and mutation requests remain unrestricted here.
+    from src.agent_runtime.vault_lookup_budget import (
+        VaultLookupBudget, simple_vault_lookup,
+    )
+    _vault_lookup_budget = (
+        VaultLookupBudget() if simple_vault_lookup(_last_user) else None
+    )
     # Exact failed calls are not useful retries until some successful tool has
     # materially changed workspace state. This catches loops that include
     # planning prose or unrelated failures between identical commands.
@@ -36670,6 +36678,36 @@ async def _stream_agent_loop_impl(
                                  or str(_round_actual_endpoint_id or "").lower() == "flashteach"
                              ),
                              allow_visual_evidence=_allow_visual_tool_evidence_for_model(_round_actual_model))
+        if _vault_lookup_budget is not None and not _force_answer:
+            _vault_lookup_reason = _vault_lookup_budget.observe(tool_result_records)
+            if _vault_lookup_reason:
+                _force_answer = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "This simple vault document lookup has reached its bounded "
+                        "research budget. Do not call more tools. Answer the user "
+                        "from source evidence already retrieved; cite exact note "
+                        "paths when available. Never invent files or claim success "
+                        "when a read failed. Report the concrete blocker if no "
+                        "reliable evidence was found."
+                    ),
+                })
+                logger.info(
+                    "[agent] vault lookup convergence reason=%s attempts=%s reads=%s",
+                    _vault_lookup_reason, _vault_lookup_budget.attempts,
+                    _vault_lookup_budget.successful_reads,
+                )
+                if diagnostic_events:
+                    yield "data: " + json.dumps({
+                        "type": "diagnostic_event",
+                        "operation": "vault_lookup_convergence",
+                        "status": "completed",
+                        "reason": _vault_lookup_reason,
+                        "attempts": _vault_lookup_budget.attempts,
+                        "successful_reads": _vault_lookup_budget.successful_reads,
+                        "round": round_num,
+                    }) + "\n\n"
         if _private_browser_catalog_ready and not _force_answer:
             _force_answer = True
             messages.append({
