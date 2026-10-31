@@ -161,6 +161,52 @@ class ChatProcessor:
             text,
         ))
 
+    @staticmethod
+    def _requests_personal_overview(message: str) -> bool:
+        """An explicit request for a general account of the user's saved context.
+
+        Unlike topic-based recall, these requests have no useful search terms
+        to match against individual memories. Keep this deliberately narrow:
+        ordinary chat and memory-management commands still follow their
+        established retrieval/authorization paths.
+        """
+        text = re.sub(r"\s+", " ", str(message or "").strip().lower())
+        return bool(
+            re.search(
+                r"\b(?:what (?:do )?you (?:know|remember) about me|"
+                r"tell me (?:what|all|everything) you (?:know|remember) about me)\b",
+                text,
+            )
+            or re.search(r"\b(?:you|there)\b.*\bmemor(?:y|ies)\b", text)
+        )
+
+    @staticmethod
+    def _select_personal_overview_memories(mem_entries: list, k: int) -> list:
+        """Bound a broad recap and cover distinct categories before repeats."""
+        if k <= 0:
+            return []
+        ordered = sorted(
+            (m for m in mem_entries if str(m.get("text") or "").strip()),
+            key=lambda m: m.get("timestamp") if isinstance(m.get("timestamp"), (int, float)) else 0,
+            reverse=True,
+        )
+        selected = []
+        seen_categories = set()
+        for memory in ordered:
+            category = str(memory.get("category") or "fact").lower()
+            if category not in seen_categories:
+                selected.append(memory)
+                seen_categories.add(category)
+                if len(selected) == k:
+                    return selected
+        selected_ids = {id(m) for m in selected}
+        for memory in ordered:
+            if id(memory) not in selected_ids:
+                selected.append(memory)
+                if len(selected) == k:
+                    break
+        return selected
+
     def _hybrid_retrieve(self, message: str, mem_entries: list, k: int = 5) -> list:
         """Retrieve memories relevant to the message.
 
@@ -327,14 +373,18 @@ class ChatProcessor:
 
         # Memory: core pinned facts + relevant pinned/extended recall.
         self._last_used_memories = []  # track what was injected
-        if use_memory and not self._is_memory_management_request(message):
+        personal_overview = self._requests_personal_overview(message)
+        if use_memory and not incognito and (personal_overview or not self._is_memory_management_request(message)):
             mem_entries = self.memory_manager.load(owner=owner)
 
             pinned = [m for m in mem_entries if m.get("pinned")]
             extended = [m for m in mem_entries if not m.get("pinned")]
 
             _used_ids: list = []
-            selected_pinned = self._select_pinned_memories(message, pinned)
+            selected_pinned = (
+                self._select_personal_overview_memories(pinned, self.PINNED_MEMORY_LIMIT)
+                if personal_overview else self._select_pinned_memories(message, pinned)
+            )
             if selected_pinned:
                 pinned_text = "\n- ".join([m["text"] for m in selected_pinned])
                 preface.append(untrusted_context_message(
@@ -351,14 +401,19 @@ class ChatProcessor:
 
             remaining_memory_slots = max(self.MEMORY_CONTEXT_LIMIT - len(self._last_used_memories), 0)
             if extended and remaining_memory_slots:
-                relevant = self._hybrid_retrieve(message, extended, k=remaining_memory_slots)
+                relevant = (
+                    self._select_personal_overview_memories(extended, remaining_memory_slots)
+                    if personal_overview else self._hybrid_retrieve(message, extended, k=remaining_memory_slots)
+                )
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(
                         "saved memory: retrieved context",
                         (
-                            "Memory context. Do not reference unless the user asks "
-                            f"about these topics.\n{ext_text}"
+                            ("A bounded sample of saved memory, not the complete memory inventory. "
+                             if personal_overview else "Memory context. Do not reference unless the user asks "
+                             "about these topics. ")
+                            + f"\n{ext_text}"
                         ),
                     ))
                     for m in relevant:
