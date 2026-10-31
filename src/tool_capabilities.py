@@ -852,6 +852,20 @@ class ToolRunSecurityContext:
             _CONTROL_PLANE_CONTEXT_SOURCES
         )
         capabilities = capabilities_for_action(tool_name, content)
+        # A trusted, owner-bound request grant already authorizes the private
+        # read. Untrusted discovery results must not force a second approval
+        # for that same read. Never relax writes, execution, egress, mixed
+        # effects, unknown actions, or operations without a sealed grant.
+        if capabilities.known and capabilities.effects == frozenset({ToolEffect.READ_PRIVATE}):
+            from src.agent_runtime.authority import ExactOperation, active_request_authority
+            authority = active_request_authority()
+            if authority is not None and authority.owner:
+                try:
+                    operation = ExactOperation.normalize(tool_name, content)
+                except (TypeError, ValueError):
+                    operation = None
+                if operation is not None and authority.permits(operation):
+                    return ToolGateDecision(True)
         read_only_effects = frozenset(
             {
                 ToolEffect.READ_PUBLIC,
