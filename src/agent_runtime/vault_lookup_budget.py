@@ -1,0 +1,81 @@
+"""Request-local convergence budget for simple vault document lookups.
+
+Never grants tools, changes roots, or converts failures to successes. Deep
+research, audits, and multi-step work are intentionally out of scope.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+
+READ_TOOLS = frozenset({
+    "vault_knowledge_search", "vault_traverse_graph", "vault_read_range",
+    "vault_index_status",
+})
+_SOURCE_TOOLS = READ_TOOLS - {"vault_index_status"}
+_LOOKUP = re.compile(
+    r"^\s*(?:please\s+)?(?:find|locate|show\s+me|where\s+(?:is|are)|"
+    r"look\s+up|search\s+for)\b", re.I,
+)
+_VAULT_TOPIC = re.compile(
+    r"\b(?:vault|obsidian|note(?:s)?|document(?:ation|s)?|"
+    r"markdown|files?|wiki(?:links?)?)\b", re.I,
+)
+_DEEP = re.compile(
+    r"\b(?:audit|analy[sz]e|compare|research|investigate|comprehensive|"
+    r"exhaustive|entire|every|all\s+(?:my|the)|summari[sz]e|"
+    r"write|edit|change|create|update|fix|modify)\b", re.I,
+)
+
+
+def simple_vault_lookup(text: str) -> bool:
+    text = str(text or "").strip()
+    return bool(_LOOKUP.search(text) and _VAULT_TOPIC.search(text) and not _DEEP.search(text))
+
+
+@dataclass
+class VaultLookupBudget:
+    """Stop simple document location after useful evidence or a bounded failure.
+
+    Counts completed tool calls, never proposed or unexecuted operations.
+    A request's security and consent boundary remains authoritative.
+    """
+    attempts: int = 0
+    successful_reads: int = 0
+    consecutive_failures: int = 0
+    successful_queries: int = 0
+    stopped: bool = False
+
+    def observe(self, records) -> str | None:
+        if self.stopped:
+            return None
+        for record in records or ():
+            if not isinstance(record, dict):
+                continue
+            tool = record.get("tool_name")
+            if tool not in READ_TOOLS:
+                continue
+            self.attempts += 1
+            result = record.get("result") or {}
+            if not isinstance(result, dict):
+                result = {}
+            ok = (result.get("exit_code") == 0
+                  and not result.get("error") and not result.get("blocked"))
+            if ok:
+                self.consecutive_failures = 0
+                if tool in _SOURCE_TOOLS:
+                    self.successful_reads += 1
+                    if tool == "vault_knowledge_search":
+                        self.successful_queries += 1
+            else:
+                self.consecutive_failures += 1
+        reason = None
+        if self.consecutive_failures >= 2:
+            reason = "repeated_vault_failures"
+        elif self.successful_reads >= 6:
+            reason = "bounded_vault_evidence"
+        elif self.attempts >= 9:
+            reason = "vault_lookup_budget"
+        if reason:
+            self.stopped = True
+        return reason
