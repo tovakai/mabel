@@ -253,12 +253,25 @@ async def run_candidates(role,entries,operation,*,owner='',required=None,policy=
     raise RoleUnavailable('No usable '+role+' model; '+', '.join(failures))
 
 
+def _primary_assignment_unavailable(assignment, owner):
+    """Only replace an unresolvable role route with the explicitly pinned foreground route.
+
+    Never override a valid configured role, or turn a provider inference error
+    into an implicit fallback (which could incur unexpected API charges).
+    """
+    try:
+        resolve(assignment, owner)
+    except (RoleUnavailable, ValueError):
+        return True
+    return False
+
+
 async def call(role,messages,*,owner='',primary_route=None,**kwargs):
     entries=candidates(role,owner)
     resolved=None
-    if primary_route and not entries[0].model:
+    if primary_route and (not entries[0].model or _primary_assignment_unavailable(entries[0], owner)):
         from dataclasses import replace
-        first=replace(entries[0],model=primary_route[1])
+        first=replace(entries[0], model=primary_route[1])
         entries[0]=first
         resolved={id(first):Route(first,primary_route[0],primary_route[2] or {})}
         for a in entries[1:]:
