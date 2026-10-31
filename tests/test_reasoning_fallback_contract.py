@@ -20,10 +20,10 @@ async def test_reasoning_only_primary_allows_backup_to_answer(monkeypatch):
     async def stream(url, model, messages, **kwargs):
         calls.append(model)
         if model == "primary":
-            yield 'data: {"delta": "private thoughts", "thinking": true}\\n\\n'
+            yield 'data: {"delta": "private thoughts", "thinking": true}\n\n'
         else:
-            yield 'data: {"delta": "backup answer"}\\n\\n'
-        yield "data: [DONE]\\n\\n"
+            yield 'data: {"delta": "backup answer"}\n\n'
+        yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(llm_core, "_stream_candidate_with_context_recovery", stream)
     chunks = [chunk async for chunk in llm_core.stream_llm_with_fallback.__wrapped__(
@@ -38,14 +38,14 @@ async def test_reasoning_only_primary_allows_backup_to_answer(monkeypatch):
     assert any(e.get("type") == "fallback" and e.get("answered_by") == "backup" for e in events)
     assert any(e.get("delta") == "backup answer" for e in events)
     assert not any(e.get("thinking") for e in events)
-    assert chunks[-1] == "data: [DONE]\\n\\n"
+    assert chunks[-1] == "data: [DONE]\n\n"
 
 
 @pytest.mark.asyncio
 async def test_reasoning_only_last_candidate_is_failed_completion(monkeypatch):
     async def stream(url, model, messages, **kwargs):
-        yield 'data: {"delta": "private thoughts", "thinking": true}\\n\\n'
-        yield "data: [DONE]\\n\\n"
+        yield 'data: {"delta": "private thoughts", "thinking": true}\n\n'
+        yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(llm_core, "_stream_candidate_with_context_recovery", stream)
     chunks = [chunk async for chunk in llm_core.stream_llm_with_fallback.__wrapped__(
@@ -64,9 +64,9 @@ async def test_reasoning_then_final_text_stays_on_primary(monkeypatch):
 
     async def stream(url, model, messages, **kwargs):
         calls.append(model)
-        yield 'data: {"delta": "private thoughts", "thinking": true}\\n\\n'
-        yield 'data: {"delta": "visible answer"}\\n\\n'
-        yield "data: [DONE]\\n\\n"
+        yield 'data: {"delta": "private thoughts", "thinking": true}\n\n'
+        yield 'data: {"delta": "visible answer"}\n\n'
+        yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(llm_core, "_stream_candidate_with_context_recovery", stream)
     chunks = [chunk async for chunk in llm_core.stream_llm_with_fallback.__wrapped__(
@@ -78,4 +78,4 @@ async def test_reasoning_then_final_text_stays_on_primary(monkeypatch):
     assert calls == ["primary"]
     assert any(_event(chunk).get("delta") == "visible answer" for chunk in chunks)
     assert not any(_event(chunk).get("type") == "fallback" for chunk in chunks)
-    assert chunks[-1] == "data: [DONE]\\n\\n"
+    assert chunks[-1] == "data: [DONE]\n\n"
