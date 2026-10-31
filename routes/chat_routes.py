@@ -3020,12 +3020,6 @@ def setup_chat_routes(
                 getattr(sess, "model", ""),
                 _effective_tool_schema_mode,
             )
-            if _conversational_agent and not _clean_v3_route_requested:
-                # Full-schema agent turns allow the model to select from the
-                # existing enabled inventory. The lexical Chat classifier
-                # must not be the sole gate to discovering tools. This is
-                # model-visible availability, not execution authorization.
-                _effective_tool_schema_mode = "full"
             _clean_v3_private_browser_warm = bool(
                 _clean_v3_route_requested and _has_recent_private_browser_success(sess)
             )
@@ -3353,12 +3347,19 @@ def setup_chat_routes(
                 )
             )
         )
-        _use_turn_contract = _turn_contract_enabled(
-            exact_tool_approval=exact_tool_approval,
-            runtime_surface=_runtime_surface,
-            native_workspace_contract=_native_workspace_contract,
-            clean_v3_route=_clean_v3_route_requested,
-            full_schema_route=(_effective_tool_schema_mode == "full"),
+        _use_turn_contract = (
+            _turn_contract_enabled(
+                exact_tool_approval=exact_tool_approval,
+                runtime_surface=_runtime_surface,
+                native_workspace_contract=_native_workspace_contract,
+                clean_v3_route=_clean_v3_route_requested,
+                full_schema_route=(_effective_tool_schema_mode == "full"),
+            )
+            # The experiment bypasses the lexical *turn-contract selection*
+            # for ordinary models. It does NOT override the model's configured
+            # tool transport or claim the underlying Agent RAG offered a tool.
+            # Compact models preserve their normal constrained contract.
+            and not (_conversational_agent and not _clean_v3_route_requested)
         )
         _turn_history = getattr(sess, "history", []) or []
         from src.turn_contract import corrected_browser_target
