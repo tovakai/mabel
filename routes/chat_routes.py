@@ -168,6 +168,25 @@ def _request_privileges(request, user) -> Dict[str, Any]:
     return auth_manager.get_privileges(user) or {}
 
 
+def _conversational_agent_opt_in(request, chat_mode, *, compare_mode=False,
+                                 plan_mode=False, tool_approval_id=None) -> bool:
+    """Server-owned experiment: ordinary Chat uses the existing Agent executor.
+
+    This changes only which runtime handles an authorized Chat turn. It does
+    not grant any tool permission, set a workspace root, or pre-approve an
+    action. ToolPolicy, RequestAuthority, TurnContract, and user approvals
+    remain the separate execution gates. Disabled by default.
+    """
+    if os.getenv("ODYSSEUS_CONVERSATIONAL_AGENT", "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    if chat_mode != "chat" or compare_mode or plan_mode or tool_approval_id:
+        return False
+    user = effective_user(request)
+    return _request_privileges(request, user).get("can_use_agent", True) is not False
+
+
 def _native_runtime_requires_local_browser(client_runtime_context):
     """Use the private browser to verify declared local HTML artifacts."""
     context = client_runtime_context if isinstance(client_runtime_context, dict) else {}
@@ -2593,6 +2612,19 @@ def setup_chat_routes(
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
+        _conversational_agent = _conversational_agent_opt_in(
+            request, chat_mode,
+            compare_mode=compare_mode,
+            plan_mode=plan_mode,
+            tool_approval_id=tool_approval_id,
+        )
+        if _conversational_agent:
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info(
+                "chat→agent: opt-in conversational tool runtime; owner=%s",
+                effective_user(request),
+            )
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         _explicit_web_intent = False
         _explicit_personal_store_intent = False
@@ -2988,6 +3020,12 @@ def setup_chat_routes(
                 getattr(sess, "model", ""),
                 _effective_tool_schema_mode,
             )
+            if _conversational_agent and not _clean_v3_route_requested:
+                # Full-schema agent turns allow the model to select from the
+                # existing enabled inventory. The lexical Chat classifier
+                # must not be the sole gate to discovering tools. This is
+                # model-visible availability, not execution authorization.
+                _effective_tool_schema_mode = "full"
             _clean_v3_private_browser_warm = bool(
                 _clean_v3_route_requested and _has_recent_private_browser_success(sess)
             )
