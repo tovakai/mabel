@@ -4280,6 +4280,7 @@ def setup_chat_routes(
                 _actual_route = _requested_route
                 _actual_candidate_index = 0
                 _chat_terminal_saved = False
+                _chat_stream_failed = False
                 def _commit_chat_compaction(candidate_index: int) -> bool:
                     return apply_compaction_state(
                         sess,
@@ -4429,6 +4430,7 @@ def setup_chat_routes(
                             except json.JSONDecodeError:
                                 yield chunk
                         elif chunk.startswith("event: error"):
+                            _chat_stream_failed = True
                             logger.warning(f"Stream error for {sess.model} on {sess.endpoint_url}: {chunk!r}")
                             if (
                                 not _chat_terminal_saved
@@ -4526,11 +4528,29 @@ def setup_chat_routes(
                                 _stream_set(session, status="error")
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
-                            if _chat_terminal_saved:
+                            if _chat_terminal_saved or _chat_stream_failed:
                                 # Some providers append DONE after a terminal
                                 # error.  The failed partial is already saved;
                                 # never re-save/post-process it as a success or
                                 # advertise successful completion to the client.
+                                continue
+                            # DONE is a transport event, not evidence of a visible answer.
+                            if not _visible_response_text_for_save(full_response).strip():
+                                _chat_terminal_saved = True
+                                _stream_set(session, status="error")
+                                _terminal_metrics = dict(last_metrics or {})
+                                _terminal_metrics.update({
+                                    "failed": True,
+                                    "failure": {
+                                        "status": 502,
+                                        "message": "Model completed without a visible answer",
+                                        "reason": "empty_visible_response",
+                                    },
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                })
+                                yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
+                                yield f'event: error\ndata: {json.dumps({"error": "Model completed without a visible answer", "status": 502, "code": "empty_visible_response"})}\n\n'
                                 continue
                             # Generate fallback metrics if LLM didn't send usage
                             if not last_metrics and full_response:
