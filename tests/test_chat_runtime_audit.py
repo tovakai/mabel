@@ -119,3 +119,27 @@ async def test_normal_chat_visible_answer_still_completes(monkeypatch):
     assert any('Hello there.' in chunk for chunk in chunks)
     assert any('data: [DONE]' in chunk for chunk in chunks)
     assert not any('empty_visible_response' in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_missing_done_is_not_success(monkeypatch):
+    from tests.test_foreground_model_routing import _RouteRequest, _chat_stream_endpoint
+    captured = {}
+    endpoint = _chat_stream_endpoint(monkeypatch, 'chat', captured, chat_chunks=[
+        'data: {"delta":"Partial reply."}\n\n',
+    ])
+    response = await endpoint(_RouteRequest('chat'))
+    chunks = [chunk async for chunk in response.body_iterator]
+    assert any('Partial reply.' in chunk for chunk in chunks)
+    assert any('incomplete_stream' in chunk and 'event: error' in chunk for chunk in chunks)
+    assert not any('data: [DONE]' in chunk for chunk in chunks)
+
+
+def test_memory_overview_intent_does_not_match_technical_memory_question():
+    from src.chat_processor import ChatProcessor
+    assert not ChatProcessor._requests_personal_overview(
+        'Can you explain how memory allocation works in Python?'
+    )
+    assert not ChatProcessor._requests_personal_overview(
+        'You should explain memory management in detail.'
+    )
