@@ -103,3 +103,49 @@ async def test_role_policy_limits_are_bounded_even_if_raw_prefs_are_malformed(ro
     routing[roles.POLICY_KEY]={'utility':{'retries':100000,'timeout':-3,'cooldown':'bad'}}
     assert roles.get_policy('utility')['retries']==0
     assert roles.get_policy('utility')['timeout']==30
+
+
+@pytest.mark.asyncio
+async def test_grace_synthesis_explicit_timeout_survives_role_dispatch(routing,monkeypatch):
+    """The grace call requests 60s; the role default must not replace it with 30s."""
+    configure(routing,roles.Assignment('primary','P'),role='utility')
+    policy_times=[]
+    actual=roles.run_candidates
+
+    async def observed_run_candidates(*args,**kwargs):
+        policy_times.append(kwargs['policy']['timeout'])
+        return await actual(*args,**kwargs)
+
+    monkeypatch.setattr(roles,'run_candidates',observed_run_candidates)
+    requested=[]
+    @runtime.inference
+    async def inference(url,model,messages,headers=None,timeout=30,max_retries=3):
+        requested.append(timeout)
+        return 'finished response'
+
+    with runtime.role_scope('utility','alice'):
+        result=await inference('https://chosen.test/v1','gyro-s',[],timeout=60)
+    assert result=='finished response'
+    assert requested==[60]
+    assert policy_times==[60]
+
+
+@pytest.mark.asyncio
+async def test_role_policy_applies_when_no_call_timeout_specified(routing):
+    configure(routing,roles.Assignment('primary','P'),role='utility')
+    requested=[]
+    @runtime.inference
+    async def inference(url,model,messages,headers=None,timeout=30,max_retries=3):
+        requested.append(timeout)
+        return 'ok'
+    with runtime.role_scope('utility','alice'):
+        assert await inference('https://chosen.test/v1','gyro-s',[])=='ok'
+    assert requested==[1]
+
+
+def test_inference_request_timeout_is_bounded():
+    policy={'timeout':30,'retries':0}
+    assert runtime._inference_request_policy(policy,{'timeout':60})['timeout']==60
+    assert runtime._inference_request_policy(policy,{'timeout':99999})['timeout']==30
+    assert runtime._inference_request_policy(policy,{'timeout':0})['timeout']==30
+    assert runtime._inference_request_policy(policy,{'timeout':'forever'})['timeout']==30
