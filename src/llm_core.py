@@ -4688,6 +4688,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     continue
                 substantive = (
                     isinstance(delta, str) and bool(delta.strip())
+                    and not event_data.get("thinking")
                 ) or (
                     event_type == "tool_calls"
                     and bool(event_data.get("calls"))
