@@ -83,3 +83,29 @@ def test_debug_catalog_and_discovery_names_are_redacted_and_bounded(tmp_path):
     assert discover["metadata"]["selected_tools"]==["manage_memory"]
     assert discover["metadata"]["retrieval_mode"]=="catalog"
     assert "PRIVATE" not in json.dumps(rows)
+
+
+def test_model_round_reports_visible_reasoning_and_tool_calls_without_raw_text(tmp_path):
+    store=TraceStore(tmp_path / "debug.sqlite3", queue_size=64)
+    trace=TraceObserver(store, "alice", "model-visibility")
+    trace.observe(_chunk({
+        "type":"diagnostic_event", "operation":"model_request", "status":"started", "round":1,
+    }))
+    trace.observe(_chunk({"delta":"internal deliberation", "thinking":True}))
+    trace.observe(_chunk({
+        "type":"tool_calls", "calls":[{"name":"discover_tools"}],
+    }))
+    trace.observe(_chunk({"delta":"Final visible answer.", "thinking":False}))
+    trace.observe(_chunk({
+        "type":"diagnostic_event", "operation":"model_request", "status":"completed", "round":1,
+        "input_tokens":100, "output_tokens":48,
+    }))
+    trace.finish("completed")
+    store.queue.join()
+    rows=store.read("alice", "model-visibility", limit=30)
+    model=next(e for e in rows if e["operation"]=="model_request" and e["status"]=="completed")
+    assert model["metadata"]["reasoning_chars"]==len("internal deliberation")
+    assert model["metadata"]["visible_chars"]==len("Final visible answer.")
+    assert model["metadata"]["tool_call_count"]==1
+    assert "internal deliberation" not in json.dumps(rows)
+    assert "Final visible answer." not in json.dumps(rows)
