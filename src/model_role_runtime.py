@@ -77,6 +77,20 @@ def record_success(context,route,index,failures):
         'endpoint_id':route.assignment.endpoint_id,'fallback_active':index>0,'failover_reasons':list(failures)}
 
 
+def _inference_request_policy(policy, values):
+    """Honor a call site's explicit bounded timeout, rather than silently
+    replacing it with the role's default deadline.
+
+    Code-owned inference call sites may need longer than the model-role default
+    (notably the 60-second grace-synthesis pass). Keep the same global 300s
+    ceiling as model_roles.get_policy, and retain all other role controls.
+    """
+    requested = values.get('timeout')
+    if type(requested) in (int, float) and 1 <= requested <= 300:
+        return {**policy, 'timeout': requested}
+    return policy
+
+
 def inference(func):
     sig=signature(func)
     @wraps(func)
@@ -87,6 +101,7 @@ def inference(func):
         bound=sig.bind(*args,**kwargs)
         values=bound.arguments
         routes,policy,failures=stream_routes([(values['url'],values['model'],values.get('headers') or {})],context)
+        policy=_inference_request_policy(policy,values)
         entries=[route.assignment for route,_ in routes]
         mapping={id(route.assignment):route for route,_ in routes}
         async def operation(route):
