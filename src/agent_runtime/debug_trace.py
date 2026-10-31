@@ -62,8 +62,11 @@ def _sanitize_metadata(value):
              'fallbacks','errors','dropped_events','model_execution_ms','result_count','top_k','index_revision',
              'prefill_ms','generation_ms','gen_tps','prefill_samples','generation_samples','retries','candidate_index','http_status',
              'tokens_before','tokens_after','messages_before','messages_after','memory_count',
-             'unattributed_model_ms','first_token_ms','unattributed_first_token_ms','repeat_count','full_result_bytes','research_offered','batch_offered','input_growth_tokens'}
-    labels={'model','endpoint_id','failure_kind','usage_source','context_usage_source','stream','wait_duration','approval_wait','retrieval_mode','retry_reason','completion_status','approval_scope','approval_wait_source','role','timing_status','completion_basis','queue_timing','cache_timing','model_load_timing'}
+             'unattributed_model_ms','first_token_ms','unattributed_first_token_ms','repeat_count','full_result_bytes','research_offered','batch_offered','input_growth_tokens',
+             'raw_chars','visible_chars','offered_count','executable_count',
+             'authorized_count','denied_count','catalog_count','discovered_count','next_offset'}
+    labels={'model','endpoint_id','failure_kind','usage_source','context_usage_source','stream','wait_duration','approval_wait','retrieval_mode','retry_reason','completion_status','approval_scope','approval_wait_source','role','timing_status','completion_basis','queue_timing','cache_timing','model_load_timing',
+            'error_class','recovery_source','selection_mode','semantic_index'}
     result={}
     for key,item in value.items():
         if key in numeric:
@@ -72,7 +75,7 @@ def _sanitize_metadata(value):
         elif key in labels:
             safe=_name(item,'')
             if safe: result[key]=safe
-        elif key=='argument_keys' and isinstance(item,list):
+        elif key in {'argument_keys','offered_tools','selected_tools','requested_tools'} and isinstance(item,list):
             result[key]=[_name(x,'') for x in item[:32] if _name(x,'')]
     return result
 
@@ -268,7 +271,13 @@ class TraceObserver:
                 if operation=='model_retry': self.retries+=1
                 duration=(now-self.model_started)*1000 if self.model_started and (
                     (operation=='model_request' and status in {'completed','error','empty'}) or operation=='first_token') else None
-                if operation=='grace_synthesis' and _number(data.get('duration_ms')) is not None: duration=data['duration_ms']
+                if operation=='grace_synthesis':
+                    if status=='started':
+                        self.model_requests+=1
+                    if _number(data.get('duration_ms')) is not None:
+                        duration=data['duration_ms']
+                        if status in {'completed','failed'}: self.model_ms+=duration
+                    if status=='failed': self.errors+=1
                 if operation=='first_token': self.first_token=True; self.first_token_ms=duration
                 if operation=='model_request' and status in {'completed','error','empty'}:
                     if duration is not None: self.model_ms+=duration
@@ -278,7 +287,13 @@ class TraceObserver:
                     if _number(data.get('generation_ms')) is not None:
                         self.generation_ms+=data['generation_ms']; self.generation_samples+=1
                     self.model_started=None
-                metadata={k:_number(data.get(k)) for k in ('round','prompt_tokens','schema_count','input_tokens','output_tokens','prefill_ms','generation_ms','gen_tps','candidate_index','research_offered','batch_offered') if _number(data.get(k)) is not None}
+                metadata={k:_number(data.get(k)) for k in (
+                    'round','prompt_tokens','schema_count','input_tokens','output_tokens',
+                    'prefill_ms','generation_ms','gen_tps','candidate_index',
+                    'research_offered','batch_offered','raw_chars','visible_chars',
+                ) if _number(data.get(k)) is not None}
+                for field in ('failure_kind','error_class','recovery_source'):
+                    if data.get(field): metadata[field]=_name(data[field])
                 if operation=='model_request' and status=='completed' and duration is not None:
                     prefill=_number(data.get('prefill_ms')); generation=_number(data.get('generation_ms'))
                     if self.first_token_ms is not None: metadata['first_token_ms']=round(self.first_token_ms,3)
@@ -301,7 +316,22 @@ class TraceObserver:
                 if data.get('stream'): metadata['stream']=_name(data['stream'])
                 if data.get('retry_reason'): metadata['retry_reason']=_name(data['retry_reason'])
                 if operation=='model_request': metadata['usage_source']='estimated' if status=='started' else ('provider' if data.get('input_tokens') is not None else 'unavailable')
-                self.emit('MODEL',operation,status,severity='ERROR' if status=='error' else 'INFO',duration_ms=duration,metadata=metadata)
+                self.emit('MODEL',operation,status,
+                          severity='ERROR' if status in {'error','failed'} else 'INFO',
+                          duration_ms=duration,metadata=metadata)
+            elif kind=='turn_contract':
+                offered=data.get('offered')
+                executable=data.get('executable')
+                permitted=data.get('authorized_tools')
+                denied=data.get('denied_tools')
+                self.emit('RUNTIME','tool_catalog','offered',metadata={
+                    'selection_mode':data.get('selection_mode'),
+                    'offered_count':len(offered) if isinstance(offered,list) else None,
+                    'executable_count':len(executable) if isinstance(executable,list) else None,
+                    'authorized_count':len(permitted) if isinstance(permitted,list) else None,
+                    'denied_count':len(denied) if isinstance(denied,list) else None,
+                    'offered_tools':offered if isinstance(offered,list) else [],
+                })
             elif kind=='tool_start':
                 tool=_name(data.get('tool')); call=_name(data.get('call_id') or data.get('tool_call_id'),tool)
                 self.tools[call]=now
@@ -325,6 +355,22 @@ class TraceObserver:
                 if _number(data.get('full_result_bytes')) is not None: metadata['full_result_bytes']=data['full_result_bytes']
                 if _number(data.get('exit_code')) is not None: metadata['exit_code']=data['exit_code']
                 if data.get('failure_kind'): metadata['failure_kind']=_name(data['failure_kind'])
+                if tool=='discover_tools':
+                    raw_discovery=data.get('output')
+                    if isinstance(raw_discovery,str) and len(raw_discovery)<=65536:
+                        try:
+                            response=json.loads(raw_discovery)
+                            if isinstance(response,dict):
+                                selected=response.get('selected')
+                                if isinstance(selected,list): metadata['selected_tools']=selected[:32]
+                                if response.get('retrieval'): metadata['retrieval_mode']=response['retrieval']
+                                if response.get('semantic_index'): metadata['semantic_index']=response['semantic_index']
+                                if isinstance(response.get('tools'),list):
+                                    metadata['catalog_count']=len(response['tools'])
+                        except (ValueError,TypeError):
+                            pass
+                    requested=data.get('requested_names')
+                    if isinstance(requested,list): metadata['requested_tools']=requested[:32]
                 raw=data.get('output')
                 if tool.startswith('vault_') and isinstance(raw,str) and len(raw)<=65536:
                     try:
