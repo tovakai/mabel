@@ -111,8 +111,8 @@ async def test_normal_chat_visible_answer_still_completes(monkeypatch):
     from tests.test_foreground_model_routing import _RouteRequest, _chat_stream_endpoint
     captured = {}
     endpoint = _chat_stream_endpoint(monkeypatch, 'chat', captured, chat_chunks=[
-        'data: {"delta":"Hello there."}\\n\\n',
-        'data: [DONE]\\n\\n',
+        'data: {"delta":"Hello there."}\n\n',
+        'data: [DONE]\n\n',
     ])
     response = await endpoint(_RouteRequest('chat'))
     chunks = [chunk async for chunk in response.body_iterator]
