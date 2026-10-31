@@ -453,6 +453,11 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         if operation is not None and name == canonical_tool(operation.tool):
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))
+    # A named human owner may list their own saved memories without repeated
+    # exact-approval prompts. This does not grant memory writes or wider reads.
+    # Keep the policy/disabled-tool restrictions below authoritative.
+    if _owner(owner) and not any(g.tool == "manage_memory" for g in grants):
+        grants.append(OperationGrant("manage_memory", actions=frozenset({"list"})))
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),
                                  str(workspace or ""), tuple(grants))
     if client_runtime_context is not None:
