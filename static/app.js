@@ -5,12 +5,13 @@
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js?v=20260916largetoolscroll1';
 import workspaceModule from './js/workspace.js';
+import activeDirectoriesModule from './js/activeDirectories.js';
 import fileHandlerModule from './js/fileHandler.js?v=20260909mobileattachmentedit1';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js?v=20260908personaname1';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20260917toolttft1';
+import chatModule from './js/chat.js?v=20261028agentapprovals1';
 import compareModule from './js/compare/index.js?v=20260909mobilepaneaddscroll1';
 import documentModule from './js/document.js?v=20260916docctx2';
 import searchChatModule from './js/search-chat.js';
@@ -22,7 +23,7 @@ import {
   settleSessionHydration
 } from './js/startupShell.js';
 import markdownModule from './js/markdown.js';
-import chatRenderer from './js/chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer from './js/chatRenderer.js?v=20261028agentapprovals1';
 // Keep this specifier identical to every consumer (especially chat.js).
 // Different query strings create separate ES-module instances with separate
 // current-session state, so the picker can display one model while chat sends
@@ -38,7 +39,7 @@ import tasksModule from './js/tasks.js?v=20260914taskmodel1';
 import calendarModule from './js/calendar.js?v=20260914emailsource11';
 import notesModule from './js/notes.js?v=20260911notesselectioncancel1';
 import adminModule from './js/admin.js?v=20260929csssplit';
-import settingsModule from './js/settings.js?v=20260912writingstyle3';
+import settingsModule from './js/settings.js?v=20261028knowledge1';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 import './js/chipScroll.js?v=20260903calendarchips1';
@@ -1882,6 +1883,7 @@ function initializeEventListeners() {
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
       // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
       try { workspaceModule.applyMode(mode); } catch (_) {}
+      try { activeDirectoriesModule.applyMode(mode); } catch (_) {}
       // Tool state is request authority, so synchronize it immediately. A
       // delayed callback could overwrite a user's fast toggle click and send
       // a different allow_bash/allow_web_search value than the UI showed.
@@ -2015,6 +2017,7 @@ function initializeEventListeners() {
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
   try { workspaceModule.initWorkspace(); } catch (_) {}
+  try { activeDirectoriesModule.initActiveDirectories(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   function bringOpenDocumentToFrontOnMobile() {

@@ -1319,7 +1319,14 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     try:
         # GPT image models can take 30-120s+ depending on quality
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            resp = await client.post(images_url, json=payload, headers=headers)
+            from src import model_roles
+            if model_roles.configured('image', owner or ''):
+                from src.model_role_adapters import request as role_request
+                resp, used = await role_request('image',payload,suffix='/images/generations',owner=owner or '',
+                    primary_route=(images_url,model_id,headers))
+                model_id = used.assignment.model
+            else:
+                resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]

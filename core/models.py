@@ -125,6 +125,12 @@ class Session:
     temperature_override: Optional[float] = None
     max_tokens_override: Optional[int] = None
     cwd: Optional[str] = None
+    # Conversation-scoped allowed-directory selection (grant ids). Empty means
+    # no filesystem roots are active for this conversation.
+    active_directory_ids: Optional[List[str]] = None
+    # Explicit local RW grant used for bash/python containment. Never inferred
+    # from "first active" order; remote-only sessions leave this unset.
+    primary_local_directory_id: Optional[str] = None
     # Registered ModelEndpoint id this session is bound to (None = legacy /
     # URL-matched). Lets two endpoints that share a provider URL but not
     # credentials stay distinguishable.
@@ -136,6 +142,8 @@ class Session:
         # Ensure each session gets its OWN list (not the shared dataclass default)
         if self.history is None:
             self.history = []
+        if self.active_directory_ids is None:
+            self.active_directory_ids = []
 
     @property
     def _history(self) -> List[ChatMessage]:

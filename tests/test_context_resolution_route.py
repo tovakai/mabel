@@ -210,7 +210,7 @@ async def test_compact_route_metrics_fold_a_provider_limit_without_a_second_prob
 
 
 @pytest.mark.asyncio
-async def test_regular_model_route_does_not_prepare_a_compact_resolution(
+async def test_regular_model_route_reuses_credentialed_serving_resolution(
     monkeypatch, context_probe_ledger,
 ):
     from routes import chat_routes
@@ -230,10 +230,11 @@ async def test_regular_model_route_does_not_prepare_a_compact_resolution(
     async for _ in response.body_iterator:
         pass
 
-    assert seen["resolutions"] == []
-    assert context_probe_ledger == []
-    assert captured["build_context"]["context_resolution"] is None
-    assert captured["agent_kwargs"].get("context_resolution") is None
+    [resolution] = seen["resolutions"]
+    assert len(context_probe_ledger) == 1
+    assert context_probe_ledger[0]['headers'] == {'Authorization':'Bearer selected'}
+    assert captured["build_context"]["context_resolution"] is resolution
+    assert captured["agent_kwargs"].get("context_resolution") is resolution
 
 
 @pytest.mark.asyncio
@@ -471,11 +472,13 @@ async def test_route_preparation_and_compact_dispatch_cannot_diverge(
 
     prepared = captured["build_context"].get("context_resolution")
     dispatched_compact = bool(seen["preview_kwargs"])
-    assert (prepared is not None) == dispatched_compact == expected, case
-    if expected:
+    assert dispatched_compact == expected, case
+    assert (prepared is not None) == (expected or regular_loop), case
+    if expected or regular_loop:
         # One resolution, prepared by the route and reused by dispatch.
         assert len(seen["resolutions"]) == 1 and len(context_probe_ledger) == 1
-        assert seen["preview_kwargs"][0]["context_resolution"] is prepared
+        if expected:
+            assert seen["preview_kwargs"][0]["context_resolution"] is prepared
     else:
         assert seen["resolutions"] == [] and context_probe_ledger == []
     # The case really reached the dispatch point it claims to exercise.

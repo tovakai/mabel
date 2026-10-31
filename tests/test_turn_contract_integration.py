@@ -73,6 +73,7 @@ async def test_actual_generator_reports_unavailable_before_inference(
     assert len(chunks) == 4
     assert json.loads(chunks[0].removeprefix("data: ")) == {
         "type": "turn_contract", **selected.audit(),
+        "authorized_tools": ["ask_user", "update_plan"], "denied_tools": [],
     }
     decision = json.loads(chunks[1].removeprefix("data: "))
     assert decision["type"] == "completion_decision"
@@ -121,8 +122,9 @@ async def test_stream_bridge_binds_contract_for_actual_generator_and_resets(
             inner_bridge if use_bridge else None,
             "https://inference.invalid", "unused", [], turn_contract=selected,
         ):
-            assert active_turn_contract() is selected
-            assert get_active_execution_bridge() is (inner_bridge if use_bridge else outer_bridge)
+            # Producer bindings never leak across the yield into the consumer.
+            assert active_turn_contract() is outer
+            assert get_active_execution_bridge() is outer_bridge
             chunks.append(chunk)
         assert active_turn_contract() is outer
         assert get_active_execution_bridge() is outer_bridge
@@ -259,7 +261,7 @@ async def test_direct_agent_caller_binds_contract_and_restores_context(
         try:
             first = await anext(stream)
             assert json.loads(first.removeprefix("data: "))["type"] == "turn_contract"
-            assert active_turn_contract() is selected
+            assert active_turn_contract() is outer
             if close_early:
                 await stream.aclose()
             else:

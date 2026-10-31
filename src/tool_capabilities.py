@@ -91,12 +91,21 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"discover_tools"}, ToolEffect.READ_PUBLIC,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
+    {"task_results"},
+    ToolEffect.READ_PRIVATE,
+    result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
+)
+_register(
     {"search_hf_models"},
     ToolEffect.BROKERED_NETWORK_READ,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"get_workspace", "glob", "grep", "ls", "read_file"},
+    {"get_workspace", "glob", "grep", "ls", "read_file", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie"},
     ToolEffect.READ_WORKSPACE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
@@ -388,7 +397,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_endpoints": frozenset({"add", "delete", "enable", "disable"}),
         "manage_mcp": frozenset({"add", "delete", "enable", "disable", "reconnect"}),
         "manage_settings": frozenset(
-            {"set", "delete", "reset", "disable_tool", "enable_tool"}
+            {"set", "delete", "reset", "disable_tool"}
         ),
         "manage_tokens": frozenset({"create", "delete"}),
         "manage_webhooks": frozenset({"add", "delete", "enable", "disable"}),

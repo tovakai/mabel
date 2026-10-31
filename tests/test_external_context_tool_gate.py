@@ -1002,6 +1002,8 @@ def test_search_then_document_same_batch_has_no_editor_side_effect(monkeypatch):
             "http://local.test/v1",
             "small-local-model",
             [{"role": "user", "content": "research this and write a document"}],
+            owner="alice",
+            session_id="document-gate",
             max_rounds=2,
             relevant_tools={"web_search", "create_document"},
         )
@@ -1036,6 +1038,8 @@ def test_initial_external_context_blocks_document_before_editor_side_effect(monk
             "http://local.test/v1",
             "small-local-model",
             messages,
+            owner="alice",
+            session_id="document-gate",
             max_rounds=1,
             relevant_tools={"create_document"},
             # Exercise the action gate, not the low-signal summary fast path.
@@ -1109,6 +1113,8 @@ def test_native_argument_deltas_do_not_mutate_editor_before_gate(monkeypatch):
             "https://api.example.test/v1",
             "gpt-test",
             messages,
+            owner="alice",
+            session_id="document-gate",
             max_rounds=1,
             relevant_tools={"create_document"},
             # Exercise native action approval, not the direct-chat passthrough.
@@ -1307,6 +1313,14 @@ def test_tainted_document_approval_seals_current_content(monkeypatch):
         current_content="original",
         version_count=4,
     )
+    # The approval now validates the owned database identity before showing
+    # a card. Model an actual owner-scoped row, including its revision.
+    from datetime import datetime, timezone
+    from src.agent_runtime import owned_resources
+    active_document.owner = "alice"
+    active_document.session_id = "document-approval-session"
+    active_document.created_at = active_document.updated_at = datetime.now(timezone.utc)
+    monkeypatch.setattr(owned_resources, "_row", lambda namespace, identifier, owner: active_document)
     events = _collect_agent_events(
         agent_loop.stream_agent_loop(
             "http://local.test/v1",

@@ -23,7 +23,7 @@ from .web_tools import WebSearchTool, WebFetchTool, PdfExtractTool, PrivateBrows
 from .weather_tools import WeatherTool
 from .media_tools import ExtractTextTool, InspectMediaTool, TranscribeMediaTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, ApplyPatchTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
-from .vault_batch_tools import VaultBatchEditTool
+from .vault_batch_tools import VaultBatchEditTool, VaultAuditTool
 from .coding_tools import TodoWriteTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .interaction_tools import AskUserTool, UpdatePlanTool
@@ -35,6 +35,9 @@ from .admin_tools import (
     do_manage_endpoints, do_manage_mcp, do_manage_webhooks,
     do_manage_tokens, do_manage_settings,
 )
+
+from .task_result_tools import TaskResultsTool
+from src.agent_runtime.tool_catalog import discover_tools
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -53,6 +56,9 @@ TOOL_HANDLERS = {
     "write_file": WriteFileTool().execute,
     "edit_file": EditFileTool().execute,
     "vault_batch_edit": VaultBatchEditTool().execute,
+    "vault_audit": VaultAuditTool().execute,
+    "task_results": TaskResultsTool().execute,
+    "discover_tools": discover_tools,
     "apply_patch": ApplyPatchTool().execute,
     "todowrite": TodoWriteTool().execute,
     "ls": LsTool().execute,
@@ -77,6 +83,8 @@ TOOL_HANDLERS = {
 }
 # Config/integration admin tools (manage_endpoints/mcp/webhooks/tokens/settings).
 TOOL_HANDLERS.update(ADMIN_TOOL_HANDLERS)
+from src.knowledge_engine.tools import TOOLS as KNOWLEDGE_TOOLS, handler as knowledge_handler
+TOOL_HANDLERS.update({name: knowledge_handler(name) for name in KNOWLEDGE_TOOLS})
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth

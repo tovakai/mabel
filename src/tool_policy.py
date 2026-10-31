@@ -246,6 +246,12 @@ def build_effective_tool_policy(
     hidden: Set[str] = set()
     reasons = {tool: "Tool is disabled for this request." for tool in disabled}
 
+    # Explicit tool prohibitions are execution policy, independent of retrieval.
+    for clause in re.findall(r"\b(?:do not|don't|never|without|no)\s+(?:use\s+|run\s+|execute\s+)?([^.;\n]+)", str(last_user_message or ""), re.I):
+        for name in known_tool_names():
+            if re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", clause, re.I):
+                disabled.add(name)
+                reasons[name] = "Tool explicitly prohibited by the user."
     guide_reason = detect_guide_only_turn(last_user_message)
     if guide_reason:
         all_tools = known_tool_names()

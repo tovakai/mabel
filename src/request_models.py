@@ -147,7 +147,13 @@ class SessionResponse(BaseModel):
     model: str = Field(..., description="Model being used")
     rag: bool = Field(default=False, description="RAG enabled")
     archived: bool = Field(default=False, description="Whether session is archived")
-    cwd: Optional[str] = Field(default=None, description="Persisted workspace cwd")
+    cwd: Optional[str] = Field(default=None, description="Persisted workspace cwd (compat mirror of primary local grant)")
+    active_directory_ids: Optional[list[str]] = Field(
+        default=None, description="Active allowed-directory grant ids for this conversation"
+    )
+    primary_local_directory_id: Optional[str] = Field(
+        default=None, description="Explicit primary local grant for shell/Python containment"
+    )
 
 
 class MemoryResponse(BaseModel):

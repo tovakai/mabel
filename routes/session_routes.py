@@ -500,6 +500,8 @@ def setup_session_routes(
                     "archived": s.archived,
                     "folder": s.folder,
                     "cwd": s.cwd,
+                    "active_directory_ids": getattr(s, "active_directory_ids", None) or [],
+                    "primary_local_directory_id": getattr(s, "primary_local_directory_id", None),
                     "total_tokens": (s.total_input_tokens or 0) + (s.total_output_tokens or 0),
                     "total_cost_usd": s.total_cost_usd or 0.0,
                     "is_important": s.is_important or False,
@@ -657,6 +659,8 @@ def setup_session_routes(
             rag=str(rag).lower() == "true" if rag else False,
             archived=False,
             cwd=session.cwd,
+            active_directory_ids=getattr(session, "active_directory_ids", None) or [],
+            primary_local_directory_id=getattr(session, "primary_local_directory_id", None),
         )    
     @router.patch("/session/{sid}")
     def rename_session(
@@ -665,6 +669,8 @@ def setup_session_routes(
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
         cwd: str = Form(None),
+        active_directories: str = Form(None),
+        primary_local_directory_id: str = Form(None),
     ):
         _verify_session_owner(request, sid)
         try:
@@ -698,6 +704,51 @@ def setup_session_routes(
                     db.commit()
                     session.cwd = clean_cwd
                     result["cwd"] = clean_cwd
+            finally:
+                db.close()
+        if active_directories is not None or primary_local_directory_id is not None:
+            from src.fs_devices.turn_bind import parse_active_directory_ids
+            from src.fs_devices.scope import resolve_active_scope
+            db = SessionLocal()
+            try:
+                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+                if db_session:
+                    if active_directories is not None:
+                        ids = parse_active_directory_ids(active_directories)
+                        scope = resolve_active_scope(
+                            ids,
+                            primary_local_directory_id=(
+                                primary_local_directory_id
+                                if primary_local_directory_id is not None
+                                else getattr(session, "primary_local_directory_id", None)
+                            ),
+                        )
+                        # Persist only grants that still exist/enabled.
+                        ids = [r.grant_id for r in scope.roots]
+                        db_session.active_directory_ids = ids
+                        session.active_directory_ids = ids
+                        result["active_directory_ids"] = ids
+                    if primary_local_directory_id is not None:
+                        primary = primary_local_directory_id.strip() or None
+                        active_ids = list(
+                            getattr(session, "active_directory_ids", None)
+                            or db_session.active_directory_ids
+                            or []
+                        )
+                        scope = resolve_active_scope(active_ids, primary_local_directory_id=primary)
+                        # Reject silent fallback: only store when valid in scope.
+                        primary = scope.primary_local_grant_id
+                        db_session.primary_local_directory_id = primary
+                        session.primary_local_directory_id = primary
+                        result["primary_local_directory_id"] = primary
+                        # Compat cwd mirrors explicit primary only.
+                        primary_root = scope.primary_local()
+                        compat = primary_root.path if primary_root else None
+                        db_session.cwd = compat
+                        session.cwd = compat
+                        result["cwd"] = compat
+                    db_session.updated_at = utcnow_naive()
+                    db.commit()
             finally:
                 db.close()
         # Switch model/endpoint mid-session

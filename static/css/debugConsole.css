@@ -1,0 +1,14 @@
+.debug-console-toggle { font: 600 .85rem monospace; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: .35rem; padding: .3rem .5rem; cursor: pointer; }
+.debug-console { position: fixed; z-index: 9990; left: 0; right: 0; bottom: 0; height: 36vh; min-height: 12rem; max-height: 90vh; resize: vertical; overflow: auto; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); border: 1px solid var(--border); font: .78rem/1.4 ui-monospace, monospace; box-shadow: 0 -2px 12px color-mix(in srgb, var(--fg) 15%, transparent); }
+.debug-console[hidden] { display: none; }
+.debug-console.expanded { inset: 0; height: 100vh; max-height: 100vh; resize: none; }
+.debug-console header, .debug-console .debug-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; padding: .35rem .55rem; border-bottom: 1px solid var(--border); }
+.debug-console header strong { margin-right: auto; }
+.debug-console button, .debug-console select, .debug-console input { color: var(--fg); background: var(--input-bg, var(--bg)); border: 1px solid var(--border); border-radius: .25rem; font: inherit; padding: .2rem .35rem; }
+.debug-console button { cursor: pointer; }
+.debug-console label { display: inline-flex; align-items: center; gap: .25rem; }
+.debug-console .debug-note { margin: .2rem .55rem; color: var(--color-muted-alt, var(--fg)); }
+.debug-console .debug-output { flex: 1 1 auto; min-height: 3rem; overflow: auto; padding: .3rem .55rem; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.debug-console summary { cursor: pointer; user-select: text; }
+.debug-console pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .3rem 1rem; color: var(--fg); }
+.debug-console :focus-visible { outline: 2px solid var(--accent-primary, var(--fg)); outline-offset: 1px; }

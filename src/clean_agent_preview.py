@@ -172,7 +172,7 @@ ARTIFACT_RESEARCH_TOOLS = frozenset({
     'web_search', 'web_fetch', 'private_browser', 'pdf_extract', 'youtube_tool',
     'inspect_media', 'extract_text', 'transcribe_media',
 })
-READ_TOOLS = frozenset({
+READ_TOOLS = frozenset({'task_results',
     'manage_notes', 'manage_calendar', 'manage_memory', 'manage_skills', 'manage_tasks',
     'manage_documents', 'manage_research', 'manage_contact', 'list_sessions',
     'search_chats', 'resolve_contact', 'list_email_accounts', 'list_emails',
@@ -204,7 +204,8 @@ CONTRACT_REQUIRED_TOOLS = frozenset({
     'download_model',
     'ask_teacher',
 })
-from src.turn_contract import CONTRACT_CORE_TOOLS
+from src.turn_contract import CONTRACT_CORE_TOOLS, WORKSPACE_READ_TOOLS
+
 
 PREVIEW_TOOLS = (
     READ_TOOLS | SAFE_WRITE_TOOLS | EXPLICIT_EXECUTE_TOOLS | SAFE_UI_TOOLS
@@ -220,7 +221,7 @@ INTERACTIVE_CORE_TOOLS = CONTRACT_CORE_TOOLS
 # media/artifact tasks without granting the WebUI arbitrary filesystem access.
 NATIVE_WORKSPACE_READ_TOOLS = frozenset({
     'inspect_media', 'extract_text', 'transcribe_media', 'read_file', 'ls', 'get_workspace',
-    'pdf_extract', 'glob', 'grep',
+    'pdf_extract', 'glob', 'grep', 'vault_audit',
 })
 NATIVE_WORKSPACE_WRITE_TOOLS = frozenset({'write_file', 'edit_file'})
 NATIVE_WORKSPACE_EXECUTE_TOOLS = frozenset({'python'})
@@ -397,6 +398,8 @@ def preview_tool_result_text(result, tool, args):
         # entries before the observation cap can cut inside a quoted string,
         # leaving neither the model nor canonical renderer usable evidence.
         output = result['results']
+    if isinstance(result.get('listing'), dict):
+        output = {'listing': result['listing'], 'output': output}
     output = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
     if canonical(tool) == 'web_search' and not result.get('error') and result.get('exit_code') in (None, 0):
         output = bounded_search_observation(output)
@@ -3515,9 +3518,13 @@ def evaluate_preview_call(name, args, user_text='', *, allow_execute_code=False,
     def decision(allowed, reason):
         return PreviewPolicyDecision(allowed, reason, bare, family, effects)
 
-    runtime_tools = PREVIEW_TOOLS | (
+    runtime_tools = (WORKSPACE_READ_TOOLS if 'workspace_read' in turn_authorized_families else frozenset()) | PREVIEW_TOOLS | (
         NATIVE_WORKSPACE_TOOLS if allow_native_workspace else frozenset()
     ) | ({canonical(tool) for tool in external_runtime_tools} if allow_native_workspace else set())
+    from src.agent_runtime.tool_catalog import active_catalog
+    catalog = active_catalog()
+    if catalog is not None:
+        runtime_tools |= catalog.selected
     if bare not in runtime_tools:
         return decision(False, 'tool_not_in_model_runtime')
     if bare in {canonical(tool) for tool in external_runtime_tools}:
@@ -5133,7 +5140,7 @@ def record_tool_execution(executions, tool_event):
 
 
 @asynccontextmanager
-async def preview_model_response(client, endpoint_url, headers, request, recovery):
+async def preview_model_response(client, endpoint_url, headers, request, recovery, diagnostic_callback=None):
     """Recover only provider-proven, pre-content context rejection.
 
     Share the regular runtime's budgeting and native-call sanitization. Never
@@ -5142,8 +5149,12 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
     """
     from src.generation_budget import (
         context_safety_margin, estimate_multimodal_image_tokens,
-        estimate_tool_schema_tokens, plan_context_recovery,
+        estimate_tool_schema_tokens, estimate_request_tokens, plan_context_recovery,
     )
+    def observe(operation,status,**fields):
+        if diagnostic_callback is not None:
+            try: diagnostic_callback({'type':'diagnostic_event','operation':operation,'status':status,**fields})
+            except Exception: logging.getLogger(__name__).warning('Compact diagnostic callback failed',exc_info=True)
     transport_attempts = 0
     while True:
         # A provider-stated limit learned this turn overrides the window
@@ -5161,6 +5172,11 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
             **request,
             'messages': provider_wire_messages(request['messages']),
         }
+        if diagnostic_callback is not None:
+            try: estimate=estimate_request_tokens(provider_request['messages'],provider_request.get('tools'))
+            except Exception: estimate=None
+            observe('model_request','started',model=request.get('model'),prompt_tokens=estimate,
+                    schema_count=len(request.get('tools') or []))
         response_started = False
         try:
             async with client.stream(
@@ -5177,6 +5193,8 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
                     plan = plan_context_recovery(
                         response.text, request['max_tokens'], request['messages'], request.get('tools'))
                     if plan is not None:
+                        observe('model_request','error',model=request.get('model'))
+                        observe('model_retry','retrying',model=request.get('model'),retry_reason='context_limit')
                         recovery['attempts'] = recovery.get('attempts', 0) + 1
                         recovery['context_limit'] = plan.context_limit
                         recovery['scale'] = 1 if recovery['attempts'] == 1 else 0.7
@@ -5195,10 +5213,15 @@ async def preview_model_response(client, endpoint_url, headers, request, recover
             # no model output or tool proposal could have reached the harness.
             # Never replay a stream after yielding it to the caller because it
             # may already have emitted prose or a complete tool call.
+            observe('model_request','error',model=request.get('model'))
             if response_started or transport_attempts >= 1:
                 raise
             transport_attempts += 1
+            observe('model_retry','retrying',model=request.get('model'),retry_reason='provider_unavailable')
             await asyncio.sleep(0.1)
+        except httpx.HTTPStatusError:
+            observe('model_request','error',model=request.get('model'))
+            raise
 
 
 async def preview_lines_until_finish(response, finish_event=None):
@@ -5231,7 +5254,11 @@ async def preview_lines_until_finish(response, finish_event=None):
 from src.agent_runtime.authority import MISSING_AUTHORITY, with_request_authority
 
 
+from src.agent_runtime.completion import with_audit_completion
+
+
 @with_request_authority
+@with_audit_completion
 async def stream_preview(*, endpoint_url, model, messages, headers, turn_contract,
                          session_id, owner, disabled_tools, tool_policy,
                          history_session=None, external_untrusted_context_seen=False,
@@ -5240,7 +5267,8 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                          client_runtime_context=None, max_tokens=768, max_rounds=8,
                          max_tool_calls=0,
                          external_tool_schemas=None, temperature=0.0,
-                         context_resolution=None,
+                         context_resolution=None, authority_gap_approvals=False, rejected_tool_approval=None,
+                         diagnostic_events=False, diagnostic_callback=None,
                          request_authority=MISSING_AUTHORITY, **ignored):
     from src.generation_sampling import validate_temperature
     temperature = validate_temperature(temperature)
@@ -5264,6 +5292,7 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     whole_draft_target = active_editor_whole_draft_request(active_document, direct_user_text)
     suggestion_target = active_editor_suggestion_request(active_document, direct_user_text)
     if active_editor_target:
+        original_contract = turn_contract
         turn_contract = scope_active_editor_contract(
             turn_contract,
             empty=not bool(str(getattr(active_document, 'current_content', '') or '').strip()),
@@ -5271,16 +5300,22 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             suggestion_only=suggestion_target,
             source_verification=_bound_editor_requests_web_verification(direct_user_text),
         )
+        from src.agent_runtime.tool_catalog import derived_catalog
+        derived_catalog(original_contract, turn_contract)
     from src.tool_security import delegated_credential_blocked_tools
     from src.tool_capabilities import delegated_tool_is_blocked
     disabled_tools = set(disabled_tools or ())
     if delegated_credential:
         disabled_tools.update(delegated_credential_blocked_tools())
     hard_disabled = disabled_tools | (set(tool_policy.all_disabled_names()) if tool_policy else set())
+    from src.agent_runtime.tool_recovery import ToolRecovery
+    capability_recovery = ToolRecovery()
+
     def permitted_schema(schema):
         name = schema['function']['name']
         return (not (tool_policy and tool_policy.block_all_tool_calls)
                 and name not in hard_disabled
+                and name not in capability_recovery.unavailable
                 and not (delegated_credential and delegated_tool_is_blocked(name)))
 
     offered = [schema for schema in compact_schemas(turn_contract.schemas(), model=model)
@@ -5396,6 +5431,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
     history = [{'role': 'system', 'content': system}] + conversation(
         history_session, messages, owner=owner, diagnostics=conversation_diagnostics,
     )
+    if rejected_tool_approval is not None:
+        from src.tool_approvals import rejection_context
+        from src.agent_runtime.authority import active_request_authority
+        history.append(rejection_context(rejected_tool_approval, active_request_authority()))
     from src.turn_contract import corrected_browser_target
     browser_correction = corrected_browser_target(direct_user_text, history)
     if browser_correction:
@@ -5707,6 +5746,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
             # tool markup during the normal final no-tools round. Ordinary
             # turns still obey ``round_limit`` exactly.
             for round_number in range(1, round_limit + 2):
+                from src.agent_runtime.tool_catalog import active_catalog
+                if active_catalog(turn_contract) is not None:
+                    offered = [schema for schema in compact_schemas(turn_contract.schemas(), model=model) if permitted_schema(schema)]
                 if intent_scope_failed:
                     break
                 if round_number > round_limit and not emergency_completion_round:
@@ -6094,7 +6136,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                     # established budget/error semantics.
                     round_offered = list(request.get('tools') or [])
                 finish_during_stream = False
-                async with preview_model_response(client, endpoint_url, headers, request, context_recovery) as response:
+                _debug_first_token = False
+                _debug_input_tokens = _debug_output_tokens = None
+                _debug_prefill_ms = _debug_generation_ms = _debug_gen_tps = None
+                if diagnostic_events and diagnostic_callback is None:
+                    yield event({'type':'diagnostic_event','operation':'model_request','status':'started',
+                                 'round':round_number,'model':model,'schema_count':len(request.get('tools') or [])})
+                async with preview_model_response(client, endpoint_url, headers, request, context_recovery,
+                                                  diagnostic_callback if diagnostic_events else None) as response:
                     response.raise_for_status()
                     finish_event = (
                         agent_runs.get_finish_event(session_id)
@@ -6117,6 +6166,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if usage:
                             has_real_usage = True
                         prompt_tokens = usage.get('prompt_tokens', 0)
+                        if usage:
+                            _debug_input_tokens = prompt_tokens
+                            _debug_output_tokens = usage.get('completion_tokens', 0)
+                        timings = payload.get('timings') or {}
+                        if isinstance(timings,dict):
+                            _debug_prefill_ms = timings.get('prompt_ms',_debug_prefill_ms)
+                            _debug_generation_ms = timings.get('predicted_ms',_debug_generation_ms)
+                            _debug_gen_tps = timings.get('predicted_per_second',_debug_gen_tps)
                         usage_in += prompt_tokens
                         usage_out += usage.get('completion_tokens', 0)
                         if prompt_tokens:
@@ -6136,6 +6193,10 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         if reasoning:
                             round_reasoning += str(reasoning)
                         text = delta.get('content') or ''
+                        if diagnostic_events and not _debug_first_token and (reasoning or text or delta.get('tool_calls')):
+                            _debug_first_token = True
+                            yield event({'type':'diagnostic_event','operation':'first_token','status':'received',
+                                         'round':round_number,'stream':'reasoning' if reasoning else ('final' if text else 'tool_call')})
                         if text:
                             first_token = first_token or time.monotonic()
                             content += text
@@ -6180,6 +6241,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                              'kind': editor_progress_kind,
                                              'proposed': proposed_edits, 'round': round_number})
                                 editor_progress_last = now
+                if diagnostic_events:
+                    yield event({'type':'diagnostic_event','operation':'model_request','status':'completed',
+                                 'round':round_number,'model':model,'input_tokens':_debug_input_tokens,
+                                 'output_tokens':_debug_output_tokens,'prefill_ms':_debug_prefill_ms,
+                                 'generation_ms':_debug_generation_ms,'gen_tps':_debug_gen_tps})
                 if active_editor_target and successful_write and agent_runs.should_finish(session_id):
                     finish_during_stream = True
                 if finish_during_stream:
@@ -6290,6 +6356,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                 if proposed:
                     message['tool_calls'] = protocol_safe_tool_calls(proposed)
                 history.append(message)
+                if not proposed and round_number < round_limit:
+                    native_replan = capability_recovery.replan()
+                    if native_replan:
+                        history.append({'role': 'user', '_harness_control': True, 'content': native_replan})
+                        yield event({'type': 'tool_recovery', 'attempt': capability_recovery.replans,
+                                     'alternatives': capability_recovery.pending,
+                                     'unavailable': sorted(capability_recovery.unavailable)})
+                        continue
                 if not proposed:
                     empty_artifact_target = (
                         repeated_off_contract_artifact_handoff_target(
@@ -6784,6 +6858,17 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             allow_native_workspace=native_workspace_enabled,
                             external_runtime_tools=external_runtime_tools,
                         )
+                        if not decision.allowed and authority_gap_approvals:
+                            from src.agent_runtime.authority import active_request_authority, approval_can_admit
+                            from src.tool_approvals import scoped_exact_approval
+                            if (approval_can_admit(active_request_authority(), preflight_name, json.dumps(preflight_args),
+                                    owner=owner, session_id=session_id, workspace=workspace,
+                                    policy=tool_policy, disabled_tools=hard_disabled)
+                                    or scoped_exact_approval(active_request_authority(), preflight_name, json.dumps(preflight_args),
+                                        security_context=security, client_runtime_context=client_runtime_context) is not None):
+                                # Proposing an operation for review is distinct
+                                # from authorizing it to execute.
+                                decision = replace(decision, allowed=True, reason='eligible_for_user_review')
                         if not decision.allowed:
                             policy_decisions.append({'round': round_number, **decision.audit()})
                             batch_policy_denied = True
@@ -7169,10 +7254,20 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             allow_native_workspace=native_workspace_enabled,
                             external_runtime_tools=external_runtime_tools,
                         )
-                        if not decision.allowed:
+                        from src.agent_runtime.authority import active_request_authority, approval_can_admit
+                        from src.tool_approvals import scoped_exact_approval
+                        scoped_approval = scoped_exact_approval(active_request_authority(), name, arguments,
+                            security_context=security, client_runtime_context=client_runtime_context)
+                        authority_gap = bool(authority_gap_approvals and scoped_approval is None and not delegated_credential
+                            and approval_can_admit(active_request_authority(), name, arguments,
+                                owner=owner, session_id=session_id, workspace=workspace,
+                                policy=tool_policy, disabled_tools=hard_disabled))
+                        if not decision.allowed and not authority_gap and scoped_approval is None:
                             policy_denied = True
                             raise ValueError('This operation is outside the preview safety policy. No change was made.')
                         policy_decisions.append({'round': round_number, **decision.audit()})
+                        if canonical(name) in capability_recovery.unavailable:
+                            raise ValueError('Tool unavailable for this turn; choose a permitted alternative.')
                         if calls >= tool_call_limit:
                             terminal_budget_violation = True
                             raise ValueError('Tool execution budget exhausted; finish from existing evidence.')
@@ -7209,14 +7304,32 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             fixture_token = note_fixture_scope.set(experiment_fixture_ids or None)
                             tool_started = time.monotonic()
                             try:
-                                execution_attempted = True
-                                desc, result = await execute_tool_block(
-                                    block, session_id=session_id, owner=owner,
-                                    disabled_tools=disabled_tools, tool_policy=tool_policy,
-                                    security_context=security,
-                                    active_document_id=getattr(active_document, 'id', None),
-                                    workspace=workspace,
-                                    client_runtime_context=client_runtime_context)
+                                gate = security.decision_for(block.tool_type, block.content)
+                                if authority_gap or (authority_gap_approvals and not gate.allowed and scoped_approval is None):
+                                    from src.tool_approvals import tool_approval_store, approval_request_result
+                                    from src.tool_approvals import document_content_digest
+                                    pending = tool_approval_store.create(owner=owner, session_id=session_id,
+                                        origin_run_id=security.run_id, tool_name=block.tool_type, content=block.content,
+                                        workspace=workspace, document_id=getattr(active_document, 'id', None),
+                                        document_version=getattr(active_document, 'version_count', None),
+                                        document_digest=document_content_digest(getattr(active_document, 'current_content', '')) if active_document else None,
+                                        external_untrusted_context_seen=security.external_untrusted_context_seen,
+                                        capabilities=capabilities_for_action(block.tool_type, block.content),
+                                        request_authority=active_request_authority(), request_text=direct_user_text,
+                                        selected_tools=turn_contract.offered, continuation_query=direct_user_text,
+                                        client_runtime_context=client_runtime_context, authority_gap=authority_gap)
+                                    result = approval_request_result(pending, reason=gate.reason if not gate.allowed else 'This action needs your approval before it runs.',
+                                        client_runtime_context=client_runtime_context)
+                                    desc = block.tool_type + ': APPROVAL REQUIRED'
+                                else:
+                                    execution_attempted = True
+                                    desc, result = await execute_tool_block(
+                                        block, session_id=session_id, owner=owner,
+                                        disabled_tools=disabled_tools, tool_policy=tool_policy,
+                                        security_context=security,
+                                        active_document_id=getattr(active_document, 'id', None),
+                                        workspace=workspace,
+                                        client_runtime_context=client_runtime_context)
                                 if (
                                     canonical(block.tool_type) == 'ui_control'
                                     and str(args.get('action') or '').casefold() == 'get_toggles'
@@ -7381,6 +7494,9 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                             'repeat the unchanged failed request or invent comments. If browser '
                             'access also fails or is unavailable, report the specific limitation.'
                         )
+                    from src.agent_runtime.authority import active_request_authority
+                    capability_recovery.observe(block.tool_type if block is not None else name, result,
+                        authority=active_request_authority(), contract=turn_contract)
                     output = preview_tool_result_text(result, block.tool_type if block is not None else name, args)
                     actual_tool = block.tool_type if block is not None else name
                     misused_native_tool = (
@@ -7729,6 +7845,11 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                                   'execution_attempted': execution_attempted,
                                   'blocked': policy_denied or schema is None,
                                   'desc': desc, 'round': round_number}
+                    if 'listing' in result:
+                        tool_event['listing'] = result['listing']
+                    for failure_field in ('failure_kind', 'failure', 'recovery', 'executed'):
+                        if failure_field in result:
+                            tool_event[failure_field] = result[failure_field]
                     for error_category in ('tool_execution_error', 'invalid_tool_arguments'):
                         if result.get('error_category') == error_category:
                             tool_event['error_category'] = error_category
@@ -7841,6 +7962,14 @@ async def stream_preview(*, endpoint_url, model, messages, headers, turn_contrac
                         tool_event['screenshot'] = visual_blocks[0]['image_url']['url']
                         round_visual_blocks.extend(visual_blocks)
                     record_tool_execution(executions, tool_event)
+                    if result.get('approval_required') and result.get('ask_user'):
+                        tool_event.update(approval_required=True, ask_user=result['ask_user'], executed=False)
+                        yield event(tool_event)
+                        yield event({'type':'completion_decision', 'data':{'status':'awaiting_user', 'can_complete':False, 'reason':'Exact operation awaits user approval'}})
+                        yield event({'type':'metrics', 'data':{'tool_events':executions, 'clean_v3_turn':text_only_clean_trace(history[initial_length:]),
+                            'completion_decision':{'status':'awaiting_user', 'can_complete':False}, 'round_texts':[]}})
+                        yield 'data: [DONE]\n\n'
+                        return
                     yield event(tool_event)
                     history.append({'role': 'tool', 'tool_call_id': call['id'], 'content': output})
                     if (not failed and block is not None and block.tool_type == 'web_fetch'

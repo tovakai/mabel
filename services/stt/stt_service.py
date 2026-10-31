@@ -164,6 +164,21 @@ class STTService:
         if provider in ("disabled", "browser"):
             return None
 
+        from src import model_roles
+        from src.model_role_runtime import current_owner
+        role_owner=current_owner('stt')
+        if model_roles.configured('stt',role_owner):
+            from src.model_role_adapters import audio
+            try:
+                local_primary=None
+                primary_route=None
+                if provider=='local' and not model_roles.primary_assignment('stt',role_owner).endpoint_id:
+                    local_primary=lambda:self._transcribe_local(audio_bytes,language)
+                    primary_route=('local://stt',model,{})
+                return audio('stt',owner=role_owner,audio_bytes=audio_bytes,language=language,
+                    local_primary=local_primary,primary_route=primary_route)
+            except (model_roles.RoleUnavailable,httpx.HTTPError,RuntimeError):
+                return None
         if provider == "local":
             return self._transcribe_local(audio_bytes, language)
         elif provider.startswith("endpoint:"):

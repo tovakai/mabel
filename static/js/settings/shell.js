@@ -44,6 +44,11 @@ export function createSettingsShell(options = {}) {
     if (tab === 'ai' && typeof refreshAiModelEndpoints === 'function') {
       refreshAiModelEndpoints();
     }
+    if (tab === 'devices') {
+      import('../devices.js').then((m) => {
+        try { m.refreshDevicesPanel(); } catch (_) {}
+      }).catch(() => {});
+    }
   }
 
   function openAdminTab(tab) {

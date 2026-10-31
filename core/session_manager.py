@@ -36,6 +36,28 @@ def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _coerce_active_directory_ids(value) -> list:
+    """Normalize persisted active-directory id lists."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        grant_id = str(item or "").strip()
+        if not grant_id or grant_id in seen:
+            continue
+        seen.add(grant_id)
+        out.append(grant_id)
+    return out
+
+
 def _parse_msg_content(raw):
     """Parse message content from DB — deserialises JSON arrays back to lists
     (multimodal content with image/audio attachments)."""
@@ -157,6 +179,10 @@ class SessionManager:
             temperature_override=getattr(db_session, "temperature_override", None),
             max_tokens_override=getattr(db_session, "max_tokens_override", None),
             cwd=getattr(db_session, "cwd", None) or None,
+            active_directory_ids=_coerce_active_directory_ids(
+                getattr(db_session, "active_directory_ids", None)
+            ),
+            primary_local_directory_id=getattr(db_session, "primary_local_directory_id", None) or None,
             endpoint_id=getattr(db_session, "endpoint_id", None) or None,
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
@@ -223,6 +249,10 @@ class SessionManager:
             temperature_override=getattr(db_session, "temperature_override", None),
             max_tokens_override=getattr(db_session, "max_tokens_override", None),
             cwd=getattr(db_session, "cwd", None) or None,
+            active_directory_ids=_coerce_active_directory_ids(
+                getattr(db_session, "active_directory_ids", None)
+            ),
+            primary_local_directory_id=getattr(db_session, "primary_local_directory_id", None) or None,
             endpoint_id=getattr(db_session, "endpoint_id", None) or None,
         )
 
@@ -503,6 +533,12 @@ class SessionManager:
             session.owner = getattr(db_session, "owner", None)
             session.is_important = getattr(db_session, "is_important", False) or False
             session.cwd = getattr(db_session, "cwd", None) or None
+            session.active_directory_ids = _coerce_active_directory_ids(
+                getattr(db_session, "active_directory_ids", None)
+            )
+            session.primary_local_directory_id = (
+                getattr(db_session, "primary_local_directory_id", None) or None
+            )
             session.message_count = (
                 db.query(DbChatMessage)
                 .filter(DbChatMessage.session_id == session_id)
@@ -567,11 +603,15 @@ class SessionManager:
         cwd: str = None,
         headers: Optional[Dict[str, str]] = None,
         endpoint_id: Optional[str] = None,
+        active_directory_ids: Optional[list] = None,
+        primary_local_directory_id: Optional[str] = None,
     ) -> Session:
         """Create a new session and save to database."""
         from src.chatgpt_subscription import is_chatgpt_subscription_base
         session_headers = {} if is_chatgpt_subscription_base(endpoint_url) else dict(headers or {})
         endpoint_id = (endpoint_id or "").strip() or None
+        active_ids = _coerce_active_directory_ids(active_directory_ids)
+        primary_local = (primary_local_directory_id or "").strip() or None
         db = SessionLocal()
         try:
             db_session = DbSession(
@@ -583,6 +623,8 @@ class SessionManager:
                 headers=session_headers,
                 owner=owner,
                 cwd=cwd or None,
+                active_directory_ids=active_ids,
+                primary_local_directory_id=primary_local,
                 endpoint_id=endpoint_id,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
@@ -599,6 +641,8 @@ class SessionManager:
                 headers=session_headers,
                 owner=owner,
                 cwd=cwd or None,
+                active_directory_ids=active_ids,
+                primary_local_directory_id=primary_local,
                 endpoint_id=endpoint_id,
             )
 

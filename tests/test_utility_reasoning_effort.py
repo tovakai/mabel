@@ -7,6 +7,7 @@ win; with the setting empty nothing changes.
 import asyncio
 
 import pytest
+import httpx
 
 from src import llm_core, task_endpoint
 from src.chatgpt_subscription import validate_reasoning_effort
@@ -44,7 +45,7 @@ def chain(monkeypatch):
     async def fake_call(url, model, messages, **kw):
         calls[url] = kw.get("reasoning_effort")
         if url != UTIL_FALLBACK[0]:
-            raise RuntimeError("force walk down the chain")
+            raise httpx.ConnectError("force walk down the chain")
         return "ok"
 
     monkeypatch.setattr(llm_core, "llm_call_async", fake_call)
@@ -111,7 +112,7 @@ def test_fallback_factory_can_override_messages_and_kwargs(monkeypatch):
     async def fake_call(url, model, messages, **kw):
         seen.append((model, messages, kw.get("reasoning_effort"), kw.get("temperature")))
         if len(seen) == 1:
-            raise RuntimeError("first fails")
+            raise httpx.ConnectError("provider offline")
         return "ok"
 
     monkeypatch.setattr(llm_core, "llm_call_async", fake_call)

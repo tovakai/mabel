@@ -16,11 +16,61 @@ from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from src.action_intents import classify_tool_intent
-from src.tool_policy import ToolPolicy
+from src.tool_policy import ToolPolicy, build_effective_tool_policy
 from src.text_scanning import has_prefixed_token_match
 
 
+# Native alternatives form an operation class, separate from execution/write intent.
+WORKSPACE_READ_TOOLS = frozenset({"get_workspace", "ls", "glob", "grep", "read_file", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie"})
+
+
+_INSPECTION_CONTINUATION = re.compile(
+    r"\s*(?:please\s+)?(?:continue|carry on|go on|try (?:it )?again|retry)[.!]?\s*", re.I)
+
+
+def workspace_inspection_source(message, history=()):
+    """Resolve terse continuations from trusted user text, skipping current-turn rows."""
+    text = str(message or "")
+    if not _INSPECTION_CONTINUATION.fullmatch(text):
+        return text
+    for row in reversed(list(history)):
+        get = row.get if isinstance(row, dict) else lambda k, d=None: getattr(row, k, d)
+        metadata = get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except ValueError:
+                metadata = {}
+        if (get("role") == "user" and isinstance(metadata, dict)
+                and metadata.get("trusted") is not False and not metadata.get("tool_gate_untrusted")):
+            content = str(get("content", ""))
+            if not _INSPECTION_CONTINUATION.fullmatch(content):
+                return content
+    return ""
+
+
+def workspace_inspection_request(message, history=(), *, workspace=False):
+    """Recognize inspection of a bound local collection, never code/write authority."""
+    if not workspace:
+        return False
+    text = workspace_inspection_source(message, history)
+    # Negative constraints are not positive requests to mutate or execute.
+    positive = re.sub(r"\b(?:do not|don't|never|without|no)\b[^.;\n]*", "", text, flags=re.I)
+    if re.search(r"\b(?:write|create|edit|update|delete|remove|rename|move|replace|set|execute|run|install|save|build|generate|export|download|append)\b", positive, re.I):
+        return False
+    if re.search(r"https?://|\b(?:ocr|transcribe|transcription|extract|render|screenshot)\b", positive, re.I):
+        return False
+    if re.search(r"\b(?:calendar|email|inbox|tasks?|document library|model library)\b", positive, re.I):
+        return False
+    positive = re.sub(r"\bread[ -]only\b", "", positive, flags=re.I)
+    action = re.search(r"\b(?:inspect|explore|audit|check|review|read|list|find|search|look\s+(?:around|through|at))\b", positive, re.I)
+    target = re.search(r"\b(?:files?|folders?|director(?:y|ies)|workspace|vault|markdown|frontmatter|metadata|library|collection|repo(?:sitory)?)\b|[\w.-]+/[^\s]+", positive, re.I)
+    return bool(action and target)
+
+
 FAMILY_TOOLS = {
+    "task_results": frozenset({"task_results"}),
+    "workspace_read": WORKSPACE_READ_TOOLS,
     "calendar": frozenset({"manage_calendar"}),
     "notes": frozenset({"manage_notes"}),
     "tasks": frozenset({"manage_tasks"}),
@@ -29,7 +79,7 @@ FAMILY_TOOLS = {
     "documents": frozenset({"manage_documents", "create_document", "edit_document", "update_document", "suggest_document"}),
     "email": frozenset({"list_email_accounts", "list_emails", "search_emails", "read_email", "download_attachment", "scan_email_unsubscribes", "scan_spam", "unsubscribe_email", "send_email", "reply_to_email", "draft_email", "draft_email_reply", "ai_draft_email_reply", "bulk_email", "block_sender", "manage_email_state", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"}),
     "search_browser": frozenset({"web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract"}),
-    "shell_files": frozenset({"bash", "python", "host_shell", "read_file", "write_file", "edit_file", "vault_batch_edit", "apply_patch", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs", "inspect_media", "extract_text", "transcribe_media"}),
+    "shell_files": frozenset({"bash", "python", "host_shell", "read_file", "write_file", "edit_file", "vault_batch_edit", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie", "apply_patch", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs", "inspect_media", "extract_text", "transcribe_media"}),
     "cookbook_admin": frozenset({"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "list_cached_models", "list_cookbook_servers", "adopt_served_model", "list_models", "manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "api_call", "app_api", "list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "ask_teacher"}),
     "ui": frozenset({"ui_control"}),
     "research": frozenset({"trigger_research", "manage_research"}),
@@ -2084,7 +2134,7 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         # tool intersection to erase Calendar/Notes/Documents tools.
         return frozenset({"manage_skills"})
     native_names = (
-        "get_workspace", "read_file", "write_file", "python", "ls",
+        "get_workspace", "read_file", "write_file", "python", "ls", "vault_audit",
     )
     named = {
         name for name in native_names
@@ -3000,6 +3050,12 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
     Do not invent identifiers, resolve relative dates, extract a read from a
     compound request, or turn a summary/search into an obligatory operation.
     """
+    from src.agent_runtime.structured_audits import audit_requirement
+    audit = audit_requirement(workspace_inspection_source(message, history))
+    if audit is not None and (audit.path is not None or audit.collection or re.search(r"\b(?:markdown|frontmatter|yaml|vault|workspace)\b", message, re.I)):
+        # The words "which notes" describe workspace files in a property audit,
+        # not an exact list operation in the personal Notes store.
+        return None
     normalized_text = _normalize_request_lead(message)
     text, maximum = _read_request_and_limit(message)
     rows = list(history)
@@ -4142,6 +4198,8 @@ def required_read_operation_for_request(message: str, history: Iterable = ()) ->
 def _families_for_tool(tool: str) -> frozenset[str]:
     """Resolve overlapping helper tools to their dedicated product family."""
     bare = str(tool or "")
+    if bare == "vault_audit":
+        return frozenset({"workspace_read"})
     if bare.startswith("mcp__email__"):
         bare = bare[len("mcp__email__"):]
     if bare in {"manage_contact", "resolve_contact"}:
@@ -4149,7 +4207,7 @@ def _families_for_tool(tool: str) -> frozenset[str]:
     if bare in {"list_sessions", "manage_session", "create_session", "send_to_session",
                 "chat_with_model", "pipeline"}:
         return frozenset({"sessions"})
-    return frozenset(family for family, tools in FAMILY_TOOLS.items() if bare in tools)
+    return frozenset(family for family, tools in FAMILY_TOOLS.items() if bare in tools and (family != "workspace_read" or bare == "vault_audit"))
 
 
 def _clause_capabilities(text: str) -> set[str]:
@@ -4748,6 +4806,11 @@ def corrected_browser_target(message: str, history: Iterable = ()) -> dict | Non
 def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False) -> frozenset[str]:
     """Classify once; inherit a prior capability only for a referential follow-up."""
     message = _routing_email_scope(editor_request_instructions(message))
+    from src.agent_runtime.structured_audits import audit_requirement
+    if workspace and audit_requirement(workspace_inspection_source(message, history)):
+        return frozenset({"workspace_read"})
+    if workspace_inspection_request(message, history, workspace=workspace) and selected_tools_for_request(message) is None:
+        return frozenset({"workspace_read"})
     raw_text = str(message or "").strip()
     text = _normalize_request_lead(message)
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
@@ -6287,6 +6350,7 @@ class TurnContract:
     active_capabilities: frozenset[str] = frozenset()
     selection_mode: str = "routed"
     routing_experiment: str = "baseline"
+    catalog_json: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not self.required <= self.offered <= self.executable:
@@ -6303,11 +6367,19 @@ class TurnContract:
                 raise ValueError("Required read operation must be available or explicitly unavailable")
 
     def permits(self, name: str) -> bool:
-        return canonical_tool(name) in {canonical_tool(n) for n in self.offered}
+        from src.agent_runtime.tool_catalog import active_catalog
+        catalog = active_catalog(self)
+        selected = catalog.selected if catalog is not None else set()
+        return canonical_tool(name) in {canonical_tool(n) for n in self.offered | selected}
 
     def schemas(self) -> list[dict]:
         # Return copies: compact/full model formatting must not mutate the contract.
-        return [json.loads(value) for value in self.schema_json]
+        from src.agent_runtime.tool_catalog import active_catalog
+        result = {s['function']['name']:s for s in map(json.loads, self.schema_json)}
+        catalog = active_catalog(self)
+        if catalog is not None:
+            result.update({s['function']['name']:s for s in catalog.schemas()})
+        return list(result.values())
 
     def audit(self) -> dict:
         result = {"capabilities": sorted(self.capabilities), "required": sorted(self.required),
@@ -6318,6 +6390,11 @@ class TurnContract:
             result["required_read_operation"] = self.required_read_operation.audit()
         result["selection_mode"] = self.selection_mode
         result["routing_experiment"] = self.routing_experiment
+        from src.agent_runtime.tool_catalog import active_catalog
+        catalog = active_catalog(self)
+        if catalog is not None:
+            result["discovery_inventory_size"] = len(catalog.inventory)
+            result["discovered_tools"] = sorted(catalog.selected)
         return result
 
 
@@ -6347,7 +6424,8 @@ def resolve_full_inventory_contract(*, schemas: Iterable[dict], policy: ToolPoli
     offered = frozenset(n for n in offered if n.startswith("mcp__") or "mcp__email__" + n not in offered)
     return TurnContract(families, frozenset(), offered, executable, frozenset(),
                         tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(offered)),
-                        selection_mode="full_compact_experiment")
+                        selection_mode="full_compact_experiment",
+                        catalog_json=tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(executable)))
 
 
 def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict], policy: ToolPolicy,
@@ -6373,9 +6451,31 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     to resolve one. Omitting both preserves the existing family-only API.
     """
     families = frozenset(capabilities)
+    if 'task_results' in always_available_tools and not families - {'unknown'}:
+        # A server-declared saved result is a useful surface for conversational
+        # references, without reopening an unclassified filesystem inventory.
+        families = frozenset({'task_results'})
+        required_capabilities = frozenset({'task_results'})
+    from src.agent_runtime.audit_followups import followup_kind
+    audit_followup = message is not None and followup_kind(message) is not None
+    if audit_followup:
+        # Retrieval only. Exact grants are constructed separately from trusted
+        # server task state; these schemas do not authorize any file access.
+        families = frozenset({'workspace_read'})
+        selected_tools = {'vault_audit'}
+        required_tools = set(required_tools) | {'vault_audit'}
+        required_capabilities = frozenset({'workspace_read'})
+    if "workspace_read" in families and message is not None:
+        source_policy = build_effective_tool_policy(
+            last_user_message=workspace_inspection_source(message, history))
+        policy = replace(policy,
+            disabled_tools=policy.disabled_tools | source_policy.disabled_tools,
+            hidden_tools=policy.hidden_tools | source_policy.hidden_tools,
+            block_all_tool_calls=policy.block_all_tool_calls or source_policy.block_all_tool_calls,
+            disable_mcp=policy.disable_mcp or source_policy.disable_mcp)
     required_families = families if required_capabilities is None else frozenset(required_capabilities)
     operation = required_read_operation
-    if operation is None and message is not None:
+    if operation is None and message is not None and not audit_followup:
         operation = required_read_operation_for_request(message, history)
     if operation is not None and not isinstance(operation, RequiredReadOperation):
         raise TypeError("required_read_operation must be a RequiredReadOperation")
@@ -6387,6 +6487,10 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
                            if not policy.blocks(n) and canonical_tool(n) not in denied
                            and not (policy.disable_mcp and n.startswith("mcp__")))
     selected = set().union(*(FAMILY_TOOLS.get(f, frozenset()) for f in families))
+    if "workspace_read" in families and message is not None and selected_tools is not None:
+        from src.agent_runtime.structured_audits import audit_requirement
+        if audit_requirement(workspace_inspection_source(message, history)) and not set(selected_tools) <= WORKSPACE_READ_TOOLS:
+            selected_tools = None
     if selected_tools is not None:
         requested = {canonical_tool(n) for n in selected_tools}
         if not families:
@@ -6429,6 +6533,14 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     if operation is not None:
         required_names.add(canonical_tool(operation.tool))
     offered_canonical = {canonical_tool(n) for n in offered}
+    if message is not None and "vault_audit" in offered_canonical:
+        from src.agent_runtime.structured_audits import audit_requirement
+        audit = audit_requirement(workspace_inspection_source(message, history))
+        if audit is not None and audit.path is not None:
+            # A resolved structured audit has one native execution owner.
+            # Missing/denied schemas still grant nothing; the completion gate
+            # will report the missing evidence rather than invent counts.
+            required_names.add("vault_audit")
     unavailable = frozenset((required_names - offered_canonical)
                             | {f"capability:{f}" for f in required_families
                                if f not in FAMILY_TOOLS or (
@@ -6446,7 +6558,8 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     required = frozenset(n for n in offered if canonical_tool(n) in required_names)
     return TurnContract(families, required, offered, executable, unavailable,
                         tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(offered)),
-                        operation, required_families)
+                        operation, required_families,
+                        catalog_json=tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(executable)))
 
 
 _ACTIVE_CONTRACT: ContextVar[TurnContract | None] = ContextVar("turn_contract", default=None)
@@ -6470,7 +6583,7 @@ def with_turn_contract(func):
 
     Resolve positional and keyword arguments alike. Explicitly close the inner
     generator while still bound so its cleanup observes the same authority.
-    Like other context-bound streams, iteration and closing share one task.
+    A stable producer task owns iteration and cleanup across ASGI consumers.
     """
     call_signature = signature(func)
 
@@ -6478,9 +6591,14 @@ def with_turn_contract(func):
     async def wrapped(*args, **kwargs):
         arguments = call_signature.bind(*args, **kwargs)
         arguments.apply_defaults()
-        with bind_turn_contract(arguments.arguments.get("turn_contract")):
+        from src.agent_runtime.tool_catalog import bind_catalog
+        from src.agent_runtime.authority import active_request_authority
+        authority = active_request_authority()
+        discovery = bool(arguments.arguments.get('authority_gap_approvals') and authority is not None and not authority.inherited)
+        with bind_turn_contract(arguments.arguments.get("turn_contract")), bind_catalog(arguments.arguments.get("turn_contract"), discovery):
             async with aclosing(func(*args, **kwargs)) as stream:
                 async for chunk in stream:
                     yield chunk
 
-    return wrapped
+    from src.agent_runtime.owned_stream import owned_stream
+    return owned_stream(wrapped)

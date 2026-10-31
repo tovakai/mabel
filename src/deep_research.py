@@ -628,7 +628,7 @@ class DeepResearcher:
                    max_tokens: int = 4096, timeout: int = 60) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
         from src.llm_core import llm_call_async
-        response = await llm_call_async(
+        response = await _research_role_call(self, llm_call_async,
             url=self.llm_endpoint,
             model=self.llm_model,
             messages=messages,
@@ -1979,3 +1979,9 @@ class DeepResearcher:
         if self.category:
             stats["Category"] = self.category.capitalize()
         return stats
+
+
+async def _research_role_call(researcher,call,**kwargs):
+    from src.model_role_runtime import role_scope
+    with role_scope('research',getattr(researcher,'owner','')):
+        return await call(**kwargs)

@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20261028agentapprovals1';
 import chatStream from './chatStream.js?v=20260914pdfstrip1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -233,7 +233,7 @@ import { invalidateSettings } from './appConfig.js';
   document.addEventListener('odysseus:tool-approval', (event) => {
     const detail = event && event.detail ? event.detail : {};
     const decision = String(detail.decision || '').toLowerCase();
-    if (!detail.approval_id || !['approve', 'approve_task', 'deny'].includes(decision)) return;
+    if (!detail.approval_id || !['approve', 'approve_task', 'approve_once', 'deny'].includes(decision)) return;
     _pendingToolApproval = {
       approval_id: String(detail.approval_id),
       decision,
@@ -2671,6 +2671,10 @@ import { invalidateSettings } from './appConfig.js';
       if (_ws) {
         fd.append('workspace', _ws);
       }
+      try {
+        const activeDirs = await import('./activeDirectories.js');
+        activeDirs.appendActiveDirectoriesToForm(fd);
+      } catch (_) {}
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }

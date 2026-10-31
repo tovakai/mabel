@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 # Keep the existing wire values so the current route and no-build frontend do
 # not need a second protocol migration. ``approve`` no longer means one action;
 # it now selects chat-session scope.
+SINGLE_ACTION_APPROVAL_DECISION = "approve_once"
 TASK_APPROVAL_DECISION = "approve_task"
 CHAT_SESSION_APPROVAL_DECISION = "approve"
 DENY_APPROVAL_DECISION = "deny"
@@ -104,7 +105,7 @@ def stamp_chat_session_grant(
     """
     if not isinstance(ask_user, dict):
         return
-    if str(decision or "").strip().lower() != CHAT_SESSION_APPROVAL_DECISION:
+    if ask_user.get('authority_gap') or str(decision or "").strip().lower() != CHAT_SESSION_APPROVAL_DECISION:
         ask_user.pop(CHAT_SESSION_APPROVAL_SIGNATURE_FIELD, None)
         return
     signature = sign_chat_session_grant(
@@ -153,6 +154,8 @@ class ToolApprovalScope(str, Enum):
 
 def scope_for_decision(decision: object) -> ToolApprovalScope | None:
     normalized = str(decision or "").strip().lower()
+    if normalized == SINGLE_ACTION_APPROVAL_DECISION:
+        return ToolApprovalScope.SINGLE_ACTION
     if normalized == TASK_APPROVAL_DECISION:
         return ToolApprovalScope.TASK
     if normalized == CHAT_SESSION_APPROVAL_DECISION:

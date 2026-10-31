@@ -42,7 +42,10 @@ BUILTIN_EMAIL_TOOLS = frozenset({
 # state changes, or generic loopback/integration surfaces. All email tools are
 # included (SECURITY.md: email/MCP capabilities are privileged admin
 # functionality).
-NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
+from src.knowledge_engine.tool_names import KNOWLEDGE_TOOLS
+
+
+NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | KNOWLEDGE_TOOLS | {
     "bash",
     "python",
     "manage_bg_jobs",
@@ -55,6 +58,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "glob",
     "ls",
     "get_workspace",
+    "vault_audit",
     "host_shell",
     "search_chats",
     "manage_memory",
@@ -99,6 +103,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "glob",
     "ls",
     "get_workspace",
+    "vault_audit",
     "web_search",
     "web_fetch",
     "search_chats",
@@ -170,6 +175,9 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
 }
+
+
+PLAN_MODE_READONLY_TOOLS = frozenset(PLAN_MODE_READONLY_TOOLS) | (KNOWLEDGE_TOOLS - {'dispatch_dottie'})
 
 
 def plan_mode_disabled_tools() -> Set[str]:

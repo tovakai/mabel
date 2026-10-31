@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v659-notes-reference';
+const CACHE_NAME = 'odysseus-v660-debug-console';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -68,7 +68,7 @@ const PRECACHE = [
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
   '/static/js/memory.js',
-  '/static/js/skills.js?v=20260909kebabconsistency1',
+  '/static/js/skills.js?v=20261028agentapprovals1',
   '/static/js/skillsMetrics.js?v=20260908autonomousskills1',
   '/static/js/tourHints.js',
   '/static/js/fileHandler.js?v=20260909mobileattachmentedit1',
@@ -82,10 +82,13 @@ const PRECACHE = [
   '/static/js/tts-ai.js',
   '/static/js/document.js?v=20260916docctx2',
   '/static/js/gallery.js?v=20260910promptcopy1',
-  '/static/js/chatRenderer.js?v=20260914metricssummary1',
+  '/static/js/chatRenderer.js?v=20261028agentapprovals1',
+  '/static/js/contextMetrics.js',
+  '/static/js/debugConsole.js?v=1',
+  '/static/css/debugConsole.css?v=1',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
   '/static/js/chatStream.js?v=20260914pdfstrip1',
-  '/static/js/chat.js?v=20260917toolttft1',
+  '/static/js/chat.js?v=20261028agentapprovals1',
   '/static/js/cookbook.js',
   '/static/js/search-chat.js',
   '/static/js/compare/index.js?v=20260909mobilepaneaddscroll1',
@@ -94,7 +97,7 @@ const PRECACHE = [
   '/static/js/panels.js?v=20260909movepicklayer1',
   '/static/js/theme.js?v=20260911organsrain1',
   '/static/js/censor.js',
-  '/static/js/settings.js?v=20260912writingstyle3',
+  '/static/js/settings.js?v=20261028knowledge1',
   '/static/js/admin.js?v=20260929csssplit',
   '/static/js/chatgptSubscriptionUsage.js',
   '/static/js/init.js?v=20260829chatstyle12',

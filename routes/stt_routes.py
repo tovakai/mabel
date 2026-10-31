@@ -1,7 +1,7 @@
 # routes/stt_routes.py
 """STT API routes — multi-provider (local Whisper, API endpoint, browser)."""
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 import logging
 
 from src.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
@@ -23,7 +23,7 @@ def setup_stt_routes(stt_service):
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.post("/transcribe")
-    async def transcribe_audio(file: UploadFile = File(...)):
+    async def transcribe_audio(file: UploadFile = File(...), http_request: Request = None):
         """Transcribe uploaded audio file to text"""
         try:
             if not stt_service.available:
@@ -36,7 +36,10 @@ def setup_stt_routes(stt_service):
             if not audio_bytes:
                 raise HTTPException(status_code=400, detail={"message": "Empty audio file"})
 
-            text = stt_service.transcribe(audio_bytes)
+            from src.auth_helpers import get_current_user
+            from src.model_role_runtime import role_scope
+            with role_scope('stt',get_current_user(http_request) if http_request else ''):
+                text = stt_service.transcribe(audio_bytes)
             if text is None:
                 raise HTTPException(
                     status_code=500,

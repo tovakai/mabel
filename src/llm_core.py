@@ -2473,6 +2473,9 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
         try:
             return llm_call(url, model, messages, headers=headers, **kwargs)
         except Exception as e:
+            from src.model_roles import eligible as _role_fallback_eligible
+            if not _role_fallback_eligible(e):
+                raise
             last_err = e
             tag = "primary" if i == 0 else "candidate"
             logger.warning(f"[fallback] {tag} {model} failed ({type(e).__name__}); trying next")
@@ -2506,6 +2509,9 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
                 url, model, candidate_messages, headers=headers, **candidate_kwargs
             )
         except Exception as e:
+            from src.model_roles import eligible as _role_fallback_eligible
+            if not _role_fallback_eligible(e):
+                raise
             last_err = e
             tag = "primary" if i == 0 else "candidate"
             logger.warning(f"[fallback] {tag} {model} failed ({type(e).__name__}); trying next")
@@ -3672,6 +3678,10 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                             _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
                                         if _tm.get("prompt_per_second"):
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
+                                        for _source, _target in (("prompt_ms", "prefill_ms"), ("predicted_ms", "generation_ms")):
+                                            _value = _tm.get(_source)
+                                            if type(_value) in (int, float) and 0 <= _value < 10**12:
+                                                _usage_data[_target] = round(_value, 3)
                                     if _actual_model:
                                         _usage_data["model"] = _actual_model
                                         if not _same_model_identity(_actual_model, model):
@@ -4064,12 +4074,14 @@ async def _stream_candidate_with_context_recovery(
     capability_recovery_factory=None,
     retry_degenerate_stream_once: bool = False,
     retry_transient_precontent: bool = False,
+    diagnostic_events: bool = False,
 ):
     """Retry recoverable pre-content request-shape rejections once per kind."""
 
     from src.generation_budget import (
         context_safety_margin,
         estimate_multimodal_image_tokens,
+        estimate_request_tokens,
         estimate_tool_schema_tokens,
         plan_context_recovery,
     )
@@ -4088,6 +4100,17 @@ async def _stream_candidate_with_context_recovery(
         retry = False
         hold_attempt = retry_degenerate_stream_once and not degenerate_recovery_attempted
         held_output = []
+        attempt_first = False
+        attempt_usage = {}
+        attempt_failed = False
+        if diagnostic_events:
+            try:
+                _trace_prompt_tokens = estimate_request_tokens(candidate_messages, candidate_kwargs.get('tools'))
+            except Exception:
+                _trace_prompt_tokens = None
+            yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_request',
+                'status':'started','model':model,'prompt_tokens':_trace_prompt_tokens,
+                'schema_count':len(candidate_kwargs.get('tools') or [])}) + '\n\n'
         candidate_stream = stream_llm(
             url,
             model,
@@ -4097,6 +4120,8 @@ async def _stream_candidate_with_context_recovery(
         )
         try:
             async for chunk in candidate_stream:
+                if chunk.startswith('event: error'):
+                    attempt_failed = True
                 if (
                     hold_attempt
                     and chunk.startswith("event: error")
@@ -4121,6 +4146,9 @@ async def _stream_candidate_with_context_recovery(
                         "[degenerate-recovery] retrying model=%s after repeated output",
                         model,
                     )
+                    if diagnostic_events:
+                        yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
+                            'status':'retrying','model':model,'retry_reason':'degenerate_output'}) + '\n\n'
                     break
                 event_data = {}
                 is_done = chunk.startswith("data: [DONE]")
@@ -4129,6 +4157,14 @@ async def _stream_candidate_with_context_recovery(
                         event_data = json.loads(chunk[6:])
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
+                if event_data.get('type') == 'usage' and isinstance(event_data.get('data'),dict):
+                    attempt_usage = event_data['data']
+                if diagnostic_events and not attempt_first and (event_data.get('delta') or event_data.get('type') in {'tool_call_delta','tool_calls'}):
+                    attempt_first = True
+                    stream_kind = ('tool_call' if event_data.get('type') in {'tool_call_delta','tool_calls'}
+                                   else 'reasoning' if event_data.get('thinking') else 'final')
+                    yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'first_token',
+                        'status':'received','stream':stream_kind}) + '\n\n'
                 substantive = (
                     isinstance(event_data.get("delta"), str)
                     and bool(event_data["delta"].strip())
@@ -4183,6 +4219,9 @@ async def _stream_candidate_with_context_recovery(
                         model,
                         context_recovery_attempts,
                     )
+                    if diagnostic_events:
+                        yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
+                            'status':'retrying','model':model,'retry_reason':'context_transport'}) + '\n\n'
                     retry = True
                     break
 
@@ -4200,6 +4239,9 @@ async def _stream_candidate_with_context_recovery(
                         model,
                         _stream_error_status(chunk),
                     )
+                    if diagnostic_events:
+                        yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
+                            'status':'retrying','model':model,'retry_reason':'provider_unavailable'}) + '\n\n'
                     await asyncio.sleep(LLMConfig.RETRY_DELAY)
                     retry = True
                     break
@@ -4219,7 +4261,16 @@ async def _stream_candidate_with_context_recovery(
                     if plan is not None:
                         context_recovery_attempts += 1
                         recovery_context_limit = plan.context_limit
-                        candidate_kwargs["max_tokens"] = plan.max_tokens
+                        # An input-only overflow will be trimmed below. A one-token
+                        # output computed against the *old* oversized prompt is not
+                        # useful once that prompt has been shortened. Reserve a
+                        # bounded continuation, as the compact runtime already does.
+                        recovery_max = plan.max_tokens
+                        if (plan.context_limit and plan.observed_input_tokens is not None
+                                and plan.observed_input_tokens >= plan.context_limit
+                                and int(failed_max or 0) > 1):
+                            recovery_max = min(int(failed_max), 1024)
+                        candidate_kwargs["max_tokens"] = recovery_max
                         if plan.context_limit:
                             from src.context_compactor import (
                                 prune_multimodal_images,
@@ -4254,7 +4305,7 @@ async def _stream_candidate_with_context_recovery(
                                 candidate_messages,
                                 message_context,
                                 reserve_tokens=(
-                                    plan.max_tokens
+                                    recovery_max
                                     + context_safety_margin(plan.context_limit)
                                 ),
                             )
@@ -4263,11 +4314,14 @@ async def _stream_candidate_with_context_recovery(
                             "context=%s observed_input=%s attempt=%s",
                             model,
                             failed_max,
-                            plan.max_tokens,
+                            recovery_max,
                             plan.context_limit,
                             plan.observed_input_tokens,
                             context_recovery_attempts,
                         )
+                        if diagnostic_events:
+                            yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
+                                'status':'retrying','model':model,'retry_reason':'context_limit'}) + '\n\n'
                         retry = True
                         break
 
@@ -4325,6 +4379,10 @@ async def _stream_candidate_with_context_recovery(
                         type(close_error).__name__,
                     )
 
+        if diagnostic_events:
+            yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_request',
+                'status':'error' if attempt_failed else ('completed' if emitted else 'empty'),'model':attempt_usage.get('model') or model,
+                **{k:attempt_usage[k] for k in ('input_tokens','output_tokens','prefill_ms','generation_ms','gen_tps') if k in attempt_usage}}) + '\n\n'
         if retry:
             continue
         if hold_attempt:
@@ -4449,6 +4507,8 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     Yields the same SSE chunk protocol as stream_llm.
     """
+    role_retry_precontent = kwargs.pop("role_retry_precontent", True)
+    diagnostic_events = bool(kwargs.pop('diagnostic_events', False))
     fallback_statuses = kwargs.pop("fallback_statuses", None)
     fallback_on_empty = bool(kwargs.pop("fallback_on_empty", True))
     candidate_request_factory = kwargs.pop("candidate_request_factory", None)
@@ -4476,6 +4536,10 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
     last_error = None
     failures = []
     for i, (url, model, headers) in enumerate(cands):
+        if diagnostic_events:
+            yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_route',
+                'status':'selected','model':model,'endpoint_id':route_descriptors[i].get('endpoint_id'),
+                'candidate_index':i}) + '\n\n'
         is_last = (i == len(cands) - 1)
         emitted = False
         retried = False
@@ -4566,7 +4630,8 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                 else None
             ),
             retry_degenerate_stream_once=retry_degenerate_stream_once,
-            retry_transient_precontent=len(cands) == 1,
+            retry_transient_precontent=len(cands) == 1 and role_retry_precontent,
+            diagnostic_events=diagnostic_events,
         )
         try:
             async for chunk in candidate_stream:
@@ -4616,6 +4681,11 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
                 delta = event_data.get("delta")
                 event_type = event_data.get("type")
+                if event_type == 'diagnostic_event':
+                    # Diagnostics do not commit a fallback candidate or count
+                    # as model output, but should be visible immediately.
+                    yield chunk
+                    continue
                 substantive = (
                     isinstance(delta, str) and bool(delta.strip())
                 ) or (
@@ -4700,3 +4770,11 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
             return
         yield f'event: error\ndata: {json.dumps({"error": "All model candidates returned no substantive output", "status": 502})}\n\n'
         return
+
+# Role policies wrap inference only; the existing agent/approval loop is retained.
+from src.model_role_runtime import inference as _role_inference, streaming as _role_streaming
+llm_call_async = _role_inference(llm_call_async)
+stream_llm_with_fallback = _role_streaming(stream_llm_with_fallback)
+
+from src.model_role_runtime import synchronous as _role_synchronous
+llm_call = _role_synchronous(llm_call)

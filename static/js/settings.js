@@ -7,6 +7,7 @@ import { byId } from './settings/dom.js';
 import { postSettings as _postSettings } from './settings/api.js';
 import { initTtsSettings, initSttSettings } from './settings/speech.js';
 import { initDocumentWritingStyle } from './settings/writingStyle.js';
+import { initModelRoles } from './settings/modelRoles.js?v=20261028endpointrefresh2';
 import { initImageSettings } from './settings/imageModels.js';
 import { initAgentSettings } from './settings/agent.js';
 import { getSettingsRegistryIssues } from './settings/registry.js';
@@ -1927,6 +1928,12 @@ function initAll() {
   initSttSettings();
   initSearchSettings();
   initResearchSettings();
+  initModelRoles({
+    fetchEndpoints: _fetchModelEndpoints,
+    fillEndpoints: _fillEndpointSelect,
+    fillModels: _fillModelSelect,
+    onEndpointsRefresh: _registerAiEndpointRefresh,
+  });
   initResearchSearchSettings();
   initAgentSettings();
   initAppearance();
@@ -1938,6 +1945,9 @@ function initAll() {
   initReminderSettings();
   initUnifiedIntegrations();
   initDocumentWritingStyle();
+  import('./devices.js').then((m) => {
+    try { m.initDevicesSettings(); } catch (_) {}
+  }).catch(() => {});
 }
 
 

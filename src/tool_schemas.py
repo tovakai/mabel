@@ -289,11 +289,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command. Native execution requires enforced process/filesystem containment and fails closed when unavailable. Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The shell command to execute"}
+                    "command": {"type": "string", "description": "The shell command to execute"},
+                    "cwd": {"type": "string", "description": "Optional working directory for this command only. Absolute paths in the command stay independent of cwd. Omit to use the preferred cwd or the documented default workspace. This does not change authorization."}
                 },
                 "required": ["command"]
             }
@@ -318,11 +319,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Execute Python code to compute a result or test something. Native execution requires enforced containment and fails closed when unavailable. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "Python code to execute"}
+                    "code": {"type": "string", "description": "Python code to execute"},
+                    "cwd": {"type": "string", "description": "Optional working directory for this process only. Does not change which paths are authorized."}
                 },
                 "required": ["code"]
             }
@@ -577,7 +579,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_workspace",
-            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; code execution requires enforced containment and is unavailable when the required isolation cannot be established. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
@@ -614,6 +616,45 @@ FUNCTION_TOOL_SCHEMAS = [
                 },
                 "required": ["path", "old_string", "new_string"]
             }
+        }
+    },
+    {
+        "type":"function", "function":{
+            "name":"discover_tools",
+            "description":"Find registered tools for a task or conversational follow-up in any language. Use query for retrieval or names to expose up to six known tools (e.g. manage_calendar, manage_notes); omit both for a paginated capability catalog. Selected schemas appear on the next round; discovery grants no execution permission. The server asks for human approval where needed.",
+            "parameters":{"type":"object", "additionalProperties":False, "properties":{
+                "query":{"type":"string"}, "names":{"type":"array", "items":{"type":"string"}, "maxItems":6},
+                "offset":{"type":"integer", "minimum":0}
+            }}
+        }
+    },
+    {
+        "type": "function", "function": {
+            "name": "task_results",
+            "description": "Retrieve verified completed task results from this session. Interpret conversational references and request the latest relevant task with kind/query; the server supplies real identifiers. No rescan or filesystem access grant. Use classification/offset for bounded audit filename pages; missing owned means unmarked. Returns unavailable/changed explicitly.",
+            "parameters": {"type":"object", "additionalProperties":False, "properties": {
+                "kind":{"type":"string", "description":"Optional producer kind, e.g. markdown_property_audit; omit for latest task"},
+                "query":{"type":"string", "description":"Optional words from task title or directory; server requires a unique match"},
+                "classification":{"type":"string", "enum":["true","false","missing","invalid","uninspected","not_true"]},
+                "offset":{"type":"integer", "minimum":0, "maximum":1000}
+            }}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_audit",
+            "description": "Read-only bulk Markdown frontmatter audit. PREFER for collection metadata inspection over reading each file or running Bash/Python. Returns complete and discovered/inspected coverage, property_counts for true/false/missing/invalid/malformed/unreadable, errors and file classifications; follow next_offset with report_offset for remaining report entries; missing/false do not mean an error. Never modifies files. At most 1000 files, 2 MiB each, 32 MiB total; narrow the pattern if exceeded.",
+            "parameters": {"type": "object", "properties": {
+                "path": {"type": "string", "description": "Use the requested collection directory itself, not a broad workspace-root search. Defaults to workspace root for whole-workspace audits; omitted continuation fields reuse the receipt's selection."},
+                "glob": {"type": "string", "description": "Relative Markdown pattern, default **/*.md"},
+                "property": {"type": "string", "description": "Boolean frontmatter property to audit; default owned"},
+                "include_control_dirs": {"type": "boolean", "description": "Default false. Include conventional hidden/control/history directories only when explicitly requested by the user; never overrides resource policy."},
+                "classification": {"type": "string", "enum": ["true", "false", "missing", "invalid", "uninspected", "not_true"], "description": "Filter paginated filenames; not_true is false plus missing, not proof of physical non-ownership. Invalid includes malformed frontmatter. Aggregate counts remain for the whole audit."},
+                "require_current": {"type": "boolean", "description": "Check saved file and directory metadata before reusing a receipt; changed evidence requires a fresh authorized audit."},
+                "audit_id": {"type": "string", "description": "Copy the identifier returned by the initial audit; never invent one. Required to reuse its snapshot in a later request. Never grants resource access."},
+                "report_offset": {"type": "integer", "minimum": 0, "maximum": 1000, "description": "Omit for compact aggregate evidence. Supply an offset to retrieve filename details from the existing snapshot without re-reading files; follow next_offset until null."}
+            }}
         }
     },
     {
@@ -1306,14 +1347,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_settings",
-            "description": "Manage user preferences and settings. Use `disable_tool`/`enable_tool`/`list_tools` to turn individual tools on or off globally (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Use list/get/set/delete for free-form preferences.",
+            "description": "Manage user preferences and settings. Use `disable_tool`/`list_tools` to turn individual tools off globally or list what is disabled (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Disabled tools can only be re-enabled by the user in Settings > Agent Tools, never from chat. Use list/get/set/delete for free-form preferences.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "enable_tool", "list_tools"]},
+                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "list_tools"]},
                     "key": {"type": "string", "description": "Setting key (for get/set/delete)"},
                     "value": {"description": "Setting value (for set) — can be string, number, boolean, or object"},
-                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
+                    "tool": {"type": "string", "description": "Tool name to disable (for disable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
                 },
                 "required": ["action"]
             }
@@ -2405,3 +2446,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
 
     return ToolBlock(tool_type, content)
+
+# Native Obsidian tools share existing discovery and admission.
+from src.knowledge_engine.tools import schemas as knowledge_schemas
+FUNCTION_TOOL_SCHEMAS.extend(knowledge_schemas())

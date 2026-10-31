@@ -3,7 +3,7 @@
 TTS API routes — multi-provider (local Kokoro, API endpoint, browser).
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 import logging
@@ -28,7 +28,7 @@ def setup_tts_routes(tts_service):
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.post("/synthesize")
-    async def synthesize_speech(request: TTSRequest):
+    async def synthesize_speech(request: TTSRequest, http_request: Request = None):
         """Synthesize speech from text"""
         try:
             if not tts_service.available:
@@ -38,7 +38,10 @@ def setup_tts_routes(tts_service):
                 )
             
             if request.format == "base64":
-                audio_b64 = tts_service.synthesize_to_base64(request.text)
+                from src.auth_helpers import get_current_user
+                from src.model_role_runtime import role_scope
+                with role_scope('tts',get_current_user(http_request) if http_request else ''):
+                    audio_b64 = tts_service.synthesize_to_base64(request.text)
                 if not audio_b64:
                     raise HTTPException(
                         status_code=500,
@@ -47,7 +50,10 @@ def setup_tts_routes(tts_service):
                 return {"audio": audio_b64}
             
             else:  # audio format
-                audio_data = tts_service.synthesize(request.text)
+                from src.auth_helpers import get_current_user
+                from src.model_role_runtime import role_scope
+                with role_scope('tts',get_current_user(http_request) if http_request else ''):
+                    audio_data = tts_service.synthesize(request.text)
                 if not audio_data:
                     raise HTTPException(
                         status_code=500,

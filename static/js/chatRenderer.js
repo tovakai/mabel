@@ -7,13 +7,14 @@ import { generatedImageResult } from './generatedImageResult.js';
 import { svgifyEmoji } from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
 import { providerLogo, providerLabel } from './providers.js';
-import settingsModule from './settings.js?v=20260912writingstyle3';
+import settingsModule from './settings.js?v=20261028knowledge1';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { loadPanel } from './panels.js?v=20260909movepicklayer1';
 import { matchModelKey } from './model/matchKey.js';
 import { getTools } from './appConfig.js';
 import { getShowPersonaName } from './presets.js?v=20260908personaname1';
+import { contextOccupancy } from './contextMetrics.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -1941,7 +1942,7 @@ function _activateEntityAnchor(e, forcedAnchor = null) {
       else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
     }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
   } else if (kind === 'skill') {
-    import('./skills.js?v=20260909kebabconsistency1').then(mod => {
+    import('./skills.js?v=20261028agentapprovals1').then(mod => {
       const open = mod.openSkill || (mod.default && mod.default.openSkill);
       if (open) open(id);
     }).catch(() => {});
@@ -2766,7 +2767,6 @@ export function displayMetrics(messageElement, metrics) {
 
   // Context usage ring
   let ctxRing = null;
-  const ctxLen = metrics.context_length || 0;
   if (ctxPct !== undefined && ctxPct > 0) {
     const r = 6, stroke = 1.5;
     const circ = 2 * Math.PI * r;
@@ -2788,8 +2788,7 @@ export function displayMetrics(messageElement, metrics) {
       e.stopPropagation();
       document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-      const usedTokens = inputTokens || 0;
-      const totalCtx = ctxLen || 0;
+      const { used: usedTokens, capacity: totalCtx, estimated: estimatedContext } = contextOccupancy(metrics);
       const modelShort = model.split('/').pop();
       const fmtNum = n => n ? n.toLocaleString() : '?';
 
@@ -2801,13 +2800,14 @@ export function displayMetrics(messageElement, metrics) {
           <div class="ctx-bar-fill" style="width:${Math.min(ctxPct, 100)}%;background:${ctxColor};"></div>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-top:4px;opacity:0.6;">
-          <span>${fmtNum(usedTokens)} used</span>
+          <span>${fmtNum(usedTokens)} ${estimatedContext ? 'estimated ' : ''}used</span>
           <span>${fmtNum(totalCtx)} total</span>
         </div>
         <div style="margin-top:8px;font-size:0.8rem;">
           <div><span class="ctx-label">Model</span> ${modelShort}</div>
           <div><span class="ctx-label">Usage</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span></div>
           <div><span class="ctx-label">Window</span> ${fmtNum(totalCtx)} tokens</div>
+          ${inputTokens ? `<div><span class="ctx-label">Input tokens (${isReal ? 'summed reported' : 'estimated'})</span> ${fmtNum(inputTokens)}</div>` : ''}
         </div>
         ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
       `;
@@ -3062,6 +3062,9 @@ export function renderAskUserCard(payload, options) {
       aq.action.content || '',
       effects ? `Effects: ${effects}` : '',
       aq.action.workspace ? `Workspace: ${aq.action.workspace}` : '',
+      aq.expires_at ? `Approval expires: ${new Date(aq.expires_at * 1000).toLocaleString()}` : '',
+      aq.action.execution_environment ? `Execution: ${aq.action.execution_environment}` : '',
+      Array.isArray(aq.action.resources) ? aq.action.resources.map(r => `Resource (${r.role}): ${r.path}`).join('\n') : '',
       aq.action.document_id ? `Document: ${aq.action.document_id}` : '',
       aq.action.document_version != null ? `Document version: ${aq.action.document_version}` : '',
       aq.action.digest ? `Approval fingerprint: ${aq.action.digest}` : '',

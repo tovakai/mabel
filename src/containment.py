@@ -803,6 +803,8 @@ def unavailable_tool_result(exc: ContainmentUnavailable, *, tool: str) -> dict[s
     listed = ", ".join(sorted(exc.missing))
     return {
         "error": f"{tool}: containment unavailable ({listed}); command not executed",
+        "failure_kind": "containment_unavailable",
+        "executed": False,
         "exit_code": 1,
         "containment": {
             "mechanism": exc.mechanism_tried,

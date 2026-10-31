@@ -17,6 +17,8 @@ _CODENAV_SKIP_DIRS = frozenset({
     ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build",
     ".next", ".cache", "site-packages", ".idea", ".tox",
 })
+from src.agent_runtime.workspace_discovery import CONTROL_DIRECTORIES
+_CODENAV_SKIP_DIRS |= CONTROL_DIRECTORIES
 _CODENAV_MAX_HITS = 200
 _CODENAV_MAX_LINE = 400
 _GREP_TIMEOUT_SECONDS = 20
@@ -279,6 +281,7 @@ class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         raw_path, offset, limit = content.split("\n", 1)[0].strip(), 0, 0
+        grant_id = None
         _stripped = content.strip()
         if _stripped.startswith("{"):
             try:
@@ -287,12 +290,43 @@ class ReadFileTool:
                     return {"error": "read_file: expected a JSON object", "exit_code": 1}
                 raw_path_value = _a.get("path")
                 raw_path = raw_path_value.strip() if isinstance(raw_path_value, str) else ""
+                grant_raw = _a.get("grant_id") or _a.get("root")
+                grant_id = grant_raw.strip() if isinstance(grant_raw, str) else None
                 offset = int(_a.get("offset") or 0)
                 limit = int(_a.get("limit") or 0)
             except (json.JSONDecodeError, TypeError, ValueError):
                 return {"error": "read_file: expected valid JSON arguments", "exit_code": 1}
         if not raw_path:
             return {"error": "read_file: path required", "exit_code": 1}
+        # Prefer multi-root / remote scope resolution when a conversation scope is bound.
+        try:
+            from src.fs_devices.remote_ops import read_text_via_scope, ScopeSelectionError
+            from src.tool_execution import get_active_directory_scope
+            if get_active_directory_scope() is not None:
+                scoped = await asyncio.to_thread(
+                    read_text_via_scope, raw_path, grant_id=grant_id, max_bytes=MAX_READ_CHARS + 1
+                )
+                if not scoped.get("legacy"):
+                    data = scoped["text"]
+                    if offset > 0 or limit > 0:
+                        lines = data.splitlines(keepends=True)
+                        start = max(offset, 1) - 1
+                        stop = start + limit if limit > 0 else None
+                        data = "".join(lines[start:stop])
+                    if not (offset > 0 or limit > 0) and len(data) > MAX_READ_CHARS:
+                        data = data[:MAX_READ_CHARS] + f"\n... [truncated at {MAX_READ_CHARS} chars]"
+                    return {
+                        "output": data,
+                        "exit_code": 0,
+                        "grant_id": scoped.get("grant_id"),
+                        "device_id": scoped.get("device_id"),
+                        "source": scoped.get("display_name"),
+                        "backend": scoped.get("backend"),
+                    }
+        except ScopeSelectionError as e:
+            return {"error": f"read_file: {e}", "exit_code": 1}
+        except Exception:
+            pass
         try:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
@@ -422,6 +456,51 @@ class WriteFileTool:
             return {"error": str(error), "exit_code": 1}
         if not raw_path:
             return {"error": "write_file: path required", "exit_code": 1}
+        grant_id = None
+        if original.lstrip().startswith("{"):
+            try:
+                _args = json.loads(original)
+                if isinstance(_args, dict):
+                    _g = _args.get("grant_id") or _args.get("root")
+                    grant_id = _g.strip() if isinstance(_g, str) else None
+            except (TypeError, ValueError):
+                grant_id = None
+        try:
+            from src.fs_devices.remote_ops import (
+                ReadOnlyGrantError, ScopeSelectionError, resolve_scoped_target,
+                write_bytes_via_scope,
+            )
+            from src.tool_execution import get_active_directory_scope
+            if get_active_directory_scope() is not None:
+                target = resolve_scoped_target(raw_path, grant_id)
+                if not target.get("legacy") and target.get("backend") == "sftp":
+                    if not has_section:
+                        return {"error": "write_file: content required; missing content section", "exit_code": 1}
+                    body = _unwrap_fenced_source_body(body, target["path"])
+                    await asyncio.to_thread(
+                        write_bytes_via_scope,
+                        target["path"],
+                        body.encode("utf-8"),
+                        grant_id=target["grant_id"],
+                    )
+                    return {
+                        "output": f"Wrote {len(body)} chars to {target['path']}",
+                        "exit_code": 0,
+                        "grant_id": target.get("grant_id"),
+                        "device_id": target.get("device_id"),
+                        "source": target.get("display_name"),
+                        "backend": "sftp",
+                    }
+                if not target.get("legacy") and target.get("permission") == "ro":
+                    raise ReadOnlyGrantError(
+                        f"Directory '{target.get('display_name')}' is read-only"
+                    )
+        except ReadOnlyGrantError as e:
+            return {"error": f"write_file: {e}", "exit_code": 1}
+        except ScopeSelectionError as e:
+            return {"error": f"write_file: {e}", "exit_code": 1}
+        except Exception:
+            pass
         try:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:
@@ -830,12 +909,21 @@ class LsTool:
                 lines.append(f"  ... [{len(rows) - _CODENAV_MAX_HITS} more]")
             if not rows:
                 lines.append("  (empty)")
-            return "\n".join(lines), None
+            return ("\n".join(lines), len(rows), min(len(rows), _CODENAV_MAX_HITS)), None
 
         out, err = await asyncio.to_thread(_ls)
         if err:
             return {"error": err, "exit_code": 1}
-        return {"output": _truncate(out), "exit_code": 0}
+        text, total, shown = out
+        output = _truncate(text)
+        listing = {"kind": "directory_listing", "entries_discovered": total, "entries_returned": shown if output == text else None,
+                   "truncated": shown < total or output != text, "files_inspected": 0,
+                   "property_audit": False, "coverage_complete": False}
+        from src.agent_runtime.structured_audits import active_audit
+        audit = active_audit()
+        if audit is not None:
+            audit.observe_listing(root, listing)
+        return {"output": output, "listing": listing, "exit_code": 0}
 
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -942,7 +1030,15 @@ class GlobTool:
         out = "\n".join(_display_tool_path(path) for path in paths)
         if len(paths) >= _CODENAV_MAX_HITS:
             out += f"\n... [capped at {_CODENAV_MAX_HITS} files]"
-        return {"output": _truncate(out), "exit_code": 0}
+        output = _truncate(out)
+        listing = {"kind": "glob_listing", "entries_returned": len(paths) if output == out else None,
+                   "truncated": len(paths) >= _CODENAV_MAX_HITS or output != out,
+                   "files_inspected": 0, "property_audit": False, "coverage_complete": False}
+        from src.agent_runtime.structured_audits import active_audit
+        audit = active_audit()
+        if audit is not None:
+            audit.observe_listing(root, listing)
+        return {"output": output, "listing": listing, "exit_code": 0}
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
@@ -1351,19 +1447,38 @@ class GrepTool:
         return {"output": _truncate(out), "exit_code": 0}
 
 class GetWorkspaceTool:
-    """Report the active workspace folder (no args). File tools are confined to
-    it; the shell starts there (cwd) but is NOT sandboxed."""
+    """Report active directories / primary shell directory for this conversation."""
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import get_active_workspace
+        from src.tool_execution import get_active_directory_scope, get_active_workspace
+        scope = get_active_directory_scope()
+        if scope is not None and scope.roots:
+            lines = ["Active directories for this conversation:"]
+            for row in scope.context_table():
+                flags = []
+                if row.get("primary_shell"):
+                    flags.append("primary_shell")
+                if not row.get("available"):
+                    flags.append("unavailable")
+                flag_text = f" [{', '.join(flags)}]" if flags else ""
+                lines.append(
+                    f"- {row['label']} (grant_id={row['grant_id']}, device={row['device']}, "
+                    f"permission={row['permission']}, backend={row['backend']}){flag_text}"
+                )
+            lines.append(
+                "Pass grant_id in filesystem tool arguments when a path is ambiguous. "
+                "Shell/Python require an explicit primary local read/write directory."
+            )
+            return {"output": "\n".join(lines), "exit_code": 0, "active_directories": scope.context_table()}
         ws = get_active_workspace()
         if ws:
             return {
-                "output": "/workspace\n(File tools are confined to this folder; the shell starts "
-                          f"here but is not sandboxed and can reach outside it.)",
+                "output": "/workspace\n(File tools are confined to this folder. Code execution requires "
+                          "enforced containment and is unavailable when the required isolation cannot be established.)",
                 "exit_code": 0,
             }
         return {
-            "output": "No workspace is set. File tools use the default allowed roots; "
-                      "resolve paths from the user or use absolute paths.",
+            "output": "No active directories are selected for this conversation. "
+                      "Choose Allowed Directories in Settings, then activate them for the chat. "
+                      "Filesystem tools will not silently default to a broad root.",
             "exit_code": 0,
         }
