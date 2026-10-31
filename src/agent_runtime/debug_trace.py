@@ -63,7 +63,7 @@ def _sanitize_metadata(value):
              'prefill_ms','generation_ms','gen_tps','prefill_samples','generation_samples','retries','candidate_index','http_status',
              'tokens_before','tokens_after','messages_before','messages_after','memory_count',
              'unattributed_model_ms','first_token_ms','unattributed_first_token_ms','repeat_count','full_result_bytes','research_offered','batch_offered','input_growth_tokens',
-             'raw_chars','visible_chars','offered_count','executable_count',
+             'raw_chars','visible_chars','reasoning_chars','tool_call_count','offered_count','executable_count',
              'authorized_count','denied_count','catalog_count','discovered_count','next_offset'}
     labels={'model','endpoint_id','failure_kind','usage_source','context_usage_source','stream','wait_duration','approval_wait','retrieval_mode','retry_reason','completion_status','approval_scope','approval_wait_source','role','timing_status','completion_basis','queue_timing','cache_timing','model_load_timing',
             'error_class','recovery_source','selection_mode','semantic_index'}
@@ -240,6 +240,7 @@ class TraceObserver:
         self.turn='turn_'+uuid4().hex
         self.started=started if started is not None else time.monotonic()
         self.tools={}; self.model_started=None; self.first_token=False; self.first_token_ms=None; self.seen_calls={}
+        self.visible_chars=0; self.reasoning_chars=0; self.stream_tool_calls=0
         self.tool_ms=0; self.model_ms=0; self.model_requests=0; self.errors=0; self.fallbacks=0; self.retries=0; self.stream_error=False
         self.prefill_ms=0; self.generation_ms=0; self.prefill_samples=0; self.generation_samples=0
         self.approval_ms=None; self._approval_recorded=False
@@ -268,6 +269,7 @@ class TraceObserver:
                 operation=_name(data.get('operation')); status=_name(data.get('status'))
                 if operation=='model_request' and status=='started':
                     self.model_started=now; self.first_token=False; self.first_token_ms=None; self.model_requests+=1
+                    self.visible_chars=0; self.reasoning_chars=0; self.stream_tool_calls=0
                 if operation=='model_retry': self.retries+=1
                 duration=(now-self.model_started)*1000 if self.model_started and (
                     (operation=='model_request' and status in {'completed','error','empty'}) or operation=='first_token') else None
@@ -292,6 +294,10 @@ class TraceObserver:
                     'prefill_ms','generation_ms','gen_tps','candidate_index',
                     'research_offered','batch_offered','raw_chars','visible_chars',
                 ) if _number(data.get(k)) is not None}
+                if operation=='model_request' and status in {'completed','error','empty'}:
+                    metadata['visible_chars']=self.visible_chars
+                    metadata['reasoning_chars']=self.reasoning_chars
+                    metadata['tool_call_count']=self.stream_tool_calls
                 for field in ('failure_kind','error_class','recovery_source'):
                     if data.get(field): metadata[field]=_name(data[field])
                 if operation=='model_request' and status=='completed' and duration is not None:
@@ -424,11 +430,21 @@ class TraceObserver:
                 self.emit('MODEL','fallback','activated',severity='WARN',metadata=metadata)
             elif kind=='metrics' and isinstance(data.get('data'),dict):
                 metric=data['data']; self.usage={k:metric.get(k) for k in ('input_tokens','output_tokens','request_context_tokens','context_length','usage_source','context_usage_source') if k in metric}
-            elif 'delta' in data and not self.first_token:
-                self.first_token=True
-                duration=(now-self.model_started)*1000 if self.model_started else None
-                self.emit('MODEL','first_token','received',duration_ms=duration,
-                          metadata={'stream':'reasoning' if data.get('thinking') else 'final'})
+            elif kind=='tool_calls' and self.model_started is not None:
+                calls=data.get('calls')
+                if isinstance(calls,list): self.stream_tool_calls+=min(len(calls),64)
+            elif 'delta' in data:
+                delta=data.get('delta')
+                if isinstance(delta,str) and self.model_started is not None:
+                    if data.get('thinking') is True:
+                        self.reasoning_chars+=len(delta)
+                    else:
+                        self.visible_chars+=len(delta)
+                if not self.first_token:
+                    self.first_token=True
+                    duration=(now-self.model_started)*1000 if self.model_started else None
+                    self.emit('MODEL','first_token','received',duration_ms=duration,
+                              metadata={'stream':'reasoning' if data.get('thinking') else 'final'})
 
     def finish(self, status):
         if status=='completed' and self.stream_error: status='error'
