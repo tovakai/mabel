@@ -128,3 +128,47 @@ def test_role_assignment_uses_real_endpoint_owner_and_capability_checks(tmp_path
             db.query(database.ModelEndpoint).filter_by(id='alice-chat').update({'is_enabled':False})
             db.commit()
         with pytest.raises(roles.RoleUnavailable):roles.resolve(assignment,'alice',required='tools')
+
+
+@pytest.mark.asyncio
+async def test_unavailable_utility_role_uses_explicit_foreground_route(monkeypatch):
+    """An unavailable synthesis role must not strand an otherwise live chat turn."""
+    primary = roles.Assignment('missing-endpoint', 'stale-model')
+    monkeypatch.setattr(roles, 'candidates', lambda role, owner='': [primary])
+    monkeypatch.setattr(roles, 'resolve', lambda assignment, owner='', required=None:
+                        (_ for _ in ()).throw(roles.RoleUnavailable('missing endpoint')))
+    monkeypatch.setattr(roles, 'get_policy', lambda role, owner='':
+                        {'timeout': 5, 'retries': 0, 'cooldown': 30, 'failure_threshold': 1})
+    recorded = []
+
+    async def fake_llm(url, model, messages, **kwargs):
+        recorded.append((url, model, kwargs.get('headers')))
+        return 'Recovered answer'
+
+    from src import llm_core
+    monkeypatch.setattr(llm_core, 'llm_call_async', fake_llm)
+    result = await roles.call('utility', [{'role': 'user', 'content': 'Hello'}],
+                              primary_route=('http://localhost:8080/v1', 'gyro-s', {'Authorization': 'Bearer local'}))
+    assert result == 'Recovered answer'
+    assert recorded == [('http://localhost:8080/v1', 'gyro-s', {'Authorization': 'Bearer local'})]
+
+
+@pytest.mark.asyncio
+async def test_valid_utility_role_is_not_overridden_by_foreground_route(monkeypatch):
+    chosen = roles.Assignment('utility-ep', 'utility-model')
+    monkeypatch.setattr(roles, 'candidates', lambda role, owner='': [chosen])
+    monkeypatch.setattr(roles, 'resolve', lambda assignment, owner='', required=None:
+                        roles.Route(assignment, 'http://localhost:8090/v1', {}))
+    monkeypatch.setattr(roles, 'get_policy', lambda role, owner='':
+                        {'timeout': 5, 'retries': 0, 'cooldown': 30, 'failure_threshold': 1})
+    recorded = []
+
+    async def fake_llm(url, model, messages, **kwargs):
+        recorded.append((url, model))
+        return 'Utility answer'
+
+    from src import llm_core
+    monkeypatch.setattr(llm_core, 'llm_call_async', fake_llm)
+    result = await roles.call('utility', [], primary_route=('http://localhost:8080/v1', 'gyro-s', {}))
+    assert result == 'Utility answer'
+    assert recorded == [('http://localhost:8090/v1', 'utility-model')]
