@@ -46,7 +46,7 @@ _TEST_STATUS_CLAIM = re.compile(
     r'(?:pass(?:ed|ing)?|succeeded|successful(?:ly)?|green)\b|'
     r'\b(?:zero|no|0)\s+(?:test\s+)?failures\b', re.I)
 _EXECUTION_CLAIM = re.compile(
-    r'\b(?:(?:I|we|I\'ve|we\'ve|and)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed|sent|deleted|submitted|published|deployed|configured|uploaded)|'
+    r'\b(?:(?:I|we|I\'ve|we\'ve)\s+(?:have\s+)?(?:successfully\s+)?(?:ran|executed|tested|verified|created|updated|modified|wrote|saved|fixed|completed|sent|deleted|submitted|published|deployed|configured|uploaded)|'
     rf'(?:file|artifact|command|script|service|server|email|message|record|resource|{_ARTIFACT_PATH})\s+(?:was\s+|has\s+been\s+|is\s+)?(?:successfully\s+)?(?:created|updated|written|saved|executed|started|sent|deleted|submitted|published|deployed|configured)|'
     r'(?:successfully\s+)(?:ran|executed|created|updated|saved|completed|sent|deleted|submitted|published|deployed)|'
     r'(?:the\s+)?(?:remote\s+)?(?:operation|request|call|mutation|action)\s+(?:was\s+|has\s+)?(?:successfully\s+)?(?:completed|succeeded|finished))\b', re.I)
@@ -79,6 +79,19 @@ def _current_run_claims(statement: str, *, execution_required: bool) -> list[tup
     if _BARE_SUCCESS.fullmatch(statement):
         return [('terminal', statement)] if execution_required else []
     actions = list(_EXECUTION_CLAIM.finditer(statement))
+    # An isolated conjunction is not evidence that the assistant performed
+    # anything. Documentation summaries regularly say "the team designed and
+    # updated..." or "the notes discuss X and created Y". Only extend a
+    # first-person execution claim when an earlier first-person action in the
+    # *same statement* establishes the actor.
+    if any(re.match(r"\b(?:I|we|I['’]ve|we['’]ve)\b", m.group(), re.I)
+           for m in actions):
+        actions.extend(re.finditer(
+            r"\band\s+(?:have\s+)?(?:successfully\s+)?"
+            r"(?:ran|executed|tested|verified|created|updated|modified|"
+            r"wrote|saved|fixed|completed|sent|deleted|submitted|published|"
+            r"deployed|configured|uploaded)\b", statement, re.I))
+        actions.sort(key=lambda m: m.start())
     leading = re.match(r'^\s*(?:successfully\s+)?(?:created|updated|modified|wrote|saved)\b', statement, re.I)
     if leading:
         actions.insert(0, leading)
