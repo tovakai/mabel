@@ -90,6 +90,10 @@ class ChatProcessor:
     # Minimum similarity score for RAG results to be injected
     RAG_SIMILARITY_THRESHOLD = 0.35
     MEMORY_CONTEXT_LIMIT = 5
+    # A user explicitly asking for an overview merits broader recall, without
+    # flooding every ordinary conversation with private memory.
+    PERSONAL_OVERVIEW_MEMORY_LIMIT = 24
+    PERSONAL_OVERVIEW_CHAR_LIMIT = 6500
     PINNED_MEMORY_LIMIT = MEMORY_CONTEXT_LIMIT
     CORE_MEMORY_AUTO_INJECT_LIMIT = 5
 
@@ -381,13 +385,30 @@ class ChatProcessor:
         if use_memory and not incognito and (personal_overview or not self._is_memory_management_request(message)):
             mem_entries = self.memory_manager.load(owner=owner)
 
-            pinned = [m for m in mem_entries if m.get("pinned")]
-            extended = [m for m in mem_entries if not m.get("pinned")]
+            if personal_overview:
+                # Diversify across the entire owner-scoped store before
+                # splitting pinned and extended. Otherwise five pinned facts
+                # consume every slot and other categories disappear.
+                overview = self._select_personal_overview_memories(
+                    mem_entries, self.PERSONAL_OVERVIEW_MEMORY_LIMIT,
+                )
+                capped, used_chars = [], 0
+                for memory in overview:
+                    text = str(memory.get("text") or "").strip()
+                    if not text or used_chars + len(text) > self.PERSONAL_OVERVIEW_CHAR_LIMIT:
+                        continue
+                    capped.append(memory)
+                    used_chars += len(text)
+                pinned = [m for m in capped if m.get("pinned")]
+                extended = [m for m in capped if not m.get("pinned")]
+            else:
+                pinned = [m for m in mem_entries if m.get("pinned")]
+                extended = [m for m in mem_entries if not m.get("pinned")]
 
             _used_ids: list = []
             selected_pinned = (
-                self._select_personal_overview_memories(pinned, self.PINNED_MEMORY_LIMIT)
-                if personal_overview else self._select_pinned_memories(message, pinned)
+                pinned if personal_overview
+                else self._select_pinned_memories(message, pinned)
             )
             if selected_pinned:
                 pinned_text = "\n- ".join([m["text"] for m in selected_pinned])
@@ -403,10 +424,13 @@ class ChatProcessor:
                     if m.get("id"):
                         _used_ids.append(m["id"])
 
-            remaining_memory_slots = max(self.MEMORY_CONTEXT_LIMIT - len(self._last_used_memories), 0)
+            remaining_memory_slots = max(
+                (self.PERSONAL_OVERVIEW_MEMORY_LIMIT if personal_overview
+                 else self.MEMORY_CONTEXT_LIMIT) - len(self._last_used_memories), 0,
+            )
             if extended and remaining_memory_slots:
                 relevant = (
-                    self._select_personal_overview_memories(extended, remaining_memory_slots)
+                    extended[:remaining_memory_slots]
                     if personal_overview else self._hybrid_retrieve(message, extended, k=remaining_memory_slots)
                 )
                 if relevant:
@@ -414,7 +438,7 @@ class ChatProcessor:
                     preface.append(untrusted_context_message(
                         "saved memory: retrieved context",
                         (
-                            ("A bounded sample of saved memory, not the complete memory inventory. "
+                            ("Saved personal context relevant to the user's question; it may not be exhaustive. "
                              if personal_overview else "Memory context. Do not reference unless the user asks "
                              "about these topics. ")
                             + f"\n{ext_text}"
