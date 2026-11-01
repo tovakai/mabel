@@ -28,7 +28,10 @@ def render(*, checkout: Path, python: Path, env_file: Path, every_minutes: int,
     environment = _unit_path(env_file)
     common = (
         "[Unit]\nDescription=Mabel Obsidian knowledge index maintenance\n"
-        "After=network-online.target\nWants=network-online.target\n\n"
+        # network-online.target is a system-level target and cannot be
+        # depended upon reliably by a user manager. The embedding timer
+        # retries naturally when Dottie comes online.
+        "\n"
         "[Service]\n"
         f"WorkingDirectory={root}\nEnvironmentFile={environment}\n"
         "UMask=0077\nNice=10\nIOSchedulingClass=idle\n"
