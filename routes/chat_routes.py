@@ -2489,6 +2489,7 @@ def setup_chat_routes(
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
+            allow_episodic_capture=not is_internal_tool_request(request),
         )
 
         return {
@@ -4726,6 +4727,9 @@ def setup_chat_routes(
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     allow_background_extraction=_post_response_extraction_allowed(
                                         tools_blocked=tool_policy.block_all_tool_calls,
                                         tool_approval_continuation=tool_approval_continuation,
@@ -5133,10 +5137,13 @@ def setup_chat_routes(
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
-                                                            agent_rounds=_agent_rounds,
+                                    agent_rounds=_agent_rounds,
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     extract_skills=(
                                         user_requested_agent
                                         and not tool_approval_continuation
