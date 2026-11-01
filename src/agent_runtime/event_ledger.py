@@ -152,7 +152,7 @@ class Ledger:
         if not isinstance(event, Event):
             raise TypeError('Expected Event')
         event.validate()
-        raw = (json.dumps(asdict(event), ensure_ascii=False, separators=(',', ':')) + '\\n').encode('utf-8')
+        raw = (json.dumps(asdict(event), ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
         if len(raw) > 16384:
             raise LedgerError('Event too large')
         with _locked(self.path):
@@ -160,7 +160,7 @@ class Ledger:
                 with self.path.open('rb') as stream:
                     for number, line in enumerate(stream, 1):
                         try:
-                            if not line.endswith(b'\\n'):
+                            if not line.endswith(b'\n'):
                                 raise LedgerError('Incomplete ledger record')
                             old = Event.parse(json.loads(line))
                         except (ValueError, UnicodeError, TypeError) as error:
