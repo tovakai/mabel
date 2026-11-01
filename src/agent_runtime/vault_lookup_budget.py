@@ -28,9 +28,20 @@ _DEEP = re.compile(
 )
 
 
+_PUBLIC_WEB_ONLY = re.compile(
+    r"\b(?:on\s+the\s+web|on\s+the\s+internet|online|"
+    r"on\s+pypi|on\s+github|on\s+a\s+website)\b", re.I,
+)
+
+
 def simple_vault_lookup(text: str) -> bool:
     text = str(text or "").strip()
-    return bool(_LOOKUP.search(text) and _VAULT_TOPIC.search(text) and not _DEEP.search(text))
+    return bool(
+        _LOOKUP.search(text)
+        and _VAULT_TOPIC.search(text)
+        and not _DEEP.search(text)
+        and not _PUBLIC_WEB_ONLY.search(text)
+    )
 
 
 @dataclass
