@@ -8,16 +8,16 @@ from src.agent_runtime.vault_lookup_budget import (
 )
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("user_text", [
     "Find my documentation about Mabel in my vault.",
     "Locate my Obsidian notes on Curiosity Drive.",
     "Where is the Markdown file for the roadmap?",
 ])
-def test_document_locator_turn_uses_budget(request):
-    assert simple_vault_lookup(request)
+def test_document_locator_turn_uses_budget(user_text):
+    assert simple_vault_lookup(user_text)
 
 
-@pytest.mark.parametrize("request", [
+@pytest.mark.parametrize("user_text", [
     "Audit all my vault's properties.",
     "Find and compare every note in my Obsidian vault.",
     "Research the Mabel architecture deeply across my vault.",
@@ -25,8 +25,8 @@ def test_document_locator_turn_uses_budget(request):
     "Explain my documentation architecture.",
     "Find documentation for a Python library on the web.",
 ])
-def test_deep_write_or_unrelated_requests_are_not_capped(request):
-    assert not simple_vault_lookup(request)
+def test_deep_write_or_unrelated_requests_are_not_capped(user_text):
+    assert not simple_vault_lookup(user_text)
 
 
 def _record(tool, *, success=True):
