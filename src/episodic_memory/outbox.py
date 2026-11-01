@@ -28,7 +28,7 @@ class DurableEventSink(Protocol):
 class DeliveryReceipt:
     attempted: int
     acknowledged: int
-    remaining: int
+    pending_next_page: int
 
 
 def flush_candidate_events(
@@ -42,6 +42,7 @@ def flush_candidate_events(
     """
     events = queue.pending_events(limit=limit)
     acknowledged = 0
+    attempted = 0
     for entry in events:
         payload = entry["payload"]
         if not isinstance(payload, dict) or (
@@ -61,12 +62,13 @@ def flush_candidate_events(
             "privacy": "metadata_only",
             "metadata": payload,
         }
+        attempted += 1
         result = sink.append_once(full_event)
         if result is not True:
             break
         if queue.mark_event_delivered(entry["id"]):
             acknowledged += 1
     return DeliveryReceipt(
-        attempted=len(events), acknowledged=acknowledged,
-        remaining=len(queue.pending_events(limit=100)),
+        attempted=attempted, acknowledged=acknowledged,
+        pending_next_page=len(queue.pending_events(limit=100)),
     )
