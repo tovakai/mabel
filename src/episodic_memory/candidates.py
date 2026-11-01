@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 from typing import Iterator
@@ -229,7 +230,9 @@ class CandidateQueue:
             raise CandidateAdmissionError(
                 "Only reject, defer or quarantine are allowed; promotion requires a separate verified vault writer"
             )
-        reason = _bounded(reason, "decision reason", 500)
+        reason = _bounded(reason, "decision reason code", 64)
+        if re.fullmatch(r"[a-z][a-z0-9_]*", reason) is None:
+            raise CandidateAdmissionError("Decision rationale must be a short machine-readable reason code")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
