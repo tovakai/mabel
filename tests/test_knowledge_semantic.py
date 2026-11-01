@@ -43,7 +43,10 @@ async def test_real_sqlite_vec_incremental_persistence_and_deletion(index,vault,
     assert (await semantic.index_embeddings(index))['generated']==0
     same=VaultIndex(vault[0],owner='alice',cache_dir=vault[1])
     results=await semantic.search(same,'tolerans',mode='hybrid')
-    assert results['matches'] and results['services']['embedding']['model']=='embed'
+    assert results['matches'] and results['services']['embedding'].get('model')=='embed', (
+        f"Embedding search degradation: {results.get('services')!r}; "
+        f"vector coverage: {results.get('embedding_coverage')!r}"
+    )
     assert all('start_line' in item for item in results['matches'])
     with index.connect() as db:
         before={r['chunk_id'] for r in db.execute('SELECT * FROM chunk_vectors')}
@@ -96,7 +99,10 @@ async def test_compatible_endpoint_fallback_reuses_vectors(index,routing,monkeyp
     await semantic.index_embeddings(index)
     failed[0]=True
     result=await semantic.search(index,'tolerans',mode='semantic',property_filters={'owned':True})
-    assert result['matches'] and result['services']['embedding']['fallback_active']
+    assert result['matches'] and result['services']['embedding'].get('fallback_active'), (
+        f"Embedding failover degradation: {result.get('services')!r}; "
+        f"vector coverage: {result.get('embedding_coverage')!r}"
+    )
     assert {r['rel_path'] for r in result['matches']}=={'Projects/Lid.md'}
 
 
