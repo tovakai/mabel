@@ -1,5 +1,11 @@
 # Obsidian knowledge engine
 
+For opt-in **continuous Arch indexing + remote Dottie BGE-M3 embeddings**, see
+[the systemd installation runbook](../operations/dottie-knowledge-indexing.md).
+The source index stays local on Arch, while only embedding API requests are
+sent to Dottie's separately configured server. The watch service and embedding
+timer are independent; no daemon is implicitly started by Mabel itself.
+
 ## Repository integration inspection
 
 The working tree contains agent-reliability and concurrent multi-device filesystem
