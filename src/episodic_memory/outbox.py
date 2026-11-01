@@ -33,6 +33,13 @@ def _event(entry: dict) -> Event:
     references = ["candidate_" + candidate_id]
     if isinstance(source_ref, str) and source_ref:
         references.append("source_" + sha256(source_ref.encode("utf-8")).hexdigest())
+    if entry["kind"] == "memory.candidate_merged":
+        target_id = payload.get("target_candidate_id")
+        if not isinstance(target_id, str) or len(target_id) != 32 or any(
+            char not in "0123456789abcdef" for char in target_id
+        ):
+            raise CandidateAdmissionError("Merged event is missing its opaque target")
+        references.append("candidate_" + target_id)
     cause = payload.get("source_event_id")
     causes = (cause,) if isinstance(cause, str) and cause.startswith("evt_") else ()
     # The ledger records opaque source identity, decision and causation only.
