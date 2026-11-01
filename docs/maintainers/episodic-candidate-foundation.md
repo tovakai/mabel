@@ -25,9 +25,13 @@ Obsidian vault mutation.
   after process restart. Rejections, deferrals and quarantines are explicit.
   **No promotion, merge, recall or autobiographical injection exists yet.**
 - Event **outbox**: every database mutation atomically enqueues a tiny,
-  typed transition envelope with a stable event ID. This is an unpublished
-  delivery buffer for the future Phase 00 ledger adapter, **not a second
-  authoritative ledger**. No automatic event delivery is running.
+  typed transition envelope with a stable event ID. The explicit
+  `flush_candidate_events(queue, ledger)` adapter delivers those events into
+  the **already implemented Phase 00** JSONL event ledger
+  (`src/agent_runtime/event_ledger.py`). The ledger now recognizes the
+  memory event family, and `Ledger.append_once` deduplicates replay after
+  a crash. The outbox is not a second authoritative ledger.
+  No background publishing or production capture is enabled.
 - No heavy model inference, automatic extraction, external model/server
   dependency, scheduler, background loop, Markdown write or vault access.
 
@@ -36,42 +40,58 @@ The queue's caller must choose a local, non-synchronized state directory
 pass the user's `Core of Truth` as a `protected_roots` path. Never place
 the SQLite DB, `-wal` or `-shm` alongside synced Markdown.
 
-## Things deliberately NOT implemented
+## Phase 00 is already implemented. Verified integration point
 
-The current action journal and effect log are focused on execution receipts
-and operation effects; they are not yet shown to implement the proposed
-`memory.candidate_*` typed event families. Consequently, this scaffold
-does not claim Phase 00.5 transition/event integration. It must not be wired
-to live chat until the actual typed ledger schema is inspected and a
-durable idempotent publisher is provided.
+The original Phase 00 code **is present** on this branch, inherited from
+`feat/automatic-dottie-vault-indexing-20261101`:
+- `src/agent_runtime/event_ledger.py`: strict typed JSONL ledger, locking,
+  reader and CLI;
+- `src/agent_runtime/durable_jobs.py`: fenced leases, jobs and receipts;
+- `docs/maintainers/phase0-contract.md` and `phase0-validation.md`:
+  contracts and previous Windows tests;
+- `tests/test_phase0_foundations.py`: ledger and job lifecycle tests.
+
+Do not build another ledger or state machine. The **only Phase 00 extension**
+in this slice is registering the proposed memory event types and adding
+`Ledger.append_once(Event)` to safely publish already-created event IDs
+with an exact-payload replay check. This is a cross-process lock + linear
+scan, suitable for small local ledgers; benchmark/optimize it before
+high-frequency event publication.
+
+The currently staged events use the existing strict event envelope, so they
+publish only opaque candidate/source references and decision codes. Their
+full proposals and interpretations stay in owner-scoped local SQLite. A
+source event that is not a canonical `evt_...` ledger event is stored as a
+source reference, not asserted as an existing causal ledger link.
+
+## Things deliberately NOT implemented
 
 The following are separate integration gates:
 
-1. Find/confirm the Phase 00 typed event-ledger implementation; implement a
-   publisher with idempotent `event_id`, publish-before-ack semantics,
-   recovery of unacknowledged outbox entries, privacy filtering and
-   testable authorization. A crash after ledger write but before outbox
-   acknowledgement must not create duplicate events.
-2. Bind the capture policy to actual memory-enabled/incognito/no-memory
-   session settings and honor user deletion/retention controls.
-3. Build bounded extraction and *trusted* source verification. A model's
-   `source_kind` or self-interpretation is not a verification receipt.
-4. Establish Mabel's writable vault target independently of Core of Truth.
-   Only after source proof, explicit review and event-ledger integration
-   implement promote/merge → stable-ID Markdown under `memory/`.
-5. Add association graph and lexical recall beside existing fact memory,
-   then opt-in prompt injection capped at a few short snippets, with
-   negative retrieval fallback. Defer automatic decay, dreams and
-   Curiosity Whisper to later phases.
+1. Bind capture to actual completed chat/agent-turn evidence, with trusted
+   receipt identifiers, real memory-enabled/incognito/no-memory preferences,
+   deletion/retention semantics and no extra foreground inference. Do not
+   accept model-authored receipts as tool evidence.
+2. Build bounded candidate extraction and source verification. A model's
+   self-interpretation is not a verified autobiographical occurrence.
+3. Establish Mabel's writable vault target independently of Core of Truth.
+   Once source proof and the existing authorization path are in place,
+   implement promotion/merge into stable-ID Markdown under Mabel's `memory/`.
+4. Add association graph, lexical and optionally BGE-M3 recall beside
+   existing factual memory. Only after tests, enable bounded opt-in
+   conversational injection; retain model-independent fallback.
 
-No data from a user's actual conversation, Obsidian source vault or
-legacy `memory.json` has been migrated, modified or collected by this change.
+No data from real conversations, Obsidian notes or `memory.json` have been
+migrated, modified or collected by this change. Delivery is explicit and
+disabled unless called by trusted integration code.
 
 ## Developer tests (synthetic temporary databases only)
 
 ```bash
 .venv/bin/python -m pytest -q --tb=short \
-  tests/test_episodic_candidate_foundation.py
+  tests/test_episodic_candidate_foundation.py \
+  tests/test_episodic_phase0_delivery.py \
+  tests/test_phase0_foundations.py
 ```
 
 The tests cover disabled/incognito capture, source identity, duplicate
