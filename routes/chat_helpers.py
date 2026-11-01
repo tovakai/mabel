@@ -1767,9 +1767,9 @@ def run_post_response_tasks(
                         policy=CapturePolicy(
                             episodic_enabled=True,
                             memory_enabled=(
-                                uprefs.get("memory_enabled", True) is not False
-                                and getattr(sess, "memory_extraction_enabled", True) is not False
-                                and getattr(sess, "memory_injection_enabled", True) is not False
+                                bool(uprefs.get("memory_enabled", True))
+                                and bool(getattr(sess, "memory_extraction_enabled", True))
+                                and bool(getattr(sess, "memory_injection_enabled", True))
                             ),
                             incognito=incognito,
                         ),
