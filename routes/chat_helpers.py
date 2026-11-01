@@ -1714,6 +1714,9 @@ def run_post_response_tasks(
     owner: str = None,
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
+    no_memory: bool = False,
+    allow_episodic_capture: bool = True,
+    saved_assistant_message_id: str | int | None = None,
     preset_manager=None,
     persona_memory_schema: str = "general",
 ):
@@ -1732,6 +1735,49 @@ def run_post_response_tasks(
     turn's request too.
     """
     _extraction_jobs: list = []
+
+    # Phase 00.5 capture: a cheap, deterministic source receipt, not an LLM
+    # extraction job. No foreground endpoint requests and no vault writes.
+    # Pilot-only env gate, disabled until operator enables the experiment.
+    if allow_episodic_capture and not compare_mode and not incognito and not no_memory:
+        import os
+        if os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {"1", "true", "yes"}:
+            try:
+                from pathlib import Path
+                from src.constants import DATA_DIR
+                from src.episodic_memory import CapturePolicy
+                from src.episodic_memory.capture import capture_completed_turn
+
+                _history = getattr(sess, "history", ()) or ()
+                _last = _history[-1] if _history else None
+                _meta = getattr(_last, "metadata", None)
+                _saved_id = saved_assistant_message_id
+                if _saved_id is None and isinstance(_meta, dict):
+                    _saved_id = _meta.get("_db_id")
+                _saved_role = getattr(_last, "role", None)
+                _saved_content = getattr(_last, "content", None)
+                if _saved_role == "assistant" and isinstance(_saved_content, str):
+                    capture_completed_turn(
+                        storage_dir=Path(DATA_DIR) / "episodic_candidates",
+                        owner=owner or getattr(sess, "owner", None),
+                        session_id=session_id,
+                        assistant_message_id=_saved_id,
+                        user_message=message,
+                        assistant_message=_saved_content,
+                        policy=CapturePolicy(
+                            episodic_enabled=True,
+                            memory_enabled=(
+                                uprefs.get("memory_enabled", True) is not False
+                                and getattr(sess, "memory_extraction_enabled", True) is not False
+                                and getattr(sess, "memory_injection_enabled", True) is not False
+                            ),
+                            incognito=incognito,
+                        ),
+                    )
+            except Exception:
+                # Never derail chat completion because an experimental memory
+                # observation fails. Trace the failure for the operator.
+                logger.warning("[episodic] completed-turn capture failed", exc_info=True)
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
