@@ -229,6 +229,7 @@ async def test_worker_startup_valueerror_reports_phase_without_leaking_exception
     assert result['worker_execution']['status'] == 'failed'
     assert result['worker_execution']['phase'] == 'opening_agent_stream'
     assert result['worker_execution']['failure_type'] == 'ValueError'
+    assert result['worker_execution']['model_inference_confirmed'] is False
     assert result['worker_execution']['stream_events'] == 0
     assert result['worker_execution']['tool_reads'] == 0
     assert 'secret-vault' not in json.dumps(result)
