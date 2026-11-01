@@ -2,7 +2,7 @@
 
 This module has no hooks into chat, memory.json, prompts, agent autonomy or
 Obsidian writes. All stored candidates are non-recallable pending suggestions.
-The outbox is a *delivery buffer* for a future Phase 00 typed-ledger adapter,
+The outbox is a *delivery buffer* for the existing Phase 00 typed event ledger,
 not a replacement event ledger. Do not enable promotion without that adapter,
 source verification, and a separately approved Mabel-vault write boundary.
 """
@@ -91,8 +91,8 @@ class CandidateQueue:
 
     Only proposal and negative/deferred decisions are supported. There is no
     promote/merge path, recall hook, extraction, model call, or Markdown write.
-    All state changes enqueue typed event envelopes transactionally; the future
-    Phase 00 event-ledger adapter must publish+ack them using stable event_id.
+    All state changes enqueue typed event envelopes transactionally; the
+    explicit Phase 00 adapter publishes and acks using stable event IDs.
     """
 
     def __init__(self, storage_dir: str | Path, *, owner: str,
