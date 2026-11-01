@@ -22,7 +22,19 @@ def watch(index, *, interval=0.5, reconcile_seconds=60, stop=None, after_scan=No
         if stamp != previous:
             previous, dirty_since = stamp, clock
         if clock-last_full>=reconcile_seconds or dirty_since is not None and clock-dirty_since>=interval:
-            index.reconcile()
+            result = index.reconcile()
+            # Expose progress to systemd's journal without logging note contents,
+            # file paths, role secrets, or model prompts.
+            print(json.dumps({
+                'event': 'vault_index_reconciled',
+                'generation': result.get('generation'),
+                'last_scan': result.get('last_scan'),
+                'notes': result.get('notes'),
+                'chunks': result.get('chunks'),
+                'edges': result.get('edges'),
+                'changed': result.get('changed'),
+                'scan_error_count': len(result.get('scan_errors') or {}),
+            }, ensure_ascii=False), flush=True)
             if after_scan is not None:
                 after_scan()
             last_full, dirty_since = clock, None
