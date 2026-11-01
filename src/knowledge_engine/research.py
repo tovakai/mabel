@@ -273,6 +273,7 @@ async def dispatch(content,ctx):
     executed_model=usable[0].assignment.model
     worker_phase='starting'
     worker_stream_events=0
+    worker_provider_usage=None
     worker_error=None
     try:
         async with asyncio.timeout(budget.max_seconds):
@@ -298,7 +299,17 @@ async def dispatch(content,ctx):
                             if event.get('type')=='fallback':
                                 executed_model=event.get('answered_by') or executed_model
                             if event.get('type')=='metrics':
-                                executed_model=event.get('data',{}).get('model') or executed_model
+                                _metrics=event.get('data',{})
+                                if isinstance(_metrics,dict):
+                                    executed_model=_metrics.get('model') or executed_model
+                                    if (_metrics.get('usage_source')=='real'
+                                            and isinstance(_metrics.get('input_tokens'),int)
+                                            and _metrics['input_tokens']>0):
+                                        worker_provider_usage={
+                                            'model':str(_metrics.get('model') or executed_model)[:120],
+                                            'input_tokens':_metrics['input_tokens'],
+                                            'output_tokens':_metrics.get('output_tokens',0),
+                                        }
                             if event.get('type')=='final_response':
                                 text=[event.get('content','')]
                             elif 'delta' in event:
@@ -344,7 +355,8 @@ async def dispatch(content,ctx):
         'stream_events':worker_stream_events,
         'tool_reads':budget.calls,
         'evidence_chunks':budget.chunks,
-        'model_inference_confirmed':False,
+        'model_inference_confirmed':worker_provider_usage is not None,
+        **({'provider_usage':worker_provider_usage} if worker_provider_usage else {}),
         **({'failure_type':worker_error['type']} if worker_error else {}),
     }
     # Selection of a configured model is not an inference receipt. Actual
