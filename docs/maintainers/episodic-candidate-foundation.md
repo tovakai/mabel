@@ -1,8 +1,10 @@
 # Mabel Phase 00.5: candidate admission foundation (experimental)
 
-**Status: code scaffold only. Not enabled in Mabel, not deployed or runtime-tested.**
-This milestone follows the user's proposed Phase 00.5 note without claiming to
-implement all of episodic memory or the Phase 00 typed event ledger.
+**Status: code shipped to experimental GitHub branch; live capture is OFF by
+default and has not been deployed or runtime-tested.** The initial nine queue
+tests passed on the operator's Arch test environment on 2026-11-01. The new
+event-delivery and capture tests still need to be run. This milestone implements
+part of Phase 00.5 and extends the **existing** Phase 00 typed event ledger.
 
 ## What exists
 
@@ -32,13 +34,27 @@ Obsidian vault mutation.
   memory event family, and `Ledger.append_once` deduplicates replay after
   a crash. The outbox is not a second authoritative ledger.
   No background publishing or production capture is enabled.
-- No heavy model inference, automatic extraction, external model/server
+- `src/episodic_memory/capture.py` stages a **completed, persisted** chat/agent
+  turn under its authoritative saved assistant DB message ID. It stores a short
+  literal "User said / Mabel replied" excerpt, explicitly *unverified*, not
+  a model-generated claim about what happened. A replay of the same message ID
+  produces no duplicate candidate.
+- `routes/chat_helpers.py:run_post_response_tasks` calls this capture at the
+  existing post-save boundary, for normal and agent chat. The route forwards
+  `no_memory`, incognito/compare flags, and saved message identity. Missing
+  persistence IDs, disabled memory settings and short turns do not create
+  candidates.
+- `python -m src.episodic_memory` provides offline inspection and explicit
+  one-shot publishing of the outbox into Phase 00's canonical ledger. Nothing
+  runs a background event publisher automatically.
+- No heavy model inference, automatic LLM extraction, external model/server
   dependency, scheduler, background loop, Markdown write or vault access.
 
-The queue's caller must choose a local, non-synchronized state directory
-(such as a private subdirectory of Mabel's device-local `data/`) and
-pass the user's `Core of Truth` as a `protected_roots` path. Never place
-the SQLite DB, `-wal` or `-shm` alongside synced Markdown.
+The chat integration uses `DATA_DIR/episodic_candidates`: local application
+state, **not** a synced Markdown directory. Standalone callers may additionally
+pass `protected_roots` to reject a selected Core of Truth path. Do not put
+the SQLite DB, `-wal` or `-shm` in a synced vault. No code reads or writes
+Core of Truth during this milestone.
 
 ## Phase 00 is already implemented. Verified integration point
 
@@ -68,11 +84,12 @@ source reference, not asserted as an existing causal ledger link.
 
 The following are separate integration gates:
 
-1. Bind capture to actual completed chat/agent-turn evidence, with trusted
-   receipt identifiers, real memory-enabled/incognito/no-memory preferences,
-   deletion/retention semantics and no extra foreground inference. Do not
-   accept model-authored receipts as tool evidence.
-2. Build bounded candidate extraction and source verification. A model's
+1. Implement **session deletion/retention propagation** into the staged
+   candidate queue, and verify post-save source IDs across the different
+   actual chat paths. Do not enable capture in production until deletion
+   behavior is covered.
+2. Build Dottie-assisted bounded significance extraction, candidate selection
+   and source verification. A model's
    self-interpretation is not a verified autobiographical occurrence.
 3. Establish Mabel's writable vault target independently of Core of Truth.
    Once source proof and the existing authorization path are in place,
@@ -91,6 +108,7 @@ disabled unless called by trusted integration code.
 .venv/bin/python -m pytest -q --tb=short \
   tests/test_episodic_candidate_foundation.py \
   tests/test_episodic_phase0_delivery.py \
+  tests/test_episodic_completed_turn_capture.py \
   tests/test_phase0_foundations.py
 ```
 
@@ -101,6 +119,35 @@ the absence of promotion, and protected source-vault non-mutation.
 
 **Do not interpret passing tests as permission to enable production
 capture.** This is a reviewed opt-in implementation slice only.
+
+
+## Operator pilot: initially disabled
+
+Production Mabel has no automatic episodic extraction enabled by this branch.
+For a controlled test environment only, set `MABEL_EPISODIC_CAPTURE_ENABLED=1`
+on the Mabel server process **before** starting a test conversation.
+
+The capture hook runs only after a completed assistant reply is saved with a
+persistent message ID; it is skipped for incognito, `no_memory`,
+memory-disabled sessions/preferences, compare turns, explicit approval
+continuations and internal tool requests. It makes **no additional LLM calls**
+and does not persist raw thinking traces or tool outputs.
+
+Inspect with the same Mabel account owner whose session is being tested:
+
+```bash
+.venv/bin/python -m src.episodic_memory --owner ACTUAL_MABEL_OWNER list
+.venv/bin/python -m src.episodic_memory --owner ACTUAL_MABEL_OWNER events
+```
+
+The `publish-events` command explicitly replays and acknowledges pending
+transitions in `DATA_DIR/phase0/events.jsonl` using the same idempotent typed
+ledger from Phase 00. **Do not enable unattended publishing until operators
+validate the memory event schema and session deletion controls.**
+
+Turn the experimental capture off by removing the env var. No existing
+`memory.json`, Markdown notes, embedding endpoints or prompt fragments are
+changed by this experimental feature.
 
 ### Prototype API
 
