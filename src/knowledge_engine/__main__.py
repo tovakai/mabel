@@ -48,6 +48,9 @@ def main():
     scan.add_argument('--embed',action='store_true')
     scan.add_argument('--embedding-limit',type=int,default=1000)
     sub.add_parser('embedding-coverage')
+    embed=sub.add_parser('embed',help='Index missing vectors through the configured remote Knowledge embeddings role; no source scan')
+    embed.add_argument('--embedding-limit',type=int,default=256)
+    embed.add_argument('--batch-size',type=int,default=8)
     rebuild=sub.add_parser('rebuild-vectors')
     rebuild.add_argument('space_id')
     sub.add_parser('status')
@@ -82,6 +85,10 @@ def main():
     elif args.command=='embedding-coverage':
         from .semantic import coverage
         result=coverage(index)
+    elif args.command=='embed':
+        import asyncio
+        from .maintenance import embed_pending
+        result=asyncio.run(embed_pending(index,owner=args.owner,limit=args.embedding_limit,batch_size=args.batch_size))
     elif args.command=='rebuild-vectors':
         if not args.space_id or len(args.space_id)!=64:
             parser.error('Use the exact space ID from embedding-coverage')
