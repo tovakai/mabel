@@ -24,9 +24,9 @@ from src.owner_identity import owner_key, is_request_sentinel_owner
 
 KINDS = frozenset({"experience", "decision", "mistake", "discovery", "open_question"})
 SOURCE_KINDS = frozenset({"conversation", "tool_observation", "ledger_event", "user_seeded"})
-STATES = frozenset({"pending", "deferred", "promoting", "promoted", "rejected", "quarantined"})
+STATES = frozenset({"pending", "deferred", "promoting", "promoted", "rejected", "quarantined", "merged"})
 DECISIONS = frozenset({"deferred", "rejected", "quarantined"})
-_VERSION = 1
+_VERSION = 2
 
 
 class CandidateAdmissionError(ValueError):
@@ -137,7 +137,7 @@ class CandidateQueue:
     def _initialize(self) -> None:
         with self._connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, _VERSION):
+            if version not in (0, 1, _VERSION):
                 raise CandidateAdmissionError("Unknown episodic candidate DB schema; do not migrate automatically")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS candidates(
@@ -159,6 +159,31 @@ class CandidateQueue:
                     created_at TEXT NOT NULL, delivered_at TEXT
                 );
                 CREATE INDEX IF NOT EXISTS event_outbox_pending ON event_outbox(delivered_at,created_at);
+            """)
+            # v2 is additive: preserve every existing v1 candidate and event
+            # while adding separately persisted, non-authoritative reviews.
+            columns = {row[1] for row in db.execute("PRAGMA table_info(candidates)")}
+            if "merged_into" not in columns:
+                db.execute("ALTER TABLE candidates ADD COLUMN merged_into TEXT")
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS candidate_reviews(
+                    id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL REFERENCES candidates(id),
+                    reviewer TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    recommendation TEXT NOT NULL,
+                    confidence INTEGER NOT NULL,
+                    rationale_code TEXT NOT NULL,
+                    source_fingerprint TEXT NOT NULL,
+                    target_candidate_id TEXT,
+                    created_at TEXT NOT NULL,
+                    applied_at TEXT,
+                    applied_outcome TEXT,
+                    UNIQUE(owner,candidate_id,run_id)
+                );
+                CREATE INDEX IF NOT EXISTS candidate_reviews_lookup
+                    ON candidate_reviews(owner,candidate_id,created_at);
             """)
             db.execute(f"PRAGMA user_version={_VERSION}")
         try:
