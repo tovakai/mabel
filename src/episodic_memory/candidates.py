@@ -267,7 +267,7 @@ class CandidateQueue:
             raise CandidateAdmissionError("Invalid outbox bound")
         with self._connect() as db:
             return [
-                {"id": r["id"], "kind": r["kind"],
+                {"id": r["id"], "candidate_id": r["candidate_id"], "kind": r["kind"],
                  "payload": json.loads(r["payload"]), "created_at": r["created_at"]}
                 for r in db.execute(
                     "SELECT * FROM event_outbox WHERE delivered_at IS NULL "
