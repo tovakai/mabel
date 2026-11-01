@@ -114,3 +114,32 @@ def test_existing_post_response_boundary_never_bypasses_user_controls(
         assert not queue_path.exists(), case
     else:
         assert len(CandidateQueue(queue_path, owner="alice").list()) == 1
+
+def test_operator_cli_lists_and_explicitly_publishes_to_phase0(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    _capture(tmp_path)
+    args = [
+        sys.executable, "-m", "src.episodic_memory",
+        "--owner", "alice", "--state-dir", str(tmp_path / "runtime"),
+    ]
+    listed = subprocess.run(args + ["list"], text=True, capture_output=True, check=True, timeout=20)
+    body = json.loads(listed.stdout)
+    assert len(body["candidates"]) == 1
+    assert body["candidates"][0]["evidence_status"] == "unverified"
+    events = subprocess.run(args + ["events"], text=True, capture_output=True, check=True, timeout=20)
+    assert len(json.loads(events.stdout)["pending_events"]) == 1
+    ledger = tmp_path / "phase0" / "events.jsonl"
+    output = subprocess.run(
+        args + ["publish-events", "--ledger-path", str(ledger)],
+        text=True, capture_output=True, check=True, timeout=20,
+    )
+    assert json.loads(output.stdout)["acknowledged"] == 1
+    again = subprocess.run(
+        args + ["publish-events", "--ledger-path", str(ledger)],
+        text=True, capture_output=True, check=True, timeout=20,
+    )
+    assert json.loads(again.stdout)["acknowledged"] == 0
+    assert len(ledger.read_text().splitlines()) == 1
