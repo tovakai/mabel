@@ -211,3 +211,42 @@ async def test_native_knowledge_search_through_both_production_agent_runtimes(va
     assert outputs and outputs[0]['matches'][0]['rel_path']=='Projects/Lid.md',data
     assert '±0.2 mm' in answer(data)
     assert any('vault_knowledge_search' in str(request['tools']) for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_worker_startup_valueerror_reports_phase_without_leaking_exception(environment, monkeypatch, caplog):
+    from src import agent_loop as loop
+
+    async def broken_worker(*args, **kwargs):
+        raise ValueError("Sensitive internal location: /home/alice/secret-vault")
+        yield  # Explicitly an async generator
+
+    monkeypatch.setattr(loop, 'stream_agent_loop', broken_worker)
+    with caplog.at_level('ERROR', logger='src.knowledge_engine.research'):
+        result = await dispatch(environment, {'research_objective':'Inspect notes'})
+    assert result['status'] == 'partial'
+    assert result['findings'] == []
+    assert result['worker_execution']['status'] == 'failed'
+    assert result['worker_execution']['phase'] == 'opening_agent_stream'
+    assert result['worker_execution']['failure_type'] == 'ValueError'
+    assert result['worker_execution']['stream_events'] == 0
+    assert result['worker_execution']['tool_reads'] == 0
+    assert 'secret-vault' not in json.dumps(result)
+    assert any('research worker failure' in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_empty_worker_stream_has_diagnostic_parse_stage(environment, monkeypatch):
+    from src import agent_loop as loop
+
+    async def no_report(*args, **kwargs):
+        yield 'data: [DONE]\\n\\n'
+
+    monkeypatch.setattr(loop, 'stream_agent_loop', no_report)
+    result = await dispatch(environment, {'research_objective':'Inspect notes'})
+    assert result['status'] == 'partial'
+    assert result['worker_execution']['status'] == 'failed'
+    assert result['worker_execution']['phase'] == 'parsing_findings'
+    assert result['worker_execution']['stream_events'] == 1
+    assert result['worker_execution']['tool_reads'] == 0
+    assert result['worker_execution']['failure_type'] == 'ValueError'
