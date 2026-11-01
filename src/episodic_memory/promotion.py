@@ -189,15 +189,19 @@ def promote_verified_conversation(
     row = queue.get(candidate_id)
     if row is None:
         raise CandidateAdmissionError("Candidate not found for owner")
-    path = _target(queue, candidate_id, vault_root, protected_roots)
+    if row["state"] not in ("pending", "deferred", "promoting", "promoted"):
+        raise CandidateAdmissionError("Rejected or quarantined candidates are not promotable")
     if row["state"] == "promoted":
-        if not path.is_file() or path.is_symlink():
-            raise CandidateAdmissionError("Promoted episode missing or replaced")
+        path = _target(queue, candidate_id, vault_root, protected_roots)
+        if (path.is_symlink() or not path.is_file()
+                or sha256(path.read_bytes()).hexdigest() != row["decision_reason"]):
+            raise CandidateAdmissionError("Promoted episode missing or changed")
         return {**row, "changed": False, "episode_path": str(path)}
 
     user, assistant = _verified_transcript(queue, row, db)
     body = _episode_markdown(row, user, assistant).encode("utf-8")
     digest = sha256(body).hexdigest()
+    path = _target(queue, candidate_id, vault_root, protected_roots)
     with queue._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         current = conn.execute(
@@ -237,7 +241,7 @@ def promote_verified_conversation(
             raise CandidateAdmissionError("Promotion intent changed unexpectedly")
         conn.execute(
             "UPDATE candidates SET state='promoted', evidence_status='transcript_verified', "
-            "decision_reason='operator_approved', updated_at=? WHERE owner=? AND id=?",
+            "updated_at=? WHERE owner=? AND id=?",
             (_now(), queue.owner, candidate_id),
         )
         conn.execute(
