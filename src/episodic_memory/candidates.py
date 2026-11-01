@@ -3,8 +3,8 @@
 This module has no hooks into chat, memory.json, prompts, agent autonomy or
 Obsidian writes. All stored candidates are non-recallable pending suggestions.
 The outbox is a *delivery buffer* for the existing Phase 00 typed event ledger,
-not a replacement event ledger. Do not enable promotion without that adapter,
-source verification, and a separately approved Mabel-vault write boundary.
+not a replacement event ledger. Promotion is implemented separately and requires explicit source verification
+and operator approval; the queue never promotes automatically.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from src.owner_identity import owner_key, is_request_sentinel_owner
 
 KINDS = frozenset({"experience", "decision", "mistake", "discovery", "open_question"})
 SOURCE_KINDS = frozenset({"conversation", "tool_observation", "ledger_event", "user_seeded"})
-STATES = frozenset({"pending", "deferred", "rejected", "quarantined"})
+STATES = frozenset({"pending", "deferred", "promoting", "promoted", "rejected", "quarantined"})
 DECISIONS = frozenset({"deferred", "rejected", "quarantined"})
 _VERSION = 1
 
@@ -89,8 +89,8 @@ class CandidateDraft:
 class CandidateQueue:
     """Per-owner SQLite queue outside synced Markdown.
 
-    Only proposal and negative/deferred decisions are supported. There is no
-    promote/merge path, recall hook, extraction, model call, or Markdown write.
+    Proposal and negative/deferred decisions live here. The separately gated
+    promotion module owns verified Markdown writes. No automatic recall exists.
     All state changes enqueue typed event envelopes transactionally; the
     explicit Phase 00 adapter publishes and acks using stable event IDs.
     """
