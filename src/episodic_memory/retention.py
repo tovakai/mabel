@@ -166,6 +166,12 @@ def complete_episode_deletions(
                 if sha256(path.read_bytes()).hexdigest() != digest:
                     raise CandidateAdmissionError("Episode contents changed; manual cleanup required")
                 path.unlink()
+                if hasattr(os, "O_DIRECTORY"):
+                    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
             db.execute(
                 "DELETE FROM episode_deletion_queue WHERE owner=? AND candidate_id=?",
                 (queue.owner,row["candidate_id"]),
