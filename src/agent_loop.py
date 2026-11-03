@@ -21221,6 +21221,11 @@ async def _stream_agent_loop_impl(
 
     # Caller and credential denials remain absolute across contract routing.
     disabled_tools = set(disabled_tools or ())
+    # This producer release supports session metadata only. Do not offer
+    # unusable page navigation to a model or admit it through textual tools.
+    from src.browser_identity import PAGE_COMMANDS_ENABLED
+    if not PAGE_COMMANDS_ENABLED:
+        disabled_tools.add("private_browser")
     if delegated_credential:
         disabled_tools.update(delegated_credential_blocked_tools())
         if tool_policy is not None:
