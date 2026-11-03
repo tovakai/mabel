@@ -33,7 +33,7 @@ def _authority(permitted_tools):
     return Auth()
 
 
-def _ctx(permitted=("web_search", "dispatch_dottie"), progress=None):
+def _ctx(permitted=("web_search", "vault_knowledge_search", "dispatch_dottie"), progress=None):
     return {
         "owner": "test",
         "session_id": "s1",
@@ -43,6 +43,41 @@ def _ctx(permitted=("web_search", "dispatch_dottie"), progress=None):
         "tool_policy": None,
         "progress_cb": progress,
     }
+
+
+def _fast_vault_output(matches=None):
+    return {
+        "output": json.dumps({
+            "matches": matches if matches is not None else [{
+                "note_id": "n1",
+                "rel_path": "Notes/Hit.md",
+                "title": "Hit",
+                "start_line": 2,
+                "end_line": 4,
+                "excerpt": "candidate excerpt about the topic",
+                "content_hash": "abc",
+                "score": 1.5,
+            }],
+            "mode": "lexical",
+        }),
+        "exit_code": 0,
+    }
+
+
+def _deep_vault_output(findings=None, **extra):
+    body = {
+        "status": "complete",
+        "findings": findings if findings is not None else [{
+            "claim": "vault claim",
+            "confidence": "source_supported",
+            "evidence": [{
+                "note_id": "n1", "rel_path": "Note.md",
+                "start_line": 1, "end_line": 2, "quote": "vault claim",
+            }],
+        }],
+    }
+    body.update(extra)
+    return {"output": json.dumps(body), "exit_code": 0}
 
 
 @pytest.mark.asyncio
@@ -63,20 +98,8 @@ async def test_both_branches_overlap_in_execution():
                 "output": json.dumps({"results": [{"title": "A", "url": "https://a.example", "snippet": "sa"}]}),
                 "exit_code": 0,
             }
-        return name, {
-            "output": json.dumps({
-                "status": "complete",
-                "findings": [{
-                    "claim": "vault claim",
-                    "confidence": "source_supported",
-                    "evidence": [{
-                        "note_id": "n1", "rel_path": "Note.md",
-                        "start_line": 1, "end_line": 2, "quote": "vault claim",
-                    }],
-                }],
-            }),
-            "exit_code": 0,
-        }
+        assert name == "vault_knowledge_search"
+        return name, _fast_vault_output()
 
     with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {"shared": False, "research_available": True})):
@@ -87,9 +110,15 @@ async def test_both_branches_overlap_in_execution():
         }), _ctx())
     package = json.loads(result["output"])
     assert package["status"] == "complete"
+    assert package["vault_strategy"] == "fast"
+    assert package["vault"]["strategy"] == "fast"
+    assert package["vault"]["kind"] == "index_candidates"
+    assert package["vault"]["findings"] == []
+    assert package["vault"]["matches"][0]["note_id"] == "n1"
     assert package["metrics"]["concurrent"] is True
-    assert "web_search" in started and "dispatch_dottie" in started
-    assert abs(started["web_search"] - started["dispatch_dottie"]) < 0.2
+    assert "web_search" in started and "vault_knowledge_search" in started
+    assert "dispatch_dottie" not in started
+    assert abs(started["web_search"] - started["vault_knowledge_search"]) < 0.2
 
 
 @pytest.mark.asyncio
@@ -97,13 +126,7 @@ async def test_one_branch_fails_other_succeeds_is_partial():
     async def fake_execute(block, **kwargs):
         if block.tool_type == "web_search":
             return "web_search", {"error": "searx down", "exit_code": 1, "failure_kind": "backend_failure"}
-        return "dispatch_dottie", {
-            "output": json.dumps({"status": "complete", "findings": [{
-                "claim": "ok", "evidence": [{"note_id": "n1", "rel_path": "a.md", "start_line": 1, "end_line": 1, "quote": "ok"}],
-                "confidence": "source_supported",
-            }]}),
-            "exit_code": 0,
-        }
+        return "vault_knowledge_search", _fast_vault_output()
 
     with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
@@ -114,6 +137,7 @@ async def test_one_branch_fails_other_succeeds_is_partial():
     assert package["status"] == "partial"
     assert package["web"]["status"] == "failed"
     assert package["vault"]["status"] == "complete"
+    assert package["vault"]["matches"]
 
 
 @pytest.mark.asyncio
@@ -147,10 +171,32 @@ async def test_authorization_denial_cannot_bypass():
             "mode": "both", "web_query": "q", "vault_objective": "v",
         }), _ctx(permitted=("web_search",)))  # vault intentionally unauthorized
     package = json.loads(result["output"])
+    assert "vault_knowledge_search" not in calls
     assert "dispatch_dottie" not in calls
     assert package["vault"]["status"] == "denied"
+    assert package["vault"]["strategy"] == "fast"
     assert package["web"]["status"] in {"complete", "empty"}
     assert package["status"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_fast_cannot_use_dispatch_dottie_authority_alone():
+    """Deep child tool permission must not authorize the fast index child."""
+    calls = []
+
+    async def fake_execute(block, **kwargs):
+        calls.append(block.tool_type)
+        return block.tool_type, _fast_vault_output()
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
+        result = await pr.execute(json.dumps({
+            "mode": "vault", "vault_objective": "topic", "vault_strategy": "fast",
+        }), _ctx(permitted=("dispatch_dottie",)))
+    package = json.loads(result["output"])
+    assert calls == []
+    assert package["vault"]["status"] == "denied"
+    assert "vault_knowledge_search" in package["vault"]["error"]
 
 
 @pytest.mark.asyncio
@@ -176,14 +222,10 @@ async def test_approval_required_does_not_fake_success_or_rerun():
                 "exit_code": 0,
             }
         await asyncio.sleep(0.01)
-        return "dispatch_dottie", {
-            "output": json.dumps({"status": "complete", "findings": [{
-                "claim": "vault hit",
-                "confidence": "source_supported",
-                "evidence": [{"note_id": "n1", "rel_path": "a.md", "start_line": 1, "end_line": 1, "quote": "vault hit"}],
-            }]}),
-            "exit_code": 0,
-        }
+        return "vault_knowledge_search", _fast_vault_output([{
+            "note_id": "n1", "rel_path": "a.md", "title": "A",
+            "start_line": 1, "end_line": 1, "excerpt": "vault hit", "content_hash": "h",
+        }])
 
     auth = _ctx()
     # Stable request identity so the seal can resume.
@@ -198,17 +240,18 @@ async def test_approval_required_does_not_fake_success_or_rerun():
         assert package["status"] == "approval_required"
         assert package["vault"]["status"] == "complete"
         assert calls.count("web_search") == 1
-        assert calls.count("dispatch_dottie") == 1
+        assert calls.count("vault_knowledge_search") == 1
+        assert calls.count("dispatch_dottie") == 0
 
         # Resume exact parent op: vault must not run again; only the pending web child.
         second = await pr.execute(payload, auth)
     package2 = json.loads(second["output"])
     assert package2["status"] == "complete"
     assert package2["metrics"]["reused_branches"] == ["vault"]
-    assert calls.count("dispatch_dottie") == 1
+    assert calls.count("vault_knowledge_search") == 1
     assert calls.count("web_search") == 2
     assert package2["web"]["results"][0]["url"] == "https://x"
-    assert package2["vault"]["findings"][0]["claim"] == "vault hit"
+    assert package2["vault"]["matches"][0]["excerpt"] == "vault hit"
 
 
 @pytest.mark.asyncio
@@ -233,10 +276,11 @@ async def test_unavailable_dottie_is_degraded_not_empty_success():
     with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
         result = await pr.execute(json.dumps({
-            "mode": "vault", "vault_objective": "anything",
+            "mode": "vault", "vault_objective": "anything", "vault_strategy": "deep",
         }), _ctx())
     package = json.loads(result["output"])
     assert package["vault"]["status"] == "degraded"
+    assert package["vault"]["strategy"] == "deep"
     assert package["status"] == "partial"
     assert package["vault"].get("failure_kind") is None or True
     assert "Worker could not" in (package["vault"].get("error") or "")
@@ -259,6 +303,7 @@ async def test_vault_child_uses_dispatch_dottie_contract():
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
         await pr.execute(json.dumps({
             "mode": "vault",
+            "vault_strategy": "deep",
             "vault_objective": "find X in notes",
             "vault_constraints": {"path_prefix": "Projects", "required_sources": True, "max_hops": 1},
         }), _ctx())
@@ -266,6 +311,57 @@ async def test_vault_child_uses_dispatch_dottie_contract():
     assert seen["content"]["research_objective"] == "find X in notes"
     assert seen["content"]["constraints"]["path_prefix"] == "Projects"
     assert seen["authority"] is not None
+
+
+@pytest.mark.asyncio
+async def test_fast_vault_uses_lexical_index_contract():
+    seen = {}
+
+    async def fake_execute(block, **kwargs):
+        seen["tool"] = block.tool_type
+        seen["content"] = json.loads(block.content)
+        return block.tool_type, _fast_vault_output()
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(True, {"shared": True})):
+        result = await pr.execute(json.dumps({
+            "mode": "vault",
+            "vault_objective": "Curiosity Drive notes",
+            "vault_constraints": {"path_prefix": "Projects"},
+        }), _ctx())
+    package = json.loads(result["output"])
+    assert seen["tool"] == "vault_knowledge_search"
+    assert seen["content"]["mode"] == "lexical"
+    assert seen["content"]["use_reranking"] is False
+    assert seen["content"]["path_prefix"] == "Projects"
+    assert seen["content"]["query"] == "Curiosity Drive notes"
+    assert package["vault"]["kind"] == "index_candidates"
+    assert package["vault"]["findings"] == []
+    assert package["metrics"]["vault_index_ms"] == package["metrics"]["vault_ms"]
+    assert package["metrics"]["vault_match_count"] == 1
+    # Fast path must not contend with Strata even when research shares the URL.
+    assert package["metrics"].get("contention_fallback") is None
+
+
+@pytest.mark.asyncio
+async def test_fast_missing_index_classified():
+    async def fake_execute(block, **kwargs):
+        return block.tool_type, {
+            "error": "Vault index has no last_scan; reconcile required",
+            "exit_code": 1,
+            "executed": False,
+            "failure_kind": "knowledge_retrieval_failed",
+        }
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
+        result = await pr.execute(json.dumps({
+            "mode": "vault", "vault_objective": "topic", "vault_strategy": "fast",
+        }), _ctx())
+    package = json.loads(result["output"])
+    assert package["vault"]["status"] == "failed"
+    assert package["vault"]["failure_kind"] == "index_unavailable"
+    assert package["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -277,7 +373,7 @@ async def test_citations_survive_output_truncation():
         "web": {"status": "complete", "results": [
             {"title": "T", "url": "https://example.com/a", "snippet": huge_snippet, "engine": "searx"},
         ]},
-        "vault": {"status": "complete", "findings": [{
+        "vault": {"status": "complete", "strategy": "deep", "kind": "verified_findings", "findings": [{
             "claim": "C" * 500,
             "confidence": "source_supported",
             "evidence": [{
@@ -309,6 +405,48 @@ async def test_citations_survive_output_truncation():
     assert out["metrics"].get("truncated") is True
 
 
+@pytest.mark.asyncio
+async def test_fast_match_identifiers_survive_truncation():
+    package = {
+        "status": "complete",
+        "web": {"status": "complete", "results": [
+            {"title": "T", "url": "https://example.com/a", "snippet": "S" * 8000, "engine": "searx"},
+        ]},
+        "vault": {
+            "status": "complete",
+            "strategy": "fast",
+            "kind": "index_candidates",
+            "findings": [],
+            "matches": [{
+                "note_id": "fast-99",
+                "rel_path": "Projects/Atlas.md",
+                "title": "Atlas",
+                "start_line": 3,
+                "end_line": 9,
+                "excerpt": "E" * 5000,
+                "content_hash": "hash99",
+                "score": 2.0,
+            }],
+        },
+        "unresolved": [],
+        "metrics": {},
+    }
+    original = pr._MAX_PACKAGE_BYTES
+    try:
+        pr._MAX_PACKAGE_BYTES = 3500
+        pr._PER_BRANCH_FLOOR = 1200
+        out = pr._apply_output_budget(package)
+    finally:
+        pr._MAX_PACKAGE_BYTES = original
+        pr._PER_BRANCH_FLOOR = 6000
+    match = out["vault"]["matches"][0]
+    assert match["note_id"] == "fast-99"
+    assert match["rel_path"] == "Projects/Atlas.md"
+    assert match["start_line"] == 3
+    assert out["vault"]["findings"] == []
+    assert out["metrics"].get("truncated") is True
+
+
 def test_tool_discovery_and_native_schema():
     from src.tool_schemas import function_call_to_tool_block
     from src.tool_types import TOOL_TAGS
@@ -319,6 +457,7 @@ def test_tool_discovery_and_native_schema():
     schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s["function"]["name"] == "research_parallel")
     props = schema["function"]["parameters"]["properties"]
     assert props["mode"]["enum"] == ["web", "vault", "both"]
+    assert props["vault_strategy"]["enum"] == ["fast", "deep"]
     assert "web_query" in props and "vault_objective" in props
     assert "research_parallel" in WORKSPACE_READ_TOOLS
     assert "research_parallel" in FAMILY_TOOLS["search_browser"]
@@ -330,6 +469,8 @@ def test_tool_discovery_and_native_schema():
     assert block is not None
     assert block.tool_type == "research_parallel"
     assert json.loads(block.content)["mode"] == "vault"
+    parsed = pr._parse_args(json.dumps({"mode": "vault", "vault_objective": "Curiosity Drive"}))
+    assert parsed["vault_strategy"] == "fast"
 
 
 @pytest.mark.asyncio
@@ -384,6 +525,8 @@ async def test_research_budget_counts_parallel_web_branch():
 @pytest.mark.asyncio
 async def test_empty_vault_is_not_backend_failure():
     async def fake_execute(block, **kwargs):
+        if block.tool_type == "vault_knowledge_search":
+            return block.tool_type, _fast_vault_output(matches=[])
         return block.tool_type, {
             "output": json.dumps({"status": "complete", "findings": []}),
             "exit_code": 0,
@@ -394,10 +537,17 @@ async def test_empty_vault_is_not_backend_failure():
         result = await pr.execute(json.dumps({
             "mode": "vault", "vault_objective": "missing topic",
         }), _ctx())
+        deep = await pr.execute(json.dumps({
+            "mode": "vault", "vault_objective": "missing topic", "vault_strategy": "deep",
+        }), _ctx())
     package = json.loads(result["output"])
     assert package["status"] == "complete"
     assert package["vault"]["status"] == "empty"
+    assert package["vault"]["strategy"] == "fast"
     assert package["vault"].get("failure_kind") is None
+    deep_pkg = json.loads(deep["output"])
+    assert deep_pkg["vault"]["status"] == "empty"
+    assert deep_pkg["vault"]["strategy"] == "deep"
 
 
 @pytest.mark.asyncio
@@ -452,7 +602,7 @@ async def test_recursion_into_research_parallel_denied():
 
 
 @pytest.mark.asyncio
-async def test_shared_endpoint_runs_sequentially():
+async def test_shared_endpoint_runs_sequentially_for_deep():
     order = []
 
     async def fake_execute(block, **kwargs):
@@ -466,7 +616,7 @@ async def test_shared_endpoint_runs_sequentially():
     with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(True, {"shared": True})):
         result = await pr.execute(json.dumps({
-            "mode": "both", "web_query": "q", "vault_objective": "v",
+            "mode": "both", "web_query": "q", "vault_objective": "v", "vault_strategy": "deep",
         }), _ctx())
     package = json.loads(result["output"])
     assert package["metrics"]["concurrent"] is False
@@ -479,12 +629,35 @@ async def test_shared_endpoint_runs_sequentially():
 
 
 @pytest.mark.asyncio
+async def test_fast_stays_concurrent_when_research_shares_foreground():
+    started = {}
+
+    async def fake_execute(block, **kwargs):
+        started[block.tool_type] = time.monotonic()
+        await asyncio.sleep(0.05)
+        if block.tool_type == "web_search":
+            return block.tool_type, {"output": json.dumps({"results": [{"title": "t", "url": "https://x", "snippet": "s"}]}), "exit_code": 0}
+        return block.tool_type, _fast_vault_output()
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(True, {"shared": True})):
+        result = await pr.execute(json.dumps({
+            "mode": "both", "web_query": "q", "vault_objective": "v",
+        }), _ctx())
+    package = json.loads(result["output"])
+    assert package["metrics"]["planned_concurrent"] is True
+    assert package["metrics"]["concurrent"] is True
+    assert package["metrics"].get("contention_fallback") is None
+    assert "vault_knowledge_search" in started
+
+
+@pytest.mark.asyncio
 async def test_concurrent_metric_requires_real_overlap():
     async def fake_execute(block, **kwargs):
         await asyncio.sleep(0.04)
         if block.tool_type == "web_search":
             return block.tool_type, {"output": json.dumps({"results": [{"title": "t", "url": "https://x", "snippet": "s"}]}), "exit_code": 0}
-        return block.tool_type, {"output": json.dumps({"status": "complete", "findings": []}), "exit_code": 0}
+        return block.tool_type, _fast_vault_output(matches=[])
 
     with patch("src.tool_execution.execute_tool_block", new=fake_execute), \
             patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
@@ -494,6 +667,8 @@ async def test_concurrent_metric_requires_real_overlap():
     package = json.loads(result["output"])
     assert package["metrics"]["planned_concurrent"] is True
     assert package["metrics"]["concurrent"] is True
+    assert package["status"] == "complete"  # web complete + vault empty
+    assert package["vault"]["status"] == "empty"
 
 
 def test_action_intent_vault_escalates_workspace():

@@ -7961,9 +7961,9 @@ Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check ex
 
     "research_parallel": """\
 ```research_parallel
-{"mode":"both","web_query":"<public lookup>","vault_objective":"<vault objective>","vault_constraints":{"required_sources":true,"max_hops":1}}
+{"mode":"both","vault_strategy":"fast","web_query":"<public lookup>","vault_objective":"<vault objective>","vault_constraints":{"path_prefix":null,"max_hops":1}}
 ```
-Concurrent authorized retrieval: public web via `web_search` and/or Obsidian vault via `dispatch_dottie`. Use mode=both when personal notes and public information both matter; mode=web or mode=vault for a single path. Do not invent a missing branch query. Do not use for ordinary casual chat. Returns one compact evidence package (web results + verified vault findings); you synthesize the final answer. Direct `web_search` / `web_fetch` / `dispatch_dottie` remain available for specialized single-path work.""",
+Concurrent authorized retrieval: public web via `web_search` and/or vault notes. Default `vault_strategy=fast` uses indexed `vault_knowledge_search` (candidate matches, not verified claims, no Dottie LLM). Use `vault_strategy=deep` for bounded `dispatch_dottie` verified research. Prefer mode=both when personal notes and public information both matter. Do not invent a missing branch query. Returns one compact evidence package; you synthesize the final answer. Direct `web_search` / `web_fetch` / `vault_knowledge_search` / `dispatch_dottie` remain available.""",
 
     "dispatch_dottie": """\
 ```dispatch_dottie

@@ -1,9 +1,10 @@
 """Concurrent web + vault research coordinator.
 
 One admitted ``research_parallel`` call fans out to the existing ``web_search``
-and ``dispatch_dottie`` dispatchers. Children keep the same authority, policy,
-resource binding, and accounting as direct calls. This module does not invent
-queries, bypass admission, write the vault, or run a second synthesis LLM.
+dispatcher plus either fast indexed ``vault_knowledge_search`` or deep
+``dispatch_dottie``. Children keep the same authority, policy, resource binding,
+and accounting as direct calls. This module does not invent queries, bypass
+admission, write the vault, or run a second synthesis LLM.
 """
 from __future__ import annotations
 
@@ -27,6 +28,9 @@ _MAX_PACKAGE_BYTES = 24000
 _PER_BRANCH_FLOOR = 6000
 _WEB_TIMEOUT_S = 45.0
 _VAULT_TIMEOUT_S = 120.0
+_VAULT_FAST_TIMEOUT_S = 20.0
+_FAST_TOP_K = 8
+_FAST_QUERY_MAX = 500
 
 # One-shot sealed sibling results for approval/resumption of the exact parent op.
 _SEAL_TTL_S = 900.0
@@ -156,11 +160,20 @@ def _parse_args(content: str) -> dict:
         raise ValueError(f"research_parallel requires a JSON object: {error}") from error
     if not isinstance(args, dict):
         raise ValueError("research_parallel arguments must be an object")
-    if set(args) - {"mode", "web_query", "vault_objective", "vault_constraints"}:
+    if set(args) - {"mode", "web_query", "vault_objective", "vault_constraints", "vault_strategy"}:
         raise ValueError("Unknown research_parallel argument")
     mode = str(args.get("mode") or "both").strip().casefold()
     if mode not in {"web", "vault", "both"}:
         raise ValueError("mode must be web, vault, or both")
+    strategy_raw = args.get("vault_strategy", "fast")
+    if strategy_raw in (None, ""):
+        strategy_raw = "fast"
+    vault_strategy = str(strategy_raw).strip().casefold()
+    if vault_strategy not in {"fast", "deep"}:
+        raise ValueError("vault_strategy must be fast or deep")
+    if mode == "web" and "vault_strategy" in args and args.get("vault_strategy") not in (None, ""):
+        # Explicit strategy with no vault branch is rejected to avoid silent no-ops.
+        raise ValueError("vault_strategy is only valid for vault/both modes")
     web_query = args.get("web_query")
     vault_objective = args.get("vault_objective")
     constraints = args.get("vault_constraints")
@@ -187,6 +200,7 @@ def _parse_args(content: str) -> dict:
         raise ValueError("max_hops must be an integer from 0 to 3")
     return {
         "mode": mode,
+        "vault_strategy": vault_strategy if mode in {"vault", "both"} else "fast",
         "web_query": (web_query or "").strip() if isinstance(web_query, str) else "",
         "vault_objective": (vault_objective or "").strip() if isinstance(vault_objective, str) else "",
         "vault_constraints": {
@@ -195,6 +209,43 @@ def _parse_args(content: str) -> dict:
             if key in constraints
         },
     }
+
+
+def _vault_child_tool(strategy: str) -> str:
+    return "vault_knowledge_search" if strategy == "fast" else "dispatch_dottie"
+
+
+def _build_vault_child_args(args: Mapping[str, Any]) -> dict:
+    """Build the exact child tool arguments for the selected vault strategy."""
+    strategy = args["vault_strategy"]
+    constraints = args.get("vault_constraints") or {}
+    if strategy == "deep":
+        vault_args = {"research_objective": args["vault_objective"]}
+        if constraints:
+            vault_args["constraints"] = dict(constraints)
+            vault_args["constraints"].setdefault("max_hops", 1)
+            vault_args["constraints"].setdefault("required_sources", True)
+        return vault_args
+    # Fast: indexed lexical search only — no Dottie LLM, embeddings, or reranker.
+    query = args["vault_objective"].strip()[:_FAST_QUERY_MAX]
+    vault_args = {
+        "query": query,
+        "mode": "lexical",
+        "top_k": _FAST_TOP_K,
+        "use_reranking": False,
+    }
+    prefix = constraints.get("path_prefix")
+    if isinstance(prefix, str) and prefix.strip():
+        vault_args["path_prefix"] = prefix.strip()
+    return vault_args
+
+
+def _vault_source_count(section: Mapping[str, Any] | None) -> int:
+    if not isinstance(section, Mapping):
+        return 0
+    if section.get("strategy") == "fast" or "matches" in section:
+        return len(section.get("matches") or [])
+    return len(section.get("findings") or [])
 
 
 def research_shares_foreground_endpoint(owner: str = "") -> tuple[bool, dict]:
@@ -296,7 +347,7 @@ def _web_branch_payload(result: Mapping[str, Any], *, status: str, error: str = 
     return payload
 
 
-def _vault_branch_payload(result: Mapping[str, Any], *, status: str, error: str = "") -> dict:
+def _deep_vault_branch_payload(result: Mapping[str, Any], *, status: str, error: str = "") -> dict:
     parsed = _parse_child_output(result) if status in {"complete", "empty", "partial", "degraded"} else {}
     findings = []
     if isinstance(parsed, dict):
@@ -326,19 +377,21 @@ def _vault_branch_payload(result: Mapping[str, Any], *, status: str, error: str 
                 if not isinstance(match, dict):
                     continue
                 findings.append({
-                    "claim": str(match.get("snippet") or match.get("text") or "")[:1000],
+                    "claim": str(match.get("snippet") or match.get("text") or match.get("excerpt") or "")[:1000],
                     "confidence": "local_retrieval",
                     "evidence": [{
                         "note_id": str(match.get("note_id") or "")[:200],
                         "rel_path": str(match.get("rel_path") or "")[:500],
                         "start_line": match.get("start_line"),
                         "end_line": match.get("end_line"),
-                        "quote": str(match.get("snippet") or match.get("text") or "")[:800],
+                        "quote": str(match.get("snippet") or match.get("text") or match.get("excerpt") or "")[:800],
                         "content_hash": str(match.get("content_hash") or "")[:128],
                     }],
                 })
     payload = {
         "status": status,
+        "strategy": "deep",
+        "kind": "verified_findings",
         "findings": findings,
         "unresolved_questions": (
             [str(v)[:500] for v in (parsed.get("unresolved_questions") or [])[:12]]
@@ -366,6 +419,77 @@ def _vault_branch_payload(result: Mapping[str, Any], *, status: str, error: str 
     return payload
 
 
+def _fast_vault_branch_payload(result: Mapping[str, Any], *, status: str, error: str = "") -> dict:
+    """Index candidates only — never presented as Dottie-verified claims."""
+    parsed = _parse_child_output(result) if status in {"complete", "empty", "partial", "failed"} else {}
+    matches = []
+    if isinstance(parsed, dict):
+        for item in parsed.get("matches") or ():
+            if not isinstance(item, dict):
+                continue
+            score = item.get("score", item.get("fusion_score", item.get("rank")))
+            try:
+                score_val = float(score) if score is not None else None
+            except (TypeError, ValueError):
+                score_val = None
+            matches.append({
+                "note_id": str(item.get("note_id") or "")[:200],
+                "rel_path": str(item.get("rel_path") or "")[:500],
+                "title": str(item.get("title") or "")[:300],
+                "start_line": item.get("start_line"),
+                "end_line": item.get("end_line"),
+                "excerpt": str(item.get("excerpt") or item.get("snippet") or item.get("text") or "")[:800],
+                "content_hash": str(item.get("content_hash") or "")[:128],
+                "score": score_val,
+            })
+    payload = {
+        "status": status,
+        "strategy": "fast",
+        "kind": "index_candidates",
+        "matches": matches,
+        # Keep findings empty so callers cannot mistake candidates for verified claims.
+        "findings": [],
+        "retrieval_mode": (
+            str(parsed.get("mode") or "lexical")[:32] if isinstance(parsed, dict) else "lexical"
+        ),
+    }
+    if error:
+        payload["error"] = error[:500]
+        payload["failure_kind"] = _classify_fast_failure_kind(result, error)
+    if result.get("approval_required"):
+        payload["approval_required"] = True
+        if isinstance(result.get("ask_user"), dict):
+            payload["ask_user"] = result["ask_user"]
+    return payload
+
+
+def _classify_fast_failure_kind(result: Mapping[str, Any], error: str = "") -> str:
+    failure = _child_failure(result) or "backend_failure"
+    blob = " ".join((
+        failure,
+        str(result.get("failure_kind") or ""),
+        str(result.get("error") or ""),
+        error,
+    )).casefold()
+    if "index" in blob or "not indexed" in blob or "last_scan" in blob:
+        return "index_unavailable"
+    if failure:
+        return failure
+    return "backend_failure"
+
+
+def _vault_branch_payload(
+    result: Mapping[str, Any],
+    *,
+    status: str,
+    error: str = "",
+    strategy: str = "deep",
+) -> dict:
+    if strategy == "fast":
+        return _fast_vault_branch_payload(result, status=status, error=error)
+    return _deep_vault_branch_payload(result, status=status, error=error)
+
+
 def _classify_web_result(result: Mapping[str, Any]) -> tuple[str, str]:
     failure = _child_failure(result)
     if failure == "approval_required":
@@ -384,21 +508,31 @@ def _classify_web_result(result: Mapping[str, Any]) -> tuple[str, str]:
     return "complete", ""
 
 
-def _classify_vault_result(result: Mapping[str, Any]) -> tuple[str, str]:
+def _classify_vault_result(result: Mapping[str, Any], *, strategy: str = "deep") -> tuple[str, str]:
     failure = _child_failure(result)
+    label = "Vault index search" if strategy == "fast" else "Vault research"
     if failure == "approval_required":
-        return "approval_required", "Vault research needs approval before it can run."
+        return "approval_required", f"{label} needs approval before it can run."
     if failure == "authorization_denied":
-        return "denied", str(result.get("error") or "Vault research was not authorized.")
+        return "denied", str(result.get("error") or f"{label} was not authorized.")
     if failure == "cancelled":
-        return "cancelled", "Vault research was cancelled."
+        return "cancelled", f"{label} was cancelled."
     if failure == "timeout":
-        return "timeout", "Vault research timed out."
+        return "timeout", f"{label} timed out."
     if failure:
-        return "failed", str(result.get("error") or "Vault research failed.")
+        kind = _classify_fast_failure_kind(result) if strategy == "fast" else failure
+        message = str(result.get("error") or f"{label} failed.")
+        if strategy == "fast" and kind == "index_unavailable":
+            return "failed", message[:500]
+        return "failed", message[:500]
     parsed = _parse_child_output(result)
     if not isinstance(parsed, dict):
-        return "failed", "Vault research returned an invalid package."
+        return "failed", f"{label} returned an invalid package."
+    if strategy == "fast":
+        matches = parsed.get("matches") if isinstance(parsed.get("matches"), list) else []
+        if not matches:
+            return "empty", ""
+        return "complete", ""
     worker = parsed.get("worker_execution") if isinstance(parsed.get("worker_execution"), dict) else {}
     worker_status = str(worker.get("status") or "")
     if parsed.get("status") == "degraded" or worker_status in {"not_started", "failed"}:
@@ -409,7 +543,7 @@ def _classify_vault_result(result: Mapping[str, Any]) -> tuple[str, str]:
         )
         # Unavailable/failed Dottie must not look like a successful empty search.
         return "degraded", reason[:500]
-    payload = _vault_branch_payload(result, status="complete")
+    payload = _vault_branch_payload(result, status="complete", strategy="deep")
     if isinstance(parsed, dict) and parsed.get("status") == "partial":
         if payload["findings"]:
             return "partial", ""
@@ -438,6 +572,14 @@ def _truncate_branch(section: dict, *, keep_keys: tuple[str, ...], body_key: str
                 last["snippet"] = snippet[: max(80, len(snippet) // 2)] + "…"
                 items[-1] = last
             else:
+                items.pop()
+        elif body_key == "matches":
+            excerpt = str(last.get("excerpt") or "")
+            if len(excerpt) > 160:
+                last["excerpt"] = excerpt[: max(80, len(excerpt) // 2)] + "…"
+                items[-1] = last
+            else:
+                # Preserve note_id/rel_path identity even when dropping bodies.
                 items.pop()
         else:
             claim = str(last.get("claim") or "")
@@ -475,11 +617,15 @@ def _apply_output_budget(package: dict) -> dict:
             body_key="results", limit=web_budget,
         )
     if isinstance(package.get("vault"), dict):
+        vault = package["vault"]
+        body_key = "matches" if vault.get("strategy") == "fast" or "matches" in vault else "findings"
         package["vault"] = _truncate_branch(
-            package["vault"],
-            keep_keys=("status", "error", "failure_kind", "approval_required", "ask_user",
-                       "unresolved_questions", "worker_execution"),
-            body_key="findings", limit=vault_budget,
+            vault,
+            keep_keys=(
+                "status", "error", "failure_kind", "approval_required", "ask_user",
+                "unresolved_questions", "worker_execution", "strategy", "kind", "retrieval_mode",
+            ),
+            body_key=body_key, limit=vault_budget,
         )
     package["metrics"]["output_bytes"] = len(json.dumps(package, ensure_ascii=False).encode())
     package["metrics"]["truncated"] = True
@@ -565,11 +711,15 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
 
     authority = ctx.get("request_authority")
     mode = args["mode"]
+    vault_strategy = args["vault_strategy"]
+    vault_tool = _vault_child_tool(vault_strategy)
     owner = str(ctx.get("owner") or getattr(authority, "owner", "") or "")
     session_id = str(ctx.get("session_id") or getattr(authority, "session_id", "") or "")
     request_id = str(getattr(authority, "request_id", "") or "")
     shared, route_detail = research_shares_foreground_endpoint(owner)
-    plan_concurrent = mode == "both" and not shared
+    # Fast vault never touches the research LLM, so endpoint sharing cannot
+    # force sequential execution for ordinary conversational retrieval.
+    plan_concurrent = mode == "both" and (vault_strategy == "fast" or not shared)
 
     started = time.monotonic()
     token = _ACTIVE.set(True)
@@ -592,19 +742,14 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
         await note({
             "operation": "parallel_research_started",
             "mode": mode,
+            "vault_strategy": vault_strategy if mode in {"vault", "both"} else None,
             "planned_concurrent": plan_concurrent,
             "shared_endpoint": shared,
             "resume_seal": bool(seal and seal.completed),
         })
 
         web_args = {"query": args["web_query"]} if mode in {"web", "both"} else None
-        vault_args = None
-        if mode in {"vault", "both"}:
-            vault_args = {"research_objective": args["vault_objective"]}
-            if args["vault_constraints"]:
-                vault_args["constraints"] = dict(args["vault_constraints"])
-                vault_args["constraints"].setdefault("max_hops", 1)
-                vault_args["constraints"].setdefault("required_sources", True)
+        vault_args = _build_vault_child_args(args) if mode in {"vault", "both"} else None
 
         # Resume: reuse sealed sibling evidence; never re-run completed branches.
         if seal is not None:
@@ -626,7 +771,8 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                     "branch": "vault",
                     "status": vault_section.get("status"),
                     "reused": True,
-                    "source_count": len(vault_section.get("findings") or []),
+                    "vault_strategy": vault_section.get("strategy") or vault_strategy,
+                    "source_count": _vault_source_count(vault_section),
                 })
 
         # Authorization is checked before restricted work starts. A compound
@@ -650,19 +796,25 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                     "source_count": 0,
                 })
         if vault_args is not None and "vault" not in reused_branches:
-            vault_allowed = _authority_permits("dispatch_dottie", vault_args, authority)
+            vault_allowed = _authority_permits(vault_tool, vault_args, authority)
             if not vault_allowed:
                 vault_section = {
                     "status": "denied",
+                    "strategy": vault_strategy,
+                    "kind": "index_candidates" if vault_strategy == "fast" else "verified_findings",
                     "findings": [],
-                    "error": "dispatch_dottie is outside request authority for this turn",
+                    "error": f"{vault_tool} is outside request authority for this turn",
                     "failure_kind": "authorization_denied",
                 }
+                if vault_strategy == "fast":
+                    vault_section["matches"] = []
                 unresolved.append("Vault branch unauthorized")
                 await note({
                     "operation": "parallel_branch_failed",
                     "branch": "vault",
                     "status": "denied",
+                    "vault_strategy": vault_strategy,
+                    "failure_kind": "authorization_denied",
                     "source_count": 0,
                 })
 
@@ -703,7 +855,8 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
 
         async def vault_job() -> tuple[str, dict, float, float, float]:
             t0 = time.monotonic()
-            result = await _run_child("dispatch_dottie", vault_args, ctx, timeout_s=_VAULT_TIMEOUT_S)
+            timeout = _VAULT_FAST_TIMEOUT_S if vault_strategy == "fast" else _VAULT_TIMEOUT_S
+            result = await _run_child(vault_tool, vault_args, ctx, timeout_s=timeout)
             t1 = time.monotonic()
             return "vault", result, (t1 - t0) * 1000.0, t0, t1
 
@@ -713,7 +866,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
         if run_vault:
             jobs.append(vault_job())
 
-        timings = {"web_ms": 0.0, "vault_ms": 0.0}
+        timings = {"web_ms": 0.0, "vault_ms": 0.0, "vault_index_ms": 0.0}
         launched_concurrent = plan_concurrent and len(jobs) == 2
         if jobs:
             if launched_concurrent:
@@ -726,7 +879,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                     await asyncio.gather(*tasks, return_exceptions=True)
                     raise
             else:
-                # Conservative sequential fallback when research shares the
+                # Conservative sequential fallback when deep research shares the
                 # foreground endpoint, or when only one branch is enabled.
                 gathered = []
                 for job in jobs:
@@ -767,32 +920,45 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                             "source_count": len(web_section.get("results") or []),
                         })
                 else:
-                    status, error = _classify_vault_result(result)
-                    vault_section = _vault_branch_payload(result, status=status, error=error)
+                    status, error = _classify_vault_result(result, strategy=vault_strategy)
+                    vault_section = _vault_branch_payload(
+                        result, status=status, error=error, strategy=vault_strategy,
+                    )
+                    if vault_strategy == "fast":
+                        # Fast path is index lookup; total branch time ≈ index time.
+                        timings["vault_index_ms"] = timings["vault_ms"]
+                    match_count = _vault_source_count(vault_section)
                     if status == "approval_required":
                         approval_bubble = result
+                    diag = {
+                        "branch": "vault",
+                        "status": status,
+                        "duration_ms": timings["vault_ms"],
+                        "vault_strategy": vault_strategy,
+                        "vault_index_ms": timings.get("vault_index_ms") or None,
+                        "match_count": match_count,
+                        "source_count": match_count,
+                        "failure_kind": vault_section.get("failure_kind"),
+                    }
                     if status in {"failed", "denied", "timeout", "cancelled", "approval_required"}:
                         unresolved.append(error or f"Vault branch {status}")
-                        await note({
-                            "operation": "parallel_branch_failed",
-                            "branch": "vault",
-                            "status": status,
-                            "duration_ms": timings["vault_ms"],
-                            "source_count": len(vault_section.get("findings") or []),
-                        })
+                        await note({"operation": "parallel_branch_failed", **diag})
                     else:
-                        await note({
-                            "operation": "parallel_branch_completed",
-                            "branch": "vault",
-                            "status": status,
-                            "duration_ms": timings["vault_ms"],
-                            "source_count": len(vault_section.get("findings") or []),
-                        })
+                        await note({"operation": "parallel_branch_completed", **diag})
 
         if mode in {"web", "both"} and web_section is None:
             web_section = {"status": "failed", "results": [], "error": "Web branch did not run", "failure_kind": "backend_failure"}
         if mode in {"vault", "both"} and vault_section is None:
-            vault_section = {"status": "failed", "findings": [], "error": "Vault branch did not run", "failure_kind": "backend_failure"}
+            vault_section = {
+                "status": "failed",
+                "strategy": vault_strategy,
+                "kind": "index_candidates" if vault_strategy == "fast" else "verified_findings",
+                "findings": [],
+                "error": "Vault branch did not run",
+                "failure_kind": "backend_failure",
+            }
+            if vault_strategy == "fast":
+                vault_section["matches"] = []
 
         branch_statuses = [
             section.get("status")
@@ -838,7 +1004,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
             if isinstance(web_section, dict) and web_section.get("status") == "approval_required":
                 pending_branch, pending_tool, pending_arguments = "web", "web_search", web_args
             elif isinstance(vault_section, dict) and vault_section.get("status") == "approval_required":
-                pending_branch, pending_tool, pending_arguments = "vault", "dispatch_dottie", vault_args
+                pending_branch, pending_tool, pending_arguments = "vault", vault_tool, vault_args
             remember_completed_branches(
                 owner=owner,
                 session_id=session_id,
@@ -856,10 +1022,14 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
         package = {
             "status": overall,
             "mode": mode,
+            "vault_strategy": vault_strategy if mode in {"vault", "both"} else None,
             "unresolved": unresolved[:20],
             "metrics": {
                 "web_ms": timings["web_ms"],
                 "vault_ms": timings["vault_ms"],
+                "vault_index_ms": timings.get("vault_index_ms") or 0.0,
+                "vault_match_count": _vault_source_count(vault_section),
+                "vault_strategy": vault_strategy if mode in {"vault", "both"} else None,
                 "total_ms": total_ms,
                 "concurrent": actually_concurrent,
                 "planned_concurrent": launched_concurrent,
@@ -879,7 +1049,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
             package["web"] = web_section
         if vault_section is not None:
             package["vault"] = vault_section
-        if shared and mode == "both":
+        if shared and mode == "both" and vault_strategy == "deep":
             package["metrics"]["contention_fallback"] = "sequential"
             unresolved.append("Research role shares foreground endpoint; ran sequentially")
             package["unresolved"] = unresolved[:20]
@@ -891,8 +1061,11 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
             "duration_ms": total_ms,
             "concurrent": package["metrics"]["concurrent"],
             "planned_concurrent": package["metrics"]["planned_concurrent"],
+            "vault_strategy": package.get("vault_strategy"),
+            "vault_index_ms": package["metrics"].get("vault_index_ms"),
             "web_sources": len((package.get("web") or {}).get("results") or []),
-            "vault_sources": len((package.get("vault") or {}).get("findings") or []),
+            "vault_sources": _vault_source_count(package.get("vault")),
+            "match_count": package["metrics"].get("vault_match_count"),
             "output_bytes": package["metrics"].get("output_bytes"),
         })
 
@@ -921,12 +1094,13 @@ def schema() -> dict:
         "function": {
             "name": PARALLEL,
             "description": (
-                "Concurrently search the public web and/or the authorized Obsidian vault "
-                "(Dottie). Use mode=both when a question needs personal notes and public "
-                "information together. Do not use for ordinary casual conversation. "
+                "Concurrently search the public web and/or the authorized Obsidian vault. "
+                "Default vault_strategy=fast uses indexed vault_knowledge_search (candidate "
+                "matches, not verified claims). vault_strategy=deep runs bounded dispatch_dottie "
+                "research. Use mode=both when personal notes and public information both matter. "
                 "Returns one compact evidence package; you synthesize the final answer. "
-                "Direct web_search, web_fetch, and dispatch_dottie remain available for "
-                "specialized single-path work."
+                "Direct web_search, web_fetch, vault_knowledge_search, and dispatch_dottie remain "
+                "available for specialized single-path work."
             ),
             "parameters": {
                 "type": "object",
@@ -935,7 +1109,12 @@ def schema() -> dict:
                     "mode": {
                         "type": "string",
                         "enum": ["web", "vault", "both"],
-                        "description": "web=public search only; vault=authorized Dottie research only; both=run independently and concurrently when endpoints allow.",
+                        "description": "web=public search only; vault=authorized vault retrieval only; both=run independently and concurrently when safe.",
+                    },
+                    "vault_strategy": {
+                        "type": "string",
+                        "enum": ["fast", "deep"],
+                        "description": "fast (default)=indexed lexical vault_knowledge_search without the Dottie agent; deep=existing dispatch_dottie verified research. Only for vault/both.",
                     },
                     "web_query": {
                         "type": "string",
@@ -947,7 +1126,7 @@ def schema() -> dict:
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 2000,
-                        "description": "Required for vault/both. Bounded vault research objective.",
+                        "description": "Required for vault/both. Vault search/research objective.",
                     },
                     "vault_constraints": {
                         "type": "object",
