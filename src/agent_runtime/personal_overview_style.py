@@ -7,6 +7,7 @@ retrieval or permission to access private data.
 from __future__ import annotations
 
 import re
+import json
 
 
 _EXPLICIT_INVENTORY_FORMAT = re.compile(
@@ -40,3 +41,47 @@ def apply_personal_overview_style(ctx, user_text: str, *, is_overview: bool) -> 
     if routed is not None and routed is not ctx.messages:
         routed.insert(0, dict(cue))
     return True
+
+
+_PERSONAL_RECAP_QUESTION = re.compile(
+    r"\b(?:what (?:do )?you (?:know|remember) about me|"
+    r"tell me (?:what|all|everything) you (?:know|remember) about me)\b",
+    re.IGNORECASE,
+)
+
+
+def personal_overview_prose_requested(user_text: str) -> bool:
+    """The request is a personal interpretation, not an explicit inventory."""
+    text = str(user_text or "")
+    return bool(_PERSONAL_RECAP_QUESTION.search(text)) and not bool(
+        _EXPLICIT_INVENTORY_FORMAT.search(text)
+    )
+
+
+def personal_overview_read_evidence(user_text: str, tool_events: list) -> str:
+    """Only successful memory-list outputs from THIS run qualify for synthesis.
+
+    No new read or permission is introduced; the caller already executed these
+    tools through the existing authorization boundary.
+    """
+    if not personal_overview_prose_requested(user_text):
+        return ""
+    for event in reversed(tool_events or []):
+        if not isinstance(event, dict):
+            continue
+        if event.get("tool") != "manage_memory" or event.get("exit_code") != 0:
+            continue
+        if event.get("blocked") or event.get("error") or event.get("approval_required"):
+            continue
+        command = str(event.get("command") or "").strip()
+        try:
+            args = json.loads(command)
+            action = str(args.get("action") or "").lower() if isinstance(args, dict) else ""
+        except (ValueError, TypeError):
+            action = command.splitlines()[0].lower() if command else ""
+        if action not in {"list", "index"}:
+            continue
+        evidence = event.get("output")
+        if isinstance(evidence, str) and evidence.strip():
+            return evidence[:8000]
+    return ""
