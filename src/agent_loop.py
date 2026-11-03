@@ -7959,7 +7959,7 @@ Registered browser session metadata only: session_info. Page/document reads and 
 ```youtube_tool
 {"action": "comments", "url": "https://www.youtube.com/watch?v=..."}
 ```
-Read YouTube-specific data without fighting the JavaScript UI. Actions: `comments`, `transcript`, `metadata`, `latest_channel_video`. Use `latest_channel_video` with `max_results` for latest N uploads from a channel. Use this for YouTube comments/transcripts/channel uploads; use `private_browser` only when the user wants visible site interaction.""",
+Read YouTube-specific data without fighting the JavaScript UI. Actions: `comments`, `transcript`, `metadata`, `latest_channel_video`. Use `latest_channel_video` with `max_results` for latest N uploads from a channel. Use this for YouTube comments/transcripts/channel uploads; browser page interaction is unavailable in the current producer release; do not request `private_browser` as a fallback.""",
 
     "read_file": """\
 ```read_file
