@@ -1743,6 +1743,30 @@ def _resolve_persisted_session_workspace(request, sess, *, current_workspace: st
     return _resolve_request_workspace(request, persisted)
 
 
+def _configured_vault_in_scope(workspace, directory_scope) -> bool:
+    """Whether the configured vault lies inside this request's authorized roots.
+
+    Routing only: execution still requires the vault path to be inside the
+    sealed RequestAuthority roots. Never raises.
+    """
+    try:
+        from src.agent_runtime.vault_target import persisted_vault_path
+        vault = persisted_vault_path()
+        if not vault:
+            return False
+        roots = [workspace] if workspace else []
+        for root in (getattr(directory_scope, "available_roots", None) or ()):
+            if getattr(root, "backend", "local") == "local" and getattr(root, "path", None):
+                roots.append(root.path)
+        for root in roots:
+            real = os.path.realpath(os.path.expanduser(str(root)))
+            if vault == real or vault.startswith(real.rstrip(os.sep) + os.sep):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def _resolve_default_vault_workspace(request, *, current_workspace: str = "", current_rejected: str = "", opted_out: bool = False) -> tuple[str, str]:
     """Bind the configured vault (Core of Truth) when no workspace was chosen.
 
@@ -2652,6 +2676,9 @@ def setup_chat_routes(
                 effective_user(request),
             )
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
+        # Recorded before any intent/follow-up logic can rewrite allow_web_search:
+        # an explicit web-off is absolute for this request.
+        _web_explicitly_off = is_web_search_explicitly_denied(allow_web_search)
         _explicit_web_intent = False
         _explicit_personal_store_intent = False
         _explicit_web_target = False
@@ -3423,10 +3450,12 @@ def setup_chat_routes(
         _turn_history = getattr(sess, "history", []) or []
         from src.turn_contract import corrected_browser_target
         _corrected_browser_target = corrected_browser_target(message, _turn_history)
+        _vault_scope = _configured_vault_in_scope(workspace, directory_scope)
         _turn_capabilities = requested_capabilities(
             message, _turn_history,
             active_document=bool(active_doc), workspace=bool(workspace),
             image_attachment=any(str(a.get('mime') or '').startswith('image/') for a in (ctx.preprocessed.attachment_meta or [])),
+            vault_scope=_vault_scope,
         ) if _use_turn_contract else frozenset()
         if 'image_editing' in _turn_capabilities and ctx.preprocessed.attachment_meta:
             image_refs = ['odysseus://attachment/' + str(a['id']) for a in ctx.preprocessed.attachment_meta
@@ -3477,18 +3506,25 @@ def setup_chat_routes(
         if _use_turn_contract and _turn_capabilities and "search_browser" not in _turn_capabilities:
             _explicit_web_intent = False
         disabled_tools = set()
+        # Observational per-turn routing trace (see src/agent_runtime/routing_trace.py).
+        # Checkpoints below only snapshot disabled_tools; nothing reads them back.
+        from src.agent_runtime import routing_trace as _rt
+        _routing_trace_obj = _rt.new_trace()
+        _rt.bind(_routing_trace_obj)
         # The installed browser producer cannot bind page actions safely.
         # Hide it before constructing the immutable turn contract; execution
         # still denies page operations independently.
         from src.browser_identity import PAGE_COMMANDS_ENABLED
         if not PAGE_COMMANDS_ENABLED:
             disabled_tools.add("private_browser")
+        _rt.checkpoint_denials("browser_page_commands_unavailable", disabled_tools)
         # Minting is admin-only, so every owner-keyed check below answers
         # "admin" for a token. Cap it at the non-admin policy instead.
         # stream_agent_loop repeats this from delegated_credential.
         _delegated_credential = is_delegated_credential(request)
         if _delegated_credential:
             disabled_tools.update(delegated_credential_blocked_tools())
+        _rt.checkpoint_denials("delegated_credential", disabled_tools)
         # Only disable bash when the caller *explicitly* set it to a falsy
         # value. When unset (None), defer to per-user privilege checks below.
         # Web search is per-turn opt-in: either the chat pre-search setting
@@ -3496,6 +3532,7 @@ def setup_chat_routes(
         # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
+        _rt.checkpoint_denials("ui_toggle_bash_off", disabled_tools)
         _model_lower = str(getattr(sess, "model", "") or "").lower()
         _qwen_tool_router_selected = (
             "qwen38-tool-router" in _model_lower
@@ -3552,6 +3589,11 @@ def setup_chat_routes(
                 disabled_tools.add("youtube_tool")
             if not (_explicit_browser_intent or _local_browser_render_intent):
                 disabled_tools.add("private_browser")
+        _rt.checkpoint_denials(
+            "web_toggle_off" if is_web_search_explicitly_denied(allow_web_search)
+            else "web_not_enabled_for_turn",
+            disabled_tools,
+        )
         if _exact_url_fetch_intent:
             # A pasted URL grants only the exact-target reader. Keep broad
             # search and interactive browsing behind their normal toggles.
@@ -3593,6 +3635,7 @@ def setup_chat_routes(
                 disabled_tools.update(WEB_TOOL_NAMES)
         elif _search_enabled:
             disabled_tools.difference_update(WEB_TOOL_NAMES)
+        _rt.checkpoint_denials("legacy_web_turn_narrowing", disabled_tools)
 
         # Nobody/incognito mode: deny tools that would expose the user's
         # persistent memory, past chats, or other identity-linked data.
@@ -3607,6 +3650,7 @@ def setup_chat_routes(
                 "send_to_session",
                 "chat_with_model",
             })
+        _rt.checkpoint_denials("incognito", disabled_tools)
 
         # Active email reader open → strip the tools that let the agent drift
         # away from the visible email or skip review. The only allowed compose
@@ -3622,6 +3666,7 @@ def setup_chat_routes(
                 "mcp__email__send_email",
                 "mcp__email__reply_to_email",
             })
+        _rt.checkpoint_denials("active_email_review", disabled_tools)
 
         # Enforce per-user privileges
         # Bearer clients enter the agent loop as the sandboxed ``api`` user,
@@ -3647,11 +3692,13 @@ def setup_chat_routes(
             if not _privs.get("can_use_agent", True):
                 _effective_mode = 'chat'
                 chat_mode = 'chat'
+        _rt.checkpoint_denials("user_privilege", disabled_tools)
         # Global admin disabled tools
         from src.settings import get_setting
         _global_disabled = get_setting("disabled_tools", [])
         if _global_disabled and isinstance(_global_disabled, list):
             disabled_tools.update(_global_disabled)
+        _rt.checkpoint_denials("global_disabled_setting", disabled_tools)
 
         # Light auto-escalation: the user is in chat mode and just expressed a
         # notes/calendar/email intent. Grant the relevant managers but withhold
@@ -3670,10 +3717,12 @@ def setup_chat_routes(
                 disabled_tools.add("read_file")
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
+        _rt.checkpoint_denials("legacy_auto_escalation", disabled_tools)
 
         # Disable document tools in compare sessions — they break the pane UI
         if sess.name and sess.name.startswith("[CMP]"):
             disabled_tools.update({"create_document", "edit_document", "update_document"})
+        _rt.checkpoint_denials("compare_session", disabled_tools)
 
         # Compare mode: disable tools based on compare type
         if compare_mode:
@@ -3688,6 +3737,7 @@ def setup_chat_routes(
             # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
             if chat_mode == 'chat':
                 disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
+        _rt.checkpoint_denials("compare_mode", disabled_tools)
 
         # Plan mode: investigate read-only, propose a plan, don't mutate. Block
         # every tool not on the read-only allowlist. (stream_agent_loop enforces
@@ -3695,11 +3745,22 @@ def setup_chat_routes(
         if plan_mode:
             from src.tool_security import plan_mode_disabled_tools
             disabled_tools.update(plan_mode_disabled_tools())
+        _rt.checkpoint_denials("plan_mode", disabled_tools)
+
+        # Explicit web-off denies every web-retrieval entry point, overriding
+        # the exact-URL fetch, browser and contextual-follow-up exemptions
+        # above. The marker makes execution refuse web forms of local-capable
+        # tools (pdf_extract URLs, research_parallel's web branch) as well.
+        if _web_explicitly_off:
+            from src.tool_policy import WEB_EGRESS_MARKER, WEB_EGRESS_TOOL_NAMES
+            disabled_tools.update(set(WEB_EGRESS_TOOL_NAMES) | set(_BROWSER_MCP_TOOLS) | {WEB_EGRESS_MARKER})
+        _rt.checkpoint_denials("web_toggle_off", disabled_tools)
 
         tool_policy = build_effective_tool_policy(
             disabled_tools=disabled_tools,
             last_user_message=message,
         )
+        _rt.policy(tool_policy)
         if str(_user or "").startswith("sft_"):
             logger.info(
                 "[sft-policy-audit] owner=%s personal_disabled=%s "
@@ -3764,6 +3825,24 @@ def setup_chat_routes(
                 from src.fs_devices.seal import attach_scope_roots
                 _request_authority = attach_scope_roots(_request_authority, directory_scope)
         _turn_contract = None
+        _rt.profile(
+            model=getattr(sess, "model", ""),
+            endpoint_id=selected_endpoint_id or "",
+            chat_mode=chat_mode,
+            runtime=(
+                "clean_v3" if _compact_preview_turn
+                else "agent_loop" if chat_mode == "agent" else "chat"
+            ),
+            use_turn_contract=bool(_use_turn_contract and chat_mode == "agent" and not image_generation_session),
+            conversational_agent=bool(_conversational_agent),
+            tool_surface=_effective_tool_schema_mode or "",
+            clean_v3_route=bool(_clean_v3_route_requested),
+            workspace_bound=bool(workspace),
+            web_explicitly_off=bool(_web_explicitly_off),
+            vault_scope=bool(_vault_scope),
+            fs_scope=bool(_has_fs_scope),
+            **_rt.model_profile(getattr(sess, "model", ""), _effective_tool_schema_mode),
+        )
         # Image models execute directly, not through the text-agent inventory.
         # Keep the permission policy above, but do not apply routing omissions
         # as denials to this separate execution path.
@@ -3779,6 +3858,7 @@ def setup_chat_routes(
             # the product WebUI has no such executable runtime.
             _contract_schemas = [s for s in FUNCTION_TOOL_SCHEMAS
                                  if s["function"]["name"] != "host_shell"]
+            _rt.register(_contract_schemas, "native")
             _contract_mgr = get_mcp_manager()
             _owner_blocked = blocked_tools_for_owner(_user)
             if _delegated_credential:
@@ -3792,12 +3872,20 @@ def setup_chat_routes(
                 # a separate confined workspace, matching the exemption in
                 # _strip_workspace_tools_for_sft inside the agent runtime.
                 disabled_tools.update(_SFT_DISABLED_WORKSPACE_TOOLS)
+            _rt.checkpoint_denials("sft_workspace_guard", disabled_tools)
             if _contract_mgr and not plan_mode and not tool_policy.disable_mcp and not _owner_blocked:
                 _contract_schemas.extend(_contract_mgr.get_all_openai_schemas(_load_mcp_disabled_map()))
+                _rt.register(_contract_schemas, "mcp")
+            else:
+                _rt.profile(mcp_loaded=False, mcp_skip_reason=(
+                    "no_manager" if not _contract_mgr else "plan_mode" if plan_mode
+                    else "policy_disable_mcp" if tool_policy.disable_mcp else "owner_blocked"))
             if _explicitly_denies_tool_use(message):
                 disabled_tools.update(
                     schema["function"]["name"] for schema in _contract_schemas
                 )
+            _rt.checkpoint_denials("explicit_no_tool_use", disabled_tools)
+            _rt.deny(_owner_blocked, "owner_blocked")
             _contract_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools | set(_owner_blocked),
                 last_user_message=message,
@@ -4046,6 +4134,17 @@ def setup_chat_routes(
                 tool_policy,
                 workspace_read=_has_fs_scope,
             )
+            _rt.register(_available_schemas, "native")
+            _rt.final_contract(_turn_contract, "conversational_catalog")
+        elif _turn_contract is not None:
+            _rt.final_contract(_turn_contract, "clean_v3_scoped" if _clean_v3_preview else "routed")
+        _rt.policy(tool_policy)
+        _rt.deny(getattr(_request_authority, "denied", ()) or (), "authority_denied")
+        _rt.advisory("authority_pre_granted", [
+            getattr(g, "tool", "") for g in (getattr(_request_authority, "grants", ()) or ())
+        ])
+        _rt.profile(authority_block_all=bool(getattr(_request_authority, "block_all", False)),
+                    authority_disable_mcp=bool(getattr(_request_authority, "disable_mcp", False)))
 
         research_blocked_by_policy = bool(
             tool_policy.blocks("trigger_research")
@@ -5282,6 +5381,11 @@ def setup_chat_routes(
                 raise
             finally:
                 if observer is not None:
+                    try:
+                        from src.agent_runtime import routing_trace as _rt_flush
+                        _rt_flush.persist(_rt_flush.current(), observer.store,
+                                          observer.owner, observer.session, observer.turn)
+                    except Exception: logger.warning('Routing trace persistence failed', exc_info=True)
                     try: observer.finish(status)
                     except Exception: logger.warning('Debug trace finalization failed', exc_info=True)
                 _debug_observer = None

@@ -46,6 +46,7 @@ from src.model_context import (
     runtime_served_model,
 )
 from src.agent_runtime.chat_research_budget import ChatResearchBudget
+from src.agent_runtime import routing_trace as _routing_trace
 from src.agent_runtime.context_recovery import (
     answering_recovery_bag,
     compact_canonical_messages_for_limit,
@@ -7842,6 +7843,20 @@ def _web_only_route_tools(text: str, disabled_tools: Set[str]) -> Set[str]:
     ):
         tools.add("private_browser")
     return tools
+
+_WEB_UNAVAILABLE_PARTIAL_NOTE = (
+    "Web access is disabled for this turn. Answer the parts of the request that "
+    "your available tools can cover (for example the user's vault notes; use "
+    "research_parallel only with mode=vault). Then state plainly that the "
+    "web/online part could not be checked because web search is off, and do not "
+    "guess at current public information."
+)
+
+# Tools a contract may contain while still being a pure web turn.
+_CONTRACT_PURE_WEB_TOOLS = frozenset({
+    "web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool",
+    "pdf_extract", "search_hf_models", "ask_user", "update_plan", "discover_tools",
+})
 
 _WORKSPACE_AGENT_TOOLS = (
     _DOMAIN_TOOL_MAP["files"]
@@ -22663,6 +22678,10 @@ async def _stream_agent_loop_impl(
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = relevant_tools
+    if turn_contract is not None and not _relevant_tools:
+        # Contract-backed turns: the contract is the capability decision. Seed
+        # from it so tool-index retrieval (whose result was discarded) is skipped.
+        _relevant_tools = {s["function"]["name"] for s in turn_contract.schemas()}
     if _ambiguous_short_turn and not forced_tools:
         # A host bridge or stale caller-provided tool set must not turn an
         # ambiguous fragment into a data lookup. Keep only clarification
@@ -22690,7 +22709,7 @@ async def _stream_agent_loop_impl(
             # Non-English queries are flagged low_signal by the English-only
             # intent classifier, but fastembed retrieval works across languages.
             logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
-    if not guide_only and not _relevant_tools:
+    if not guide_only and not _relevant_tools and turn_contract is None:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
             try:
@@ -22742,7 +22761,7 @@ async def _stream_agent_loop_impl(
 
     # Fallback: if RAG unavailable, use keyword-based tool selection
     # instead of sending ALL tools (which overwhelms the model).
-    if not guide_only and not _relevant_tools and _retrieval_query:
+    if not guide_only and not _relevant_tools and _retrieval_query and turn_contract is None:
         from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
         _relevant_tools = set(ALWAYS_AVAILABLE)
         ql = _retrieval_query.lower()
@@ -22750,6 +22769,8 @@ async def _stream_agent_loop_impl(
             if any(kw in ql for kw in keywords):
                 _relevant_tools.update(tools)
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
+    _routing_trace.advisory("tool_index_rag", _relevant_tools)
+    _routing_trace.profile(tool_index_overridden_by_contract=turn_contract is not None)
 
     # If deterministic domain detection fired, seed the corresponding domain
     # tools into the selected tool set. This is not direct prompt-pack
@@ -23083,7 +23104,7 @@ async def _stream_agent_loop_impl(
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update(_web_turn_tools)
         _non_web_domains = _intent_domains - {"web"}
-        if not _non_web_domains and not _explicit_delegation_tools:
+        if not _non_web_domains and not _explicit_delegation_tools and turn_contract is None:
             _relevant_tools = _web_only_route_tools(_retrieval_query or _last_user, disabled_tools)
             logger.info("[agent-intent] web-only request pruned unrelated tools")
         logger.info("[agent-intent] explicit web domain enabled private web tools")
@@ -23129,8 +23150,15 @@ async def _stream_agent_loop_impl(
                 hidden_tools=frozenset(set(tool_policy.hidden_tools) - _context_web_tools),
             )
         logger.info("[agent-intent] contextual web follow-up enabled web tools")
+    _web_demand_domains = _intent_domains
+    if turn_contract is not None:
+        # The contract decides whether web is part of this request; the agent
+        # loop's own intent classifier does not.
+        _web_demand_domains = (set(_intent_domains or ()) - {"web"}) | (
+            {"web"} if turn_contract.capabilities & {"search_browser", "research"} else set()
+        )
     _web_search_unavailable_turn = _web_search_unavailable_for_turn(
-        _intent_domains,
+        _web_demand_domains,
         set(disabled_tools) | set(_caller_disabled_tools),
         _last_user,
         client_runtime_context,
@@ -23150,12 +23178,35 @@ async def _stream_agent_loop_impl(
         # refusal.
         _web_search_unavailable_turn = False
     if turn_contract is not None and any(
-        turn_contract.permits(name) for name in ("web_search", "web_fetch")
+        turn_contract.permits(name) for name in ("web_search", "web_fetch", "trigger_research")
     ):
         # The resolved executable contract is authoritative. An earlier
         # caller-policy snapshot must not claim Web is disabled after the
         # route has explicitly admitted a concrete search/fetch operation.
         _web_search_unavailable_turn = False
+    _web_unavailable_partial = False
+    if (
+        turn_contract is not None
+        and turn_contract.capabilities & {"search_browser", "research"}
+        and not any(turn_contract.permits(name) for name in ("web_search", "web_fetch", "trigger_research"))
+    ):
+        # Web is disabled, but the contract still admitted authorized non-web
+        # tools (e.g. vault retrieval for a combined vault+web request). Answer
+        # that part and report the web part as unavailable instead of refusing.
+        from src.turn_contract import FAMILY_TOOLS as _FAMILY_TOOLS_WEB, canonical_tool as _canonical_tool_web
+        # Only tools of a non-web family the contract selected count: a pure
+        # web request (whose search_browser family also lists research_parallel)
+        # keeps the existing refusal.
+        _non_web_family_tools = set().union(*(
+            _FAMILY_TOOLS_WEB.get(family, frozenset())
+            for family in turn_contract.capabilities if family not in {"search_browser", "research"}
+        ))
+        if (
+            {_canonical_tool_web(n) for n in turn_contract.offered} & _non_web_family_tools
+        ) - _CONTRACT_PURE_WEB_TOOLS:
+            _web_search_unavailable_turn = False
+            _web_unavailable_partial = True
+            _routing_trace.profile(web_unavailable_partial=True)
     _base_relevant_tools = None if _relevant_tools is None else set(_relevant_tools)
     _native_terminal_runtime = bool(
         isinstance(client_runtime_context, dict)
@@ -23295,6 +23346,8 @@ async def _stream_agent_loop_impl(
             return {"read_file"}
         if _is_qwen38_tool_router(candidate_model):
             router_tools = _qwen38_router_tool_names(_retrieval_query or _last_user)
+            _routing_trace.advisory("legacy_9b_router", router_tools)
+            _routing_trace.profile(legacy_9b_router_ran=True)
             if route_tools is None:
                 route_tools = set(router_tools)
             else:
@@ -23537,12 +23590,28 @@ async def _stream_agent_loop_impl(
     _local_media_turn = bool(
         workspace and _native_local_media_inputs(_last_user, client_runtime_context)
     )
+    if turn_contract is not None:
+        # The contract is the single capability decision for chat turns: a
+        # turn is "pure web" only if the contract admitted nothing but web
+        # tools (a combined vault+web contract must never be narrowed).
+        from src.turn_contract import canonical_tool as _canonical_tool
+        _contract_offered = {_canonical_tool(n) for n in turn_contract.offered}
+        _web_scope = (
+            bool(_contract_offered & {"web_search", "web_fetch", "get_weather"})
+            and _contract_offered <= _CONTRACT_PURE_WEB_TOOLS
+        )
+    else:
+        _web_scope = _intent_domains == {"web"}
     _pure_web_turn = (
-        _intent_domains == {"web"}
+        _web_scope
         and not _explicit_no_web_lookup
         and not _contextual_public_web_followup
         and not _explicit_delegation_tools
         and not _local_media_turn
+    )
+    _routing_trace.profile(
+        agent_intent_domains=",".join(sorted(str(d) for d in (_intent_domains or ()))),
+        agent_pure_web_turn=bool(_pure_web_turn),
     )
     if (
         _pure_web_turn
@@ -23874,6 +23943,12 @@ async def _stream_agent_loop_impl(
     # artifact surface). Initialize it once at request scope so every route
     # uses the same security boundary.
     _hard_blocked_tools = set(public_blocked_tools) | _caller_disabled_tools | _caller_hard_denials
+    # The only agent-loop narrowing of a contract: the single-note vault
+    # rewrite seal. Carried explicitly in route state, never inferred.
+    _agent_loop_contract_seal = None
+    if turn_contract is not None and workspace and _looks_like_vault_note_rewrite(_last_user):
+        from src.turn_contract import VAULT_NOTE_REWRITE_TOOLS as _VNRT
+        _agent_loop_contract_seal = frozenset(set(_VNRT) - _hard_blocked_tools)
 
     # Keep the small, general agent surface stable across compact-router
     # decisions. Domain RAG may add tools, but it must not make the agent
@@ -24441,6 +24516,14 @@ async def _stream_agent_loop_impl(
             tool_surface != "full"
             and (is_api or is_native_ollama or is_ollama_compat)
         )
+        if candidate_model == model:
+            _routing_trace.profile(
+                agent_tool_surface=tool_surface or "",
+                agent_native_tools=bool(is_api),
+                agent_textual_tools=bool(textual_tools),
+                compact_prompt=bool(prompt_compact),
+                compact_trim_ran=(tool_surface == "compact"),
+            )
         if tool_surface == "compact":
             # Retrieval text is intentionally shortened for indexing and can
             # omit the output path that defines an artifact contract. Routing
@@ -24643,6 +24726,18 @@ async def _stream_agent_loop_impl(
                 _last_user[:160],
             )
             route_messages.append({"role": "user", "content": _last_user})
+        if _web_unavailable_partial:
+            if (
+                route_messages
+                and route_messages[0].get("role") == "system"
+                and isinstance(route_messages[0].get("content"), str)
+            ):
+                route_messages[0] = dict(
+                    route_messages[0],
+                    content=route_messages[0]["content"] + "\n\n" + _WEB_UNAVAILABLE_PARTIAL_NOTE,
+                )
+            else:
+                route_messages.insert(0, {"role": "system", "content": _WEB_UNAVAILABLE_PARTIAL_NOTE})
         if textual_tools and normalized_external_tool_schemas:
             contract_lines = [
                 "Environment tools declared for this turn follow. A tool-call response MUST contain exactly",
@@ -24824,6 +24919,7 @@ async def _stream_agent_loop_impl(
             "messages": route_messages,
             "mcp_schemas": route_mcp_schemas,
             "relevant_tools": prompt_route_tools,
+            "contract_seal": _agent_loop_contract_seal,
             "is_api_model": is_api,
             "is_ollama_native": is_native_ollama,
             "ollama_openai_compat": is_ollama_compat,
@@ -25373,10 +25469,13 @@ async def _stream_agent_loop_impl(
                     schema.get("function", {}).get("name", schema.get("name"))))]
 
     def _tool_schemas_for_route(route_state):
+        # Local import keeps this closure self-contained (tests exec its source).
+        from src.agent_runtime import routing_trace as _routing_trace
         route_mcp_schemas = route_state["mcp_schemas"]
         route_relevant_tools = route_state["relevant_tools"]
         qwen38_router = bool(route_state.get("qwen38_tool_router"))
         tool_surface = _normalize_model_tool_surface(route_state.get("tool_surface"))
+        _rt_contract_names = turn_contract  # expanded lazily inside routing_trace
         tui_local_turn = _tui_local_workspace_turn(
             _retrieval_query or _last_user,
             workspace=workspace,
@@ -25408,8 +25507,10 @@ async def _stream_agent_loop_impl(
             ),
             convergence_sent=_artifact_finish_convergence_sent,
         ):
+            _routing_trace.assembly("force_answer_no_tools", [("contract", _rt_contract_names), ("force_answer_no_tools", ())])
             return []
         if tool_surface == "none":
+            _routing_trace.assembly("tool_surface_none", [("contract", _rt_contract_names), ("tool_surface_none", ())])
             return []
         if qwen38_router and not tool_surface:
             # These router LoRAs were trained with `--no-tools`: the compact
@@ -25417,23 +25518,30 @@ async def _stream_agent_loop_impl(
             # generated tool-call markup. Sending OpenAI tool schemas changes
             # the Qwen chat template surface and can erase learned no-schema
             # behaviors, especially contextual follow-up routing.
+            _routing_trace.assembly("legacy_router_textual", [("contract", _rt_contract_names), ("legacy_router_textual", ())])
             return []
         if turn_contract is not None and tool_surface != "full":
             # Native/textual transport may change across fallback candidates;
             # the logical tool scope remains the same. Textual routes receive
             # their offerings in the prompt, not as native function schemas.
             if guide_only or not route_state["is_api_model"]:
+                _rt_code = "guide_only_no_schemas" if guide_only else "textual_transport"
+                _routing_trace.assembly(_rt_code, [("contract", _rt_contract_names), (_rt_code, ())])
                 return []
             contract_schemas = [
                 schema for schema in turn_contract.schemas()
                 if (schema.get("function", {}).get("name") or schema.get("name"))
                 not in disabled_tools
             ]
-            # Request-scoped selection (e.g. single-note rewrite) must win over
-            # CONTRACT_CORE leftovers on the sealed turn contract, otherwise
-            # bash/vault_batch_edit stay offered while write_file is missing.
-            if route_relevant_tools is not None:
-                allowed = set(route_relevant_tools)
+            _rt_stages = [("contract", _rt_contract_names),
+                          ("disabled_snapshot_agent_loop", list(contract_schemas))]
+            # The contract is authoritative. The only agent-loop narrowing is
+            # the explicit single-note rewrite seal: it must win over
+            # CONTRACT_CORE leftovers, otherwise bash/vault_batch_edit stay
+            # offered while write_file is missing.
+            _contract_seal = route_state.get("contract_seal")
+            if _contract_seal is not None:
+                allowed = set(_contract_seal)
                 contract_schemas = [
                     schema for schema in contract_schemas
                     if (schema.get("function", {}).get("name") or schema.get("name"))
@@ -25452,7 +25560,11 @@ async def _stream_agent_loop_impl(
                         if (schema.get("function", {}).get("name") or schema.get("name"))
                         in missing
                     )
-            return _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas, tool_surface))
+                _rt_stages.append(("agent_loop_vault_rewrite_seal", list(contract_schemas)))
+            _rt_result = _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas, tool_surface))
+            _rt_stages.append(("surface_filter", _rt_result))
+            _routing_trace.assembly("contract", _rt_stages)
+            return _rt_result
         if route_state["is_api_model"]:
             if tool_surface == "full":
                 # Full/regular models own semantic tool choice.  Offer every
@@ -25550,7 +25662,14 @@ async def _stream_agent_loop_impl(
                     for schema in FUNCTION_TOOL_SCHEMAS
                     if schema.get("function", {}).get("name") == "search_chats"
                 )
-            return _filter_route_tool_schemas(schemas)
+            _rt_result = _filter_route_tool_schemas(schemas)
+            _routing_trace.register(FUNCTION_TOOL_SCHEMAS, "native")
+            _routing_trace.register(route_mcp_schemas, "mcp")
+            _routing_trace.assembly(
+                "full_inventory" if tool_surface == "full" else "legacy_rag",
+                [("legacy_rag_not_retrieved", _rt_result)],
+            )
+            return _rt_result
 
         wants_mcp = any(keyword in _last_user.lower() for keyword in _MCP_KEYWORDS)
         schemas = route_mcp_schemas if wants_mcp and route_mcp_schemas else []
@@ -26379,6 +26498,7 @@ async def _stream_agent_loop_impl(
             "messages": messages,
             "mcp_schemas": mcp_schemas,
             "relevant_tools": _relevant_tools,
+            "contract_seal": _agent_loop_contract_seal,
             "is_api_model": _is_api_model,
             "is_ollama_native": _is_ollama_native,
             "ollama_openai_compat": _ollama_openai_compat,
@@ -26630,6 +26750,11 @@ async def _stream_agent_loop_impl(
                     if schema.get("function", {}).get("name") != "inspect_media"
                 ]
             state["tools"] = candidate_tools
+            _routing_trace.advertise(
+                round_num=round_num, candidate_index=index, model=candidate_model,
+                endpoint_id=_candidate_route_descriptors, schemas=candidate_tools,
+                context_limit=state.get("context_length"),
+            )
             _route_web_max_tokens, _route_web_thinking = fast_web_round_budget(
                 candidate_model, max_tokens, state.get("thinking_mode"),
                 round_num=round_num, pure_web_turn=_pure_web_turn,

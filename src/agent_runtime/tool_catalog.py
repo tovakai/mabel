@@ -68,6 +68,8 @@ class ToolCatalog:
                 if not authority.block_all and canonical_tool(name) not in authority.denied
                 and not (authority.disable_mcp and name.startswith('mcp__'))}
         self.selected = {'discover_tools'} & self.inventory.keys()
+        from . import routing_trace
+        routing_trace.catalog(self.inventory.keys())
 
     def schemas(self):
         return [self.inventory[name] for name in sorted(self.selected)]
@@ -222,6 +224,8 @@ async def discover_tools(content, ctx):
         if len(catalog.selected | set(names)) > 16:
             raise DiscoveryError('invalid_arguments', 'At most sixteen tools may be discovered in one request')
         catalog.selected.update(names)
+        from . import routing_trace
+        routing_trace.discover(names)
         entries, used = [], 0
         for name, schema in sorted(catalog.inventory.items())[offset:]:
             row = {'name':name, 'description':schema['function'].get('description','')[:120]}
@@ -235,6 +239,8 @@ async def discover_tools(content, ctx):
             'next_offset':offset + len(entries) if offset + len(entries) < len(catalog.inventory) else None}, ensure_ascii=False), 'exit_code':0}
     except DiscoveryError as error:
         error.catalog = catalog
+        from . import routing_trace
+        routing_trace.discover((), refused=getattr(error, 'requested', ()), code=getattr(error, 'code', None))
         return _discovery_payload(error)
     except KeyError as error:
         return _discovery_payload(DiscoveryError('invalid_schema', 'Tool schema is missing required fields', recoverable=False))

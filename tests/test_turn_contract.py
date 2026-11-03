@@ -222,10 +222,12 @@ def test_empty_family_contract_keeps_core_recovery_tools() -> None:
         selected_tools=None,
     )
 
-    assert len(contract.offered & {
-        "bash", "python", "read_file", "web_search", "web_fetch", "ask_user",
-    }) >= 5
-    assert contract.offered
+    # Conversational core: recovery tools are offered up front; shell is not,
+    # but stays reachable through the authorized discovery catalog.
+    assert {"python", "read_file", "web_search", "web_fetch", "ask_user"} <= contract.offered
+    assert "bash" not in contract.offered
+    catalog = {json.loads(s)["function"]["name"] for s in contract.catalog_json}
+    assert "bash" in catalog
 
 
 def test_web_contract_keeps_private_browser_only_as_fallback() -> None:

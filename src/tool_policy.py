@@ -23,6 +23,45 @@ WEB_ACCESS_TOOL_NAMES = frozenset({
     "youtube_tool",
 })
 
+# Every tool entry point that can retrieve from the public web. Explicit
+# web-off denies all of them (schema selection and execution). Tools that are
+# also local-capable (pdf_extract, research_parallel) stay available; their
+# web forms are refused at execution instead.
+WEB_EGRESS_TOOL_NAMES = frozenset({
+    *WEB_ACCESS_TOOL_NAMES,
+    "search_hf_models",
+    "trigger_research",
+})
+# Pseudo tool name carried in the request's denied set when the user explicitly
+# turned web off. RequestAuthority propagates it to every child authority, and
+# the dispatcher refuses any web-egress operation while it is present, even an
+# approved one. It only ever adds denials.
+WEB_EGRESS_MARKER = "web_egress"
+_BROWSER_MCP_PREFIX = "mcp__builtin_browser__"
+
+
+def is_web_egress_operation(tool: object, content: object = None) -> bool:
+    """Whether this exact operation would retrieve from the public web."""
+
+    name = str(tool or "")
+    if name in WEB_EGRESS_TOOL_NAMES or name.startswith(_BROWSER_MCP_PREFIX):
+        return True
+    if name == "pdf_extract":
+        import json
+        try:
+            args = json.loads(content) if isinstance(content, str) else (content or {})
+        except ValueError:
+            return False
+        if not isinstance(args, dict):
+            return False
+        for key in ("url", "path"):
+            value = str(args.get(key) or "").strip()
+            if key == "url" and value:
+                return True
+            if re.match(r"(?i)https?://", value):
+                return True
+    return False
+
 
 def tool_toggle_enabled(value: object) -> bool:
     """Return true only for explicit true-like tool toggle values."""

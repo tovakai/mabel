@@ -77,7 +77,100 @@ def _sanitize_metadata(value):
             if safe: result[key]=safe
         elif key in {'argument_keys','offered_tools','selected_tools','requested_tools'} and isinstance(item,list):
             result[key]=[_name(x,'') for x in item[:32] if _name(x,'')]
+        elif key=='routing' and isinstance(item,dict):
+            routing=_sanitize_routing(item)
+            if routing: result['routing']=routing
     return result
+
+
+_ROUTING_CODE = re.compile(r'^[a-z0-9_]{1,64}$')
+_ROUTING_STATE = re.compile(r'^[R?-][A?-][D?-][S?-][V?-]$')
+
+
+def _tool_name(value):
+    # Tool/family names come from schemas, not user text. Words like "token"
+    # are legitimate there (manage_tokens); still refuse secret-shaped values.
+    value=str(value or '')
+    return value if _SAFE_NAME.fullmatch(value) and not _SECRET_VALUE.search(value) else ''
+
+
+def _routing_names(value, limit=400):
+    return [n for n in (_tool_name(x) for x in (value or [])[:limit] if isinstance(x,str)) if n] if isinstance(value,list) else []
+
+
+def _routing_code_map(value, limit=400):
+    if not isinstance(value,dict): return {}
+    return {k:v for k,v in list(value.items())[:limit]
+            if _tool_name(k)==k and isinstance(v,str) and _ROUTING_CODE.fullmatch(v)}
+
+
+def _routing_number_map(value, limit=400):
+    if not isinstance(value,dict): return {}
+    return {k:v for k,v in list(value.items())[:limit] if _tool_name(k)==k and _number(v) is not None}
+
+
+def _routing_scalar(value):
+    if isinstance(value,bool) or value is None: return value
+    if _number(value) is not None: return value
+    return _name(value,'') or None
+
+
+def _sanitize_routing(value):
+    """Shape-checked copy of a routing_trace summary: names, codes and numbers only."""
+    out={'v':_number(value.get('v')) or 1}
+    profile=value.get('profile')
+    if isinstance(profile,dict):
+        out['profile']={k:_routing_scalar(v) for k,v in list(profile.items())[:40]
+                        if isinstance(k,str) and _ROUTING_CODE.fullmatch(k)}
+    contract=value.get('contract')
+    if isinstance(contract,dict):
+        c={}
+        for k in ('families','required','unavailable','capabilities','active_capabilities'):
+            c[k]=_routing_names(contract.get(k),64)
+        c['request_seal']=_routing_names(contract.get('request_seal'),64) if isinstance(contract.get('request_seal'),list) else None
+        c['sealed_read_tool']=_tool_name(contract.get('sealed_read_tool')) or None
+        for k in ('selection_mode','routing_experiment','final_stage'):
+            c[k]=_name(contract.get(k),'') or None
+        c['resolutions']=_number(contract.get('resolutions'))
+        out['contract']=c
+    advisory=value.get('advisory')
+    if isinstance(advisory,dict):
+        out['advisory']={k:_routing_names(v,64) for k,v in list(advisory.items())[:8]
+                         if isinstance(k,str) and _ROUTING_CODE.fullmatch(k)}
+    rounds=[]
+    for r in (value.get('rounds') or [])[:64] if isinstance(value.get('rounds'),list) else []:
+        if not isinstance(r,dict): continue
+        item={k:_number(r.get(k)) for k in ('round','candidate','schema_tokens_estimate','context_limit','repeat_rounds','last_round')
+              if _number(r.get(k)) is not None}
+        for k in ('model','endpoint_id','path','textual_reason'):
+            if r.get(k): item[k]=_name(r.get(k))
+        item['tools']=_routing_names(r.get('tools'))
+        item['drops']=_routing_code_map(r.get('drops'))
+        item['per_tool_tokens_estimate']=_routing_number_map(r.get('per_tool_tokens_estimate'))
+        rounds.append(item)
+    out['rounds']=rounds
+    out['discovered']=_routing_number_map(value.get('discovered'),64)
+    out['discovery_refused']=_routing_code_map(value.get('discovery_refused'),64)
+    out['reenabled']=_routing_code_map(value.get('reenabled'),64)
+    tokens=value.get('tokens')
+    if isinstance(tokens,dict):
+        out['tokens']={k:_number(tokens.get(k)) for k in ('first_round_schema_estimate','peak_schema_estimate','context_limit','first_round_fraction')}
+    counts=value.get('counts')
+    if isinstance(counts,dict):
+        out['counts']={k:_number(counts.get(k)) for k in ('registered','authorized','discoverable','selected','advertised')}
+    tools={}
+    raw_tools=value.get('tools')
+    for name,item in (list(raw_tools.items())[:400] if isinstance(raw_tools,dict) else []):
+        if _tool_name(name)!=name or not isinstance(item,dict): continue
+        state=item.get('s')
+        if not isinstance(state,str) or not _ROUTING_STATE.fullmatch(state): continue
+        entry={'s':state}
+        for k in ('why','via'):
+            if isinstance(item.get(k),str) and _ROUTING_CODE.fullmatch(item[k]): entry[k]=item[k]
+        tools[name]=entry
+    out['tools']=tools
+    out['trace_errors']=_number(value.get('trace_errors')) or 0
+    return out
 
 
 class TraceStore:

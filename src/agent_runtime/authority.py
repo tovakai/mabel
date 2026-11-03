@@ -518,6 +518,12 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
             # a proposed new filesystem read can still request human review.
             explicit_families.discard('workspace_read')
         tools.update(set().union(*(FAMILY_TOOLS.get(f, ()) for f in explicit_families)))
+        if "search_browser" in explicit_families:
+            # Deep Research is a read-only web retrieval job: with the Web scope
+            # declared it needs no extra approval prompt, like web_search and
+            # web_fetch. The research privilege and explicit web-off still deny
+            # it through the policy restriction below.
+            tools.add("trigger_research")
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
         name = canonical_tool(name)

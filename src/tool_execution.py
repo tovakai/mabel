@@ -1842,6 +1842,23 @@ async def execute_tool_block(
             "failure_kind": "request_authority_denied",
             "failure_reason": "invalid_arguments", "executed": False,
         }
+    from src.tool_policy import WEB_EGRESS_MARKER, is_web_egress_operation
+    if (
+        isinstance(authority, RequestAuthority)
+        and WEB_EGRESS_MARKER in authority.denied
+        and (
+            is_web_egress_operation(operation.tool, getattr(block, "content", None))
+            or is_web_egress_operation(operation.transport_tool, getattr(block, "content", None))
+        )
+    ):
+        # Explicit web-off is checked before admission so neither a grant nor
+        # an exact approval can reach the public web.
+        return f"{operation.tool}: BLOCKED", {
+            "error": ("Web access is turned off for this request, so this tool cannot reach "
+                      "the internet. Use local or vault tools, or ask the user to turn web search on."),
+            "exit_code": 1, "blocked": True, "failure_kind": "request_authority_denied",
+            "failure_reason": "web_disabled", "executed": False,
+        }
     from src.tool_approvals import tool_approval_store
     if valid and tool_approval_store.operation_was_denied(authority, operation):
         return f"{operation.tool}: DENIED", {"error":"The user denied this exact operation. Choose a permitted alternative.",

@@ -102,6 +102,14 @@ CONTRACT_CORE_TOOLS = frozenset({
     "ask_user", "vault_batch_edit",
 })
 
+# Conversational turns (no family recognized) on the contract path get a
+# smaller surface: shell and bulk-vault editing are not offered up front but
+# stay in the authorized discovery catalog (discover_tools). python stays: it
+# is cheap and lets the model compute instead of reasoning at length (replay:
+# same answers, ~2x faster on calculation turns). The legacy non-contract tool
+# floor still uses CONTRACT_CORE_TOOLS.
+CONVERSATIONAL_CORE_TOOLS = CONTRACT_CORE_TOOLS - {"bash", "vault_batch_edit"}
+
 _WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.I)
 _WORKSPACE_ARTIFACT_RE = re.compile(
     r"/workspace/[^\s`\"']+\.(?:csv|html?|json|md|svg|txt)\b", re.I
@@ -4843,6 +4851,57 @@ def media_progress_boundary(message: str) -> dict | None:
     return {"unit": unit, "reached": int(match.group("num"))}
 
 
+_COMPUTATION_RE = re.compile(
+    # A digest/encoding of a concrete operand ("SHA-256 of ...", not "what is SHA-256?").
+    r"\b(?:sha-?(?:1|224|256|384|512)|sha3(?:-\d+)?|md5|crc-?32|blake2[bs]?)\b[^?\n]{0,40}?\b(?:of|for)\b"
+    r"|\b(?:hash|checksum|digest)\s+(?:of|for)\b"
+    r"|\b(?:base64|base32|hex|url)[- ]?(?:en|de)cod(?:e|ing)\b"
+    r"|\b(?:en|de)code\b[^?\n]{0,30}\b(?:base64|base32|hex)\b"
+    # Explicit arithmetic and percentages.
+    r"|\d[\d,.]*\s*(?:[+*/\u00d7\u00f7^]|\*\*)\s*\d"
+    r"|\d[\d,.]*\s+(?:plus|minus|times|divided\s+by|multiplied\s+by|to\s+the\s+power\s+of)\s+\d"
+    r"|\b(?:square|cube)\s+root\s+of\s+\d|\bfactorial\s+of\s+\d"
+    r"|\b\d+(?:\.\d+)?\s*(?:%|percent)\s+of\s+\d"
+    # Date arithmetic.
+    r"|\bhow\s+many\s+(?:days|weeks|months|years|hours|minutes|seconds)\s+"
+    r"(?:are\s+there\s+|is\s+it\s+|were\s+there\s+|have\s+passed\s+)?(?:between|until|since|from)\b"
+    r"|\bwhat\s+day\s+of\s+the\s+week\b"
+    r"|\b(?:add|subtract)\s+\d+\s+(?:days|weeks|months|years)\s+(?:to|from)\b"
+    # Local generation.
+    r"|\b(?:generate|make|create|give\s+me)\s+(?:me\s+)?(?:a\s+|an\s+|some\s+)?(?:random\s+)?"
+    r"(?:uuid|guid|random\s+(?:number|password|string|integer))",
+    re.I,
+)
+_COMPUTATION_PERSONAL_RE = re.compile(
+    r"\b(?:my|our)\s+(?:\w+\s+){0,2}(?:appointments?|meetings?|events?|deadlines?|birthdays?|"
+    r"calendar|notes?|tasks?|reminders?|emails?|inbox|trip|flight)\b",
+    re.I,
+)
+
+
+def computation_request(message: str) -> bool:
+    """A request the model should compute (hash, arithmetic, dates, UUIDs).
+
+    Takes precedence over broad "what is X" public-lookup rules. A URL or a
+    named personal store keeps its own, more specific routing.
+    """
+    text = str(message or "")
+    if not _COMPUTATION_RE.search(text):
+        return False
+    if re.search(r"https?://|\bwww\.", text, re.I) or _COMPUTATION_PERSONAL_RE.search(text):
+        return False
+    # An explicitly named tool or channel ("with python", "in bash", "search
+    # the web for") is more specific still and keeps its own routing.
+    if re.search(
+        r"\b(?:python|bash|shell|terminal|script|command\s+line|cli)\b"
+        r"|\b(?:search|look\s+up|check)\s+(?:the\s+)?(?:web|internet|online)\b|\bgoogle\b",
+        text,
+        re.I,
+    ):
+        return False
+    return True
+
+
 def conversational_retrieval_intent(message: str, *, workspace: bool = False) -> str:
     """Lexical grounding distinction for conversational turns (not an LLM classifier).
 
@@ -4856,6 +4915,8 @@ def conversational_retrieval_intent(message: str, *, workspace: bool = False) ->
     text = _normalize_request_lead(str(message or ""))
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
+    if computation_request(text):
+        return "computation"
     notes_hit = bool(re.search(r"\b(?:my|the)\s+notes?\b|\bnotes?\s+about\b", text, re.I))
     public_hit = bool(re.search(r"\b(?:online|web|internet|public|people\s+say)\b", text, re.I))
     if notes_hit and public_hit and re.search(
@@ -4931,7 +4992,53 @@ def looks_like_vault_note_rewrite(message: str) -> bool:
     return True
 
 
-def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False) -> frozenset[str]:
+_VAULT_NOTES = r"(?:my|the|our)\s+(?:(?:vault|obsidian)\s+)?notes?"
+_VAULT_KNOWLEDGE_RE = re.compile(
+    rf"\bwhat\s+do\s+{_VAULT_NOTES}\s+say\b"
+    rf"|\bwhat\s+(?:did|have)\s+i\s+(?:write|written|noted|jotted)\b"
+    rf"|\b(?:search|find|look\s+(?:in|through|up|for)|check|go\s+through|read|summari[sz]e|according\s+to)"
+    rf"\s+(?:in\s+|through\s+)?{_VAULT_NOTES}\b"
+    rf"|\b{_VAULT_NOTES}\s+(?:say|said|about|on|regarding|mention|mentions|contain|cover|tagged)\b"
+    r"|\b(?:of|in|from|across)\s+my\s+(?:obsidian\s+)?vault\b"
+    r"|\b(?:my\s+)?(?:obsidian\s+)?vault\s+notes?\b"
+    r"|\bmy\s+obsidian\b",
+    re.I,
+)
+# Creation/editing of notes keeps its existing routing (personal Notes, or the
+# sealed single-note vault rewrite handled by looks_like_vault_note_rewrite).
+_NOTE_MUTATION_RE = re.compile(
+    r"\b(?:add|create|make|write|save|jot|take\s+(?:a\s+)?note|new|append|delete|remove|rename|"
+    r"edit|update|rewrite|move|archive|pin)\b",
+    re.I,
+)
+_VAULT_WEB_CUE_RE = re.compile(
+    r"\b(?:online|on\s+the\s+web|the\s+web|internet|publicly|public\s+(?:info|sources?|benchmarks?)|"
+    r"wiki(?:pedia)?|reddit|people\s+(?:say|think)|reviews?|newer|newest|latest\s+(?:release|version|news)|"
+    r"official\s+(?:site|docs?|release)|news)\b",
+    re.I,
+)
+
+
+def vault_knowledge_families(text: str) -> frozenset[str] | None:
+    """Families for a question about the content of the user's vault notes.
+
+    Returns None when the message is not a vault knowledge question, or is a
+    note creation/editing request. A public-source cue adds web retrieval so a
+    combined request keeps research_parallel/web tools.
+    """
+    value = str(text or "")
+    if not _VAULT_KNOWLEDGE_RE.search(value):
+        return None
+    # "what did I write" / "what I wrote" describe past content, not an edit.
+    action_text = re.sub(r"\bwhat\s+(?:did\s+|have\s+)?i\s+(?:write|written|wrote)\b", " ", value, flags=re.I)
+    if _NOTE_MUTATION_RE.search(action_text):
+        return None
+    if _VAULT_WEB_CUE_RE.search(value):
+        return frozenset({"workspace_read", "search_browser"})
+    return frozenset({"workspace_read"})
+
+
+def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False, vault_scope=False) -> frozenset[str]:
     """Classify once; inherit a prior capability only for a referential follow-up."""
     message = _routing_email_scope(editor_request_instructions(message))
     from src.agent_runtime.structured_audits import audit_requirement
@@ -4941,23 +5048,18 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         return frozenset({"workspace_read"})
     raw_text = str(message or "").strip()
     text = _normalize_request_lead(message)
-    # Bound vault retrieval for note-content questions when a workspace is set.
-    # "my notes" here means the Obsidian vault, not the personal Notes product.
-    if workspace and re.search(
-        r"\b(?:what\s+do\s+(?:my|the)\s+notes?\s+say|"
-        r"(?:search|find|look\s+(?:in|through|up)|check)\s+(?:my|the)\s+notes?\b|"
-        r"(?:my|the)\s+notes?\s+(?:say|about|on|regarding|mention|contain)\b)",
-        text,
-        re.I,
-    ):
-        if re.search(r"\b(?:online|web|internet|public)\b", text, re.I) and re.search(
-            r"\b(?:compare|cross[- ]?check|vs\.?|versus|with\s+what\s+people)\b",
-            text,
-            re.I,
-        ):
-            return frozenset({"workspace_read", "search_browser"})
-        if not re.search(r"\b(?:online|web|internet|public)\b", text, re.I):
-            return frozenset({"workspace_read"})
+    # Note-content questions are vault retrieval when the configured vault is
+    # reachable (bound workspace or an active directory root that contains it).
+    # Note creation/editing keeps its existing routing.
+    if workspace or vault_scope:
+        vault_families = vault_knowledge_families(text)
+        if vault_families is not None:
+            return vault_families
+    # A concrete computation (hash, arithmetic, dates, UUIDs) outranks broad
+    # "what is X" lookup rules: no family, so the conversational core (with
+    # python) is offered and the model may compute or answer directly.
+    if computation_request(raw_text):
+        return frozenset()
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
     # Simple public "what is / about / plot" questions stay on web lookup.
@@ -6641,6 +6743,15 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
                            if not policy.blocks(n) and canonical_tool(n) not in denied
                            and not (policy.disable_mcp and n.startswith("mcp__")))
     selected = set().union(*(FAMILY_TOOLS.get(f, frozenset()) for f in families))
+    # Observational routing trace: snapshots of `selected`, never read back.
+    from src.agent_runtime import routing_trace as _routing_trace
+    _rt_steps = [] if _routing_trace.current() is not None else None
+
+    def _rt_step(add_label, drop_label):
+        if _rt_steps is not None:
+            _rt_steps.append((add_label, drop_label, frozenset(selected)))
+
+    _rt_step("family", "not_in_turn_families")
     if "workspace_read" in families and message is not None and selected_tools is not None:
         from src.agent_runtime.structured_audits import audit_requirement
         if audit_requirement(workspace_inspection_source(message, history)) and not set(selected_tools) <= WORKSPACE_READ_TOOLS:
@@ -6659,13 +6770,16 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
             writers = requested & {"write_file", "edit_file", "apply_patch"}
             if writers and not (selected & writers):
                 selected = set(requested)
+        _rt_step("request_seal", "narrowed_by_request_seal")
     elif operation is not None:
         # A server-sealed safe read is an operation, not merely a family hint.
         # Offer exactly that reader so the model cannot drift to a sibling
         # search/mutation tool after the router has already resolved intent.
         selected.intersection_update({canonical_tool(operation.tool)})
+        _rt_step("sealed_read", "narrowed_by_sealed_read")
     elif not families:
-        selected.update(CONTRACT_CORE_TOOLS)
+        selected.update(CONVERSATIONAL_CORE_TOOLS)
+        _rt_step("core_fallback", "not_in_turn_families")
     if (
         message is not None
         and selected_tools is not None
@@ -6674,20 +6788,25 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
         # Browser is not core. It is a bounded recovery capability for a web
         # turn when static search/fetch cannot read the named site.
         selected.add("private_browser")
+        _rt_step("browser_web_recovery", "not_in_turn_families")
     # Email headers discover records; they are not a complete reading surface.
     # Keep the read-only continuation available after exact search narrowing.
     # The executable intersection below still enforces disabled tools/accounts.
     if 'search_emails' in selected:
         selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
+        _rt_step("email_read_continuation", "not_in_turn_families")
     selected.update(canonical_tool(n) for n in always_available_tools)
+    _rt_step("always_available", "not_in_turn_families")
     # Exact classifier seals (empty families + selected_tools) must stay narrow.
     # Prior-turn warm tools otherwise reopen vault_batch_edit/bash/web after a
     # single-note rewrite was deliberately sealed to write_file/edit_file.
     if not (selected_tools is not None and not families):
         selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
+        _rt_step("warm_tool", "not_in_turn_families")
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:
         selected.update({"ask_user", "update_plan"})
+        _rt_step("controls", "not_in_turn_families")
     offered = frozenset(n for n in executable if canonical_tool(n) in selected)
     # Prefer the real MCP email schema over its legacy alias when both exist.
     offered = frozenset(n for n in offered if n.startswith("mcp__") or "mcp__email__" + n not in offered)
@@ -6719,6 +6838,13 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
         operation = replace(operation, tool=next(n for n in offered
                             if canonical_tool(n) == canonical_tool(operation.tool)))
     required = frozenset(n for n in offered if canonical_tool(n) in required_names)
+    if _rt_steps is not None:
+        _routing_trace.contract_steps(
+            families=families, executable=executable, steps=_rt_steps, offered=offered,
+            unavailable=unavailable, required=required,
+            operation_tool=getattr(operation, "tool", None),
+            selected_tools=selected_tools, canonical=canonical_tool,
+        )
     return TurnContract(families, required, offered, executable, unavailable,
                         tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(offered)),
                         operation, required_families,

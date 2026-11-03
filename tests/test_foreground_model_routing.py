@@ -91,6 +91,13 @@ class _EmptyDb:
         return None
 
 
+def _chat_processor_stub():
+    # The chat route calls ChatProcessor._requests_personal_overview (a static
+    # helper); expose the real one rather than an empty placeholder.
+    from src.chat_processor import ChatProcessor
+    return SimpleNamespace(_requests_personal_overview=ChatProcessor._requests_personal_overview)
+
+
 class _RouteRequest:
     def __init__(self, mode, privileges=None):
         self.headers = {}
@@ -287,7 +294,7 @@ def _chat_stream_endpoint(
     router = chat_routes.setup_chat_routes(
         session_manager,
         SimpleNamespace(),
-        SimpleNamespace(),
+        _chat_processor_stub(),
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(),
@@ -1211,7 +1218,7 @@ def _chat_endpoint(
     router = chat_routes.setup_chat_routes(
         session_manager,
         _NonStreamChatHandler(),
-        SimpleNamespace(),
+        _chat_processor_stub(),
         SimpleNamespace(),
         SimpleNamespace(),
         SimpleNamespace(),
