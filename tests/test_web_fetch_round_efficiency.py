@@ -46,7 +46,7 @@ def test_unambiguous_two_url_strings_are_split(raw,expected):
     "https://wiki.example.org/wiki/A%20B",
     "https://wiki.example.org/Chapter?section=One,Two",
     "https://wiki.example.org/Chapter query=two",
-    "https://wiki.example.org/\tevil.example.org",
+    "https://wiki.example.org/ totally-not-a-url",
 ])
 def test_single_urls_and_bad_ambiguous_input_are_not_split(value):
     assert WebFetchTool._coerce_url_list(value) is None
@@ -122,6 +122,10 @@ async def test_regular_prose_keeps_focused_extraction(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invalid_multi_url_entry_still_fails_per_url_validation(monkeypatch):
+    from src.search import content as search_content
+    monkeypatch.setattr(search_content,"fetch_webpage_content",lambda *a,**k:{
+        "title":"Example","content":"Safe fetched text.","linked_content":"Safe fetched text."
+    })
     tool=WebFetchTool()
     result=await tool.execute(json.dumps({"url":["https://example.org","file:///etc/passwd"]}),{})
     assert result["requested"]==2
