@@ -27,6 +27,35 @@ from .models import set_session_manager_instance, get_session_manager_instance
 logger = logging.getLogger(__name__)
 
 
+def _invalidate_episodic_message_sources(
+    owner: str | None, session_id: str, message_ids: list[str], *,
+    invalidate_all_session_candidates: bool = False,
+) -> None:
+    """Best-effort post-commit privacy invalidation in separate episodic SQLite.
+
+    A canonical session transcript update must never be rolled back merely
+    because an experimental memory queue is unavailable. The retention
+    reconciliation command repairs interrupted cross-database invalidations.
+    """
+    if not owner:
+        return
+    try:
+        from pathlib import Path
+        from src.constants import DATA_DIR
+        from src.episodic_memory.retention import invalidate_session_messages
+        invalidate_session_messages(
+            Path(DATA_DIR) / "episodic_candidates",
+            owner=owner, session_id=session_id,
+            removed_message_ids=message_ids,
+            invalidate_all_session_candidates=invalidate_all_session_candidates,
+        )
+    except Exception:
+        logger.exception(
+            "Episodic message-source invalidation failed for session %s",
+            session_id,
+        )
+
+
 def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     """Return a stable ISO timestamp for chat message metadata."""
     if not value:
@@ -380,7 +409,16 @@ class SessionManager:
                 db_session.message_count = min(keep_count, len(db_messages))
                 db_session.updated_at = datetime.now(timezone.utc)
 
+            removed_ids = [str(msg.id) for msg in db_messages[keep_count:]]
+            deleted_owner = (
+                getattr(db_session, "owner", None) if db_session is not None
+                else getattr(session, "owner", None)
+            )
             db.commit()
+            if removed_ids:
+                _invalidate_episodic_message_sources(
+                    deleted_owner, session_id, removed_ids,
+                )
 
             # Update in-memory
             session.history = session.history[:keep_count]
@@ -423,6 +461,10 @@ class SessionManager:
                         f"Referenced upload is no longer available: {missing_upload_id}"
                     )
 
+            replaced_ids = [
+                str(row[0]) for row in db.query(DbChatMessage.id)
+                .filter(DbChatMessage.session_id == session_id).all()
+            ]
             db.query(DbChatMessage).filter(DbChatMessage.session_id == session_id).delete()
             now = datetime.now(timezone.utc)
             for i, message in enumerate(messages):
@@ -448,6 +490,10 @@ class SessionManager:
             db_session.last_message_at = now
 
             db.commit()
+            _invalidate_episodic_message_sources(
+                getattr(db_session, "owner", None), session_id, replaced_ids,
+                invalidate_all_session_candidates=True,
+            )
             session.history = list(messages)
             session._history = session.history
             session.message_count = len(messages)
@@ -686,12 +732,33 @@ class SessionManager:
             # session lives only here (never persisted, or its row was removed
             # out-of-band); without this it can never be cleared and keeps
             # 404ing on every operation (issue #1044).
-            removed_in_memory = self.sessions.pop(session_id, None) is not None
+            ghost = self.sessions.pop(session_id, None)
+            removed_in_memory = ghost is not None
+            deleted_owner = (
+                getattr(db_session, "owner", None) if db_session is not None
+                else getattr(ghost, "owner", None)
+            )
 
             if db_session or removed_in_memory:
-                # Commit the document-detach / message-delete above (a no-op when
-                # the ghost had no rows) together with the session delete.
+                # Commit canonical deletion before scrubbing the separate SQLite
+                # episodic store. No cross-database transaction is possible.
                 db.commit()
+                if deleted_owner:
+                    try:
+                        from pathlib import Path
+                        from src.constants import DATA_DIR
+                        from src.episodic_memory.retention import purge_deleted_session
+                        purge_deleted_session(
+                            Path(DATA_DIR) / "episodic_candidates",
+                            owner=deleted_owner, session_id=session_id,
+                        )
+                    except Exception:
+                        # Canonical deletion has already committed. Operator
+                        # reconciliation must clear an interrupted scrub.
+                        logger.exception(
+                            "Episodic retention scrub failed after deleting session %s",
+                            session_id,
+                        )
                 logger.info(f"Deleted session {session_id}")
                 return True
             return False

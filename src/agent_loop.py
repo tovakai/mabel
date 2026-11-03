@@ -7959,7 +7959,7 @@ Registered browser session metadata only: session_info. Page/document reads and 
 ```youtube_tool
 {"action": "comments", "url": "https://www.youtube.com/watch?v=..."}
 ```
-Read YouTube-specific data without fighting the JavaScript UI. Actions: `comments`, `transcript`, `metadata`, `latest_channel_video`. Use `latest_channel_video` with `max_results` for latest N uploads from a channel. Use this for YouTube comments/transcripts/channel uploads; use `private_browser` only when the user wants visible site interaction.""",
+Read YouTube-specific data without fighting the JavaScript UI. Actions: `comments`, `transcript`, `metadata`, `latest_channel_video`. Use `latest_channel_video` with `max_results` for latest N uploads from a channel. Use this for YouTube comments/transcripts/channel uploads; browser page interaction is unavailable in the current producer release; do not request `private_browser` as a fallback.""",
 
     "read_file": """\
 ```read_file
@@ -21221,6 +21221,11 @@ async def _stream_agent_loop_impl(
 
     # Caller and credential denials remain absolute across contract routing.
     disabled_tools = set(disabled_tools or ())
+    # This producer release supports session metadata only. Do not offer
+    # unusable page navigation to a model or admit it through textual tools.
+    from src.browser_identity import PAGE_COMMANDS_ENABLED
+    if not PAGE_COMMANDS_ENABLED:
+        disabled_tools.add("private_browser")
     if delegated_credential:
         disabled_tools.update(delegated_credential_blocked_tools())
         if tool_policy is not None:
@@ -24664,6 +24669,15 @@ async def _stream_agent_loop_impl(
                 _prepend_agent_directive(route_messages, _tui_read_only_inspection_directive())
             if _tui_local_network_turn:
                 _prepend_agent_directive(route_messages, _tui_local_network_directive())
+        if _pure_web_turn and not guide_only:
+            _prepend_agent_directive(
+                route_messages,
+                "For public web lookup, call web_search or web_fetch promptly with "
+                "a known URL. web_fetch extraction_goal is an optional passage "
+                "filter, not a web search query. Omit it for wiki walkthrough "
+                "indexes so navigation links survive. Do not invent subpage URLs "
+                "or spend multiple paragraphs planning a straightforward fetch.",
+            )
         if plan_mode and not guide_only:
             _prepend_agent_directive(route_messages, PLAN_MODE_DIRECTIVE)
         elif approved_plan and approved_plan.strip() and not guide_only:
@@ -24957,6 +24971,14 @@ async def _stream_agent_loop_impl(
     _capability_recovery = ToolRecovery()
     _failed_tool_rounds = 0
     _repeated_failure_guard = RepeatedFailureGuard(limit=2)
+    # Simple documentation lookups converge with bounded source evidence.
+    # Deep research, audits, and mutation requests remain unrestricted here.
+    from src.agent_runtime.vault_lookup_budget import (
+        VaultLookupBudget, simple_vault_lookup,
+    )
+    _vault_lookup_budget = (
+        VaultLookupBudget() if simple_vault_lookup(_last_user) else None
+    )
     # Exact failed calls are not useful retries until some successful tool has
     # materially changed workspace state. This catches loops that include
     # planning prose or unrelated failures between identical commands.
@@ -25169,6 +25191,16 @@ async def _stream_agent_loop_impl(
     # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
+
+    # Candidate request schemas are otherwise re-materialized each round.
+    # Preserve an unchanged authorized web prefix to assist local KV caches.
+    from src.agent_runtime.round_cache import (
+        StableWebSchemas, digest_schema_surface, digest_system_prefix,
+        fast_web_round_budget,
+    )
+    _web_schema_stabilizer = StableWebSchemas()
+    _prior_schema_digest = None
+    _prior_system_prefix_digest = None
 
     def _filter_route_tool_schemas(schemas):
         from src.agent_runtime.structured_audits import active_audit
@@ -26177,8 +26209,54 @@ async def _stream_agent_loop_impl(
         if _catalog is not None:
             disabled_tools.difference_update(_catalog.selected - _caller_hard_denials)
         all_tool_schemas = _tool_schemas_for_route(_active_route_state)
+        # Only the same immutable turn contract may stabilize an earlier
+        # schema surface. Explicit denials, capability failures, approval
+        # boundaries and artifact recovery always win over cache affinity.
+        _allowed_web_schema_names = set()
+        if turn_contract is not None:
+            _allowed_web_schema_names = {
+                s["function"]["name"] for s in turn_contract.schemas()
+                if s["function"]["name"] not in disabled_tools
+                and s["function"]["name"] not in _caller_hard_denials
+                and s["function"]["name"] not in _capability_recovery.unavailable
+                and not (tool_policy and tool_policy.blocks(s["function"]["name"]))
+            }
+        all_tool_schemas, _web_schema_status = _web_schema_stabilizer.choose(
+            all_tool_schemas,
+            route_key=(
+                endpoint_url, model, _active_route_state.get("tool_surface"),
+                bool(_is_api_model),
+            ),
+            round_num=round_num,
+            pure_web_turn=_pure_web_turn,
+            safe_to_freeze=bool(
+                turn_contract is not None
+                and not _force_answer
+                and not _artifact_mutation_only_mode
+                and not _artifact_acquisition_recovery_active
+                and not _web_fetch_needs_private_browser
+                and not _private_browser_needs_static_fallback
+                and not _capability_recovery.unavailable
+            ),
+            allowed_names=_allowed_web_schema_names,
+        )
         if turn_contract is not None:
             _relevant_tools = {s["function"]["name"] for s in turn_contract.schemas()}
+        _current_schema_digest = digest_schema_surface(all_tool_schemas)
+        _current_system_prefix_digest = digest_system_prefix(
+            _active_route_state.get("request_messages")
+            or _active_route_state.get("messages")
+        )
+        logger.info(
+            "[agent-cache-audit] round=%s web_schema_status=%s schema_digest=%s "
+            "system_prefix_digest=%s prior_schema_same=%s prior_system_prefix_same=%s",
+            round_num, _web_schema_status, _current_schema_digest,
+            _current_system_prefix_digest,
+            _current_schema_digest == _prior_schema_digest,
+            _current_system_prefix_digest == _prior_system_prefix_digest,
+        )
+        _prior_schema_digest = _current_schema_digest
+        _prior_system_prefix_digest = _current_system_prefix_digest
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -26333,6 +26411,21 @@ async def _stream_agent_loop_impl(
             _last_route_context_length = state["context_length"]
             run_security.observe_messages(request_messages)
             candidate_tools = _tool_schemas_for_route(state)
+            # This factory, not the preceding routing audit, builds the
+            # actual provider request. Reuse the already policy-checked
+            # stable schema surface for the matching primary web route only.
+            if (
+                index == 0 and _pure_web_turn
+                and candidate_url == endpoint_url and candidate_model == model
+                and state.get("tool_surface") == _active_route_state.get("tool_surface")
+                and _web_schema_status in {"baseline", "unchanged", "stable_web_prefix"}
+                and all_tool_schemas is not None
+                and all(
+                    schema.get("function", {}).get("name") in _allowed_web_schema_names
+                    for schema in all_tool_schemas
+                )
+            ):
+                candidate_tools = list(all_tool_schemas)
             if deepseek_visual_messages is not None:
                 candidate_tools = [
                     schema
@@ -26340,6 +26433,11 @@ async def _stream_agent_loop_impl(
                     if schema.get("function", {}).get("name") != "inspect_media"
                 ]
             state["tools"] = candidate_tools
+            _route_web_max_tokens, _route_web_thinking = fast_web_round_budget(
+                candidate_model, max_tokens, state.get("thinking_mode"),
+                round_num=round_num, pure_web_turn=_pure_web_turn,
+                has_tools=bool(candidate_tools or state.get("relevant_tools")),
+            )
             from src.generation_budget import (fit_output_token_budget,
                 estimate_tool_schema_tokens,estimate_multimodal_image_tokens,context_safety_margin)
             if state["context_length"] > 0:
@@ -26347,13 +26445,22 @@ async def _stream_agent_loop_impl(
                 request_messages = trim_for_context(request_messages,
                     max(1,state["context_length"]-estimate_tool_schema_tokens(candidate_tools)
                         -estimate_multimodal_image_tokens(request_messages)),
-                    reserve_tokens=min(max(max_tokens or 1024,512),2048)
+                    reserve_tokens=min(max(_route_web_max_tokens or 1024,512),2048)
                         +context_safety_margin(state["context_length"]))
                 state["request_messages"] = request_messages
                 _last_route_request_messages = request_messages
+            # Record the actual post-trim provider-bound messages. These
+            # fingerprints can detect prefix churn but do not prove a KV hit.
+            logger.info(
+                "[agent-cache-request] round=%s candidate=%s schema_digest=%s "
+                "system_prefix_digest=%s generation_cap=%s thinking=%s",
+                round_num, index, digest_schema_surface(candidate_tools),
+                digest_system_prefix(request_messages),
+                _route_web_max_tokens, _route_web_thinking,
+            )
 
             candidate_max_tokens = fit_output_token_budget(
-                max_tokens,
+                _route_web_max_tokens,
                 state["context_length"],
                 request_messages,
                 candidate_tools,
@@ -26390,7 +26497,7 @@ async def _stream_agent_loop_impl(
                         if _is_odysseus_qwen_model(candidate_model)
                         else _requested_temperature
                     ),
-                    "thinking_mode": state.get("thinking_mode"),
+                    "thinking_mode": _route_web_thinking,
                     "reasoning_effort": reasoning_effort,
                 },
             }
@@ -27050,13 +27157,23 @@ async def _stream_agent_loop_impl(
                 _finalize_round_usage()
                 logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
                 break
+        _web_round_max_tokens, _web_round_thinking_mode = fast_web_round_budget(
+            model, max_tokens, _active_route_state.get("thinking_mode") or thinking_mode,
+            round_num=round_num, pure_web_turn=_pure_web_turn,
+            has_tools=bool(all_tool_schemas or _relevant_tools),
+        )
+        if _web_round_max_tokens != max_tokens or _web_round_thinking_mode != thinking_mode:
+            logger.info(
+                "[agent-web-budget] round=%s generation_cap=%s thinking=%s",
+                round_num, _web_round_max_tokens, _web_round_thinking_mode,
+            )
         logger.info(
             "[agent-timing] round_start round=%s model=%s endpoint=%s prompt_tokens=%s output_tokens=%s tools=%s native_tools=%s timeout=%s",
             round_num,
             model,
             endpoint_url,
             estimate_tokens(messages),
-            max_tokens,
+            _web_round_max_tokens,
             len(_tool_names_sent),
             bool(all_tool_schemas),
             agent_stream_timeout,
@@ -27085,7 +27202,7 @@ async def _stream_agent_loop_impl(
                     messages=_snapshot_messages,
                     tools=all_tool_schemas or [],
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=_web_round_max_tokens,
                     prompt_type=prompt_type if round_num == 1 else None,
                     agent_prompt_mode=(
                         "odysseus_doc" if _ody_doc_finetune_mode
@@ -27099,14 +27216,14 @@ async def _stream_agent_loop_impl(
             _candidates,
             messages,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=_web_round_max_tokens,
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             tool_choice_none=_ody_doc_finetune_mode,
             timeout=agent_stream_timeout,
             session_id=session_id,
             workload=workload,
-            thinking_mode=thinking_mode,
+            thinking_mode=_web_round_thinking_mode,
             reasoning_effort=reasoning_effort,
             fallback_statuses=fallback_statuses,
             fallback_on_empty=fallback_on_empty,
@@ -36670,6 +36787,36 @@ async def _stream_agent_loop_impl(
                                  or str(_round_actual_endpoint_id or "").lower() == "flashteach"
                              ),
                              allow_visual_evidence=_allow_visual_tool_evidence_for_model(_round_actual_model))
+        if _vault_lookup_budget is not None and not _force_answer:
+            _vault_lookup_reason = _vault_lookup_budget.observe(tool_result_records)
+            if _vault_lookup_reason:
+                _force_answer = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "This simple vault document lookup has reached its bounded "
+                        "research budget. Do not call more tools. Answer the user "
+                        "from source evidence already retrieved; cite exact note "
+                        "paths when available. Never invent files or claim success "
+                        "when a read failed. Report the concrete blocker if no "
+                        "reliable evidence was found."
+                    ),
+                })
+                logger.info(
+                    "[agent] vault lookup convergence reason=%s attempts=%s reads=%s",
+                    _vault_lookup_reason, _vault_lookup_budget.attempts,
+                    _vault_lookup_budget.successful_reads,
+                )
+                if diagnostic_events:
+                    yield "data: " + json.dumps({
+                        "type": "diagnostic_event",
+                        "operation": "vault_lookup_convergence",
+                        "status": "completed",
+                        "reason": _vault_lookup_reason,
+                        "attempts": _vault_lookup_budget.attempts,
+                        "successful_reads": _vault_lookup_budget.successful_reads,
+                        "round": round_num,
+                    }) + "\n\n"
         if _private_browser_catalog_ready and not _force_answer:
             _force_answer = True
             messages.append({

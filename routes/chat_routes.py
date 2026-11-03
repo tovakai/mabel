@@ -2489,6 +2489,7 @@ def setup_chat_routes(
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
+            allow_episodic_capture=not is_internal_tool_request(request),
         )
 
         return {
@@ -3434,6 +3435,12 @@ def setup_chat_routes(
         if _use_turn_contract and _turn_capabilities and "search_browser" not in _turn_capabilities:
             _explicit_web_intent = False
         disabled_tools = set()
+        # The installed browser producer cannot bind page actions safely.
+        # Hide it before constructing the immutable turn contract; execution
+        # still denies page operations independently.
+        from src.browser_identity import PAGE_COMMANDS_ENABLED
+        if not PAGE_COMMANDS_ENABLED:
+            disabled_tools.add("private_browser")
         # Minting is admin-only, so every owner-keyed check below answers
         # "admin" for a token. Cap it at the non-admin policy instead.
         # stream_agent_loop repeats this from delegated_credential.
@@ -4726,6 +4733,9 @@ def setup_chat_routes(
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     allow_background_extraction=_post_response_extraction_allowed(
                                         tools_blocked=tool_policy.block_all_tool_calls,
                                         tool_approval_continuation=tool_approval_continuation,
@@ -5133,10 +5143,13 @@ def setup_chat_routes(
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
-                                                            agent_rounds=_agent_rounds,
+                                    agent_rounds=_agent_rounds,
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     extract_skills=(
                                         user_requested_agent
                                         and not tool_approval_continuation
@@ -5475,8 +5488,22 @@ def setup_chat_routes(
                                     .first()
                                 )
                                 if db_msg:
+                                    rewritten_id = str(db_msg.id)
+                                    old_content = db_msg.content
                                     db_msg.content = full_response
                                     db.commit()
+                                    if old_content != full_response:
+                                        from core.session_manager import (
+                                            _invalidate_episodic_message_sources,
+                                        )
+                                        source_owner = (
+                                            getattr(db_msg.session, "owner", None)
+                                            if getattr(db_msg, "session", None) is not None
+                                            else getattr(sess, "owner", None)
+                                        )
+                                        _invalidate_episodic_message_sources(
+                                            source_owner, session_id, [rewritten_id],
+                                        )
                             except Exception as e:
                                 logger.warning("Failed to update rewritten message in DB: %s", e)
                                 db.rollback()

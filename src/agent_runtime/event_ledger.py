@@ -16,7 +16,12 @@ import time
 ACTORS = frozenset({'heartbeat', 'dottie', 'mabel', 'runtime', 'user'})
 KINDS = frozenset({'runtime.tool_discovery', 'runtime.agent_turn', 'prompt.composition_shadowed',
                    'job.claimed', 'job.checkpointed', 'job.completed', 'job.failed', 'job.yielded',
-                   'curiosity.candidate_selected', 'module.proposal_created'})
+                   'curiosity.candidate_selected', 'module.proposal_created',
+                   'memory.candidate_created', 'memory.candidate_deferred',
+                   'memory.candidate_rejected', 'memory.candidate_quarantined',
+                   'memory.candidate_merged', 'memory.candidate_promoted',
+                   'memory.association_added', 'memory.association_strengthened',
+                   'memory.episode_recalled', 'memory.episode_corrected'})
 TOKEN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 _thread_lock = Lock()
 
@@ -134,6 +139,45 @@ class Ledger:
                 if os.write(fd, raw) != len(raw): raise OSError('Partial ledger append')
                 os.fsync(fd)
             finally: os.close(fd)
+        return event.event_id
+
+    def append_once(self, event):
+        """Idempotent, durable append for outbox replay.
+
+        A replay of the same event_id and content is acknowledged without
+        duplicating the JSONL record. Reusing an ID with different contents
+        fails closed. Lookup is a bounded, deliberate linear scan of the local
+        ledger, protected by the same cross-process lock as ordinary append.
+        """
+        if not isinstance(event, Event):
+            raise TypeError('Expected Event')
+        event.validate()
+        raw = (json.dumps(asdict(event), ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
+        if len(raw) > 16384:
+            raise LedgerError('Event too large')
+        with _locked(self.path):
+            if self.path.exists():
+                with self.path.open('rb') as stream:
+                    for number, line in enumerate(stream, 1):
+                        try:
+                            if not line.endswith(b'\n'):
+                                raise LedgerError('Incomplete ledger record')
+                            old = Event.parse(json.loads(line))
+                        except (ValueError, UnicodeError, TypeError) as error:
+                            raise LedgerError(f'Invalid ledger record at line {number}') from error
+                        if old.event_id == event.event_id:
+                            # JSON serializes both stored lists and in-memory
+                            # tuples as arrays, unlike Python's direct equality.
+                            if json.dumps(asdict(old), sort_keys=True) != json.dumps(asdict(event), sort_keys=True):
+                                raise LedgerError('Conflicting event with the same event_id')
+                            return event.event_id
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            try:
+                if os.write(fd, raw) != len(raw):
+                    raise OSError('Partial ledger append')
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         return event.event_id
 
     def read(self, *, actor=None, kind=None, session_id=None, job_id=None):

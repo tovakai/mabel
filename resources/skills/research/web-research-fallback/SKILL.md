@@ -20,7 +20,7 @@ Use when a task requires current public information, primary sources, multiple p
 1. Define the facts needed and the preferred primary source for each fact.
 2. Search with a focused query and use result metadata to select likely authoritative pages.
 3. Open the source directly and extract the relevant passage, date, and URL rather than relying on a search snippet.
-4. Use the private browser when the page requires interaction, client-side rendering, navigation, or visual inspection.
+4. Use a browser only when its page-operation tool is actually offered and authorized by the current runtime. In the current session-metadata-only browser build, page navigation is unavailable; use static pages, official APIs, or report the limitation instead of requesting private_browser.
 5. If a page fails, try a primary-source alternative or a narrower route before broadening to secondary sources.
 6. Cross-check unstable or consequential claims and distinguish source-backed facts from inference.
 

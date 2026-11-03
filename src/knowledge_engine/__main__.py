@@ -22,7 +22,19 @@ def watch(index, *, interval=0.5, reconcile_seconds=60, stop=None, after_scan=No
         if stamp != previous:
             previous, dirty_since = stamp, clock
         if clock-last_full>=reconcile_seconds or dirty_since is not None and clock-dirty_since>=interval:
-            index.reconcile()
+            result = index.reconcile()
+            # Expose progress to systemd's journal without logging note contents,
+            # file paths, role secrets, or model prompts.
+            print(json.dumps({
+                'event': 'vault_index_reconciled',
+                'generation': result.get('generation'),
+                'last_scan': result.get('last_scan'),
+                'notes': result.get('notes'),
+                'chunks': result.get('chunks'),
+                'edges': result.get('edges'),
+                'changed': result.get('changed'),
+                'scan_error_count': len(result.get('scan_errors') or {}),
+            }, ensure_ascii=False), flush=True)
             if after_scan is not None:
                 after_scan()
             last_full, dirty_since = clock, None
@@ -48,6 +60,9 @@ def main():
     scan.add_argument('--embed',action='store_true')
     scan.add_argument('--embedding-limit',type=int,default=1000)
     sub.add_parser('embedding-coverage')
+    embed=sub.add_parser('embed',help='Index missing vectors through the configured remote Knowledge embeddings role; no source scan')
+    embed.add_argument('--embedding-limit',type=int,default=256)
+    embed.add_argument('--batch-size',type=int,default=8)
     rebuild=sub.add_parser('rebuild-vectors')
     rebuild.add_argument('space_id')
     sub.add_parser('status')
@@ -82,6 +97,10 @@ def main():
     elif args.command=='embedding-coverage':
         from .semantic import coverage
         result=coverage(index)
+    elif args.command=='embed':
+        import asyncio
+        from .maintenance import embed_pending
+        result=asyncio.run(embed_pending(index,owner=args.owner,limit=args.embedding_limit,batch_size=args.batch_size))
     elif args.command=='rebuild-vectors':
         if not args.space_id or len(args.space_id)!=64:
             parser.error('Use the exact space ID from embedding-coverage')

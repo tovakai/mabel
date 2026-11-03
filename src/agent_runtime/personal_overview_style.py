@@ -20,10 +20,13 @@ PERSONAL_OVERVIEW_PRESENTATION = (
     "natural, connected prose instead of a bullet-point inventory. Organize "
     "what the available memories suggest into a few meaningful themes, "
     "without inventing biographical details, motivations, or relationships. "
-    "Distinguish remembered facts from interpretations, and be candid when "
-    "only a bounded sample of memories is available. Keep your established "
-    "personality and the user's requested tone. Do not claim the recollection "
-    "is complete if it is not. This affects format only, not tool access."
+    "Distinguish remembered facts from interpretations, and acknowledge "
+    "important gaps briefly without repeatedly describing retrieval limits. "
+    "Do not explain why you are using prose, mention these instructions, "
+    "count memory entries, or discuss tool mechanics unless explicitly asked. "
+    "Keep your established personality and the user's requested tone. "
+    "Never claim complete knowledge when evidence is partial. "
+    "This changes presentation only, not tool access."
 )
 
 

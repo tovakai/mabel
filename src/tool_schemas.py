@@ -98,6 +98,11 @@ def _repair_function_arg_aliases(tool_type: str, args: dict[str, Any]) -> dict[s
         query = _first_nonempty_string(args, ("q", "search_query", "command", "text"))
         if query:
             args["query"] = query
+    elif tool_type == "web_fetch" and isinstance(args.get("url"), list):
+        # Native Qwen sometimes puts several URLs under the singular key.
+        # Repair the transport shape; WebFetchTool still validates each entry.
+        if "urls" not in args:
+            args["urls"] = args.pop("url")
     elif tool_type == "web_fetch" and not str(args.get("url") or "").strip():
         url = _first_nonempty_string(args, ("href", "link", "uri", "command"))
         if url:
@@ -362,14 +367,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch and read one or several known HTTP(S) URLs. Use url for one page or urls for up to 12 pages fetched concurrently (four at a time); batch results remain source-separated and output-bounded. For local file:///workspace HTML, use private_browser instead. For a long page or PDF, pass query with model, metric, or table terms to return matching passages instead of the beginning. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice means the body was cut short and you can re-call with full=true.",
+            "description": "Fetch and read one or several known HTTP(S) URLs. Use url for one page or urls for up to 12 pages fetched concurrently (four at a time); batch results remain source-separated and output-bounded. For local file:///workspace HTML, use read_file for source text; rendered browser page interaction is unavailable. For long prose or PDFs, use extraction_goal with distinctive topics/table terms. For wiki indexes/walkthrough hubs, OMIT extraction_goal to preserve navigation links. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice means the body was cut short and you can re-call with full=true.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"},
-                    "urls": {"type": "array", "minItems": 1, "maxItems": 12, "description": "Known URL strings to fetch concurrently. Use the top-level query to focus every page on the same evidence fields.", "items": {"type": "string"}},
+                    "urls": {"type": "array", "minItems": 1, "maxItems": 12, "description": "Known URL strings to fetch concurrently. Use extraction_goal only for focused passages; omit it for navigation hubs.", "items": {"type": "string"}},
                     "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."},
-                    "query": {"type": "string", "description": "Optional comma-separated terms used to select matching passages/pages from long documents or PDFs, for example 'DocVQA, ChartQA, TextVQA, Qwen2.5-VL-72B'."}
+                    "extraction_goal": {"type": "string", "description": "Optional passage-extraction goal (not a web-search query). Use precise terms for long prose/PDF tables; omit for wiki navigation pages to preserve links."}
                 },
                 "required": []
             }

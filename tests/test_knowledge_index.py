@@ -377,7 +377,11 @@ def test_cli_scan_search_graph_read_and_benchmark_without_models(vault):
     results=[]
     for arguments in [['scan'],['status'],['search','tolerans'],['graph','Projects/Lid.md'],
             ['read','Projects/Lid.md','--start','8','--end','8'],['benchmark'],['embedding-coverage']]:
-        output=subprocess.run(command+arguments,capture_output=True,text=True,timeout=15,check=True)
+        output=subprocess.run(command+arguments,capture_output=True,text=True,timeout=15,check=False)
+        assert output.returncode == 0, (
+            f"Knowledge CLI failed: {arguments!r} (exit {output.returncode})\n"
+            f"stderr: {output.stderr}\nstdout: {output.stdout}"
+        )
         results.append(json.loads(output.stdout))
     assert results[0]['notes']==7 and results[1]['health']=='ok'
     assert results[2]['matches'][0]['rel_path']=='Projects/Lid.md'

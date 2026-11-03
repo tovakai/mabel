@@ -8,6 +8,11 @@ import re
 _ACTIVE = ContextVar('request_tool_catalog', default=None)
 logger = logging.getLogger(__name__)
 
+# Discovery-only compatibility names. These select a registered schema; they
+# never execute a tool or grant authority. Only apply if the canonical schema
+# survived the request's policy-filtered catalog.
+_DISCOVERY_ALIASES = {"vault_search": "vault_knowledge_search"}
+
 
 class DiscoveryError(ValueError):
     """Distinct discovery failure. error_code is not a generic collapse."""
@@ -199,6 +204,17 @@ async def discover_tools(content, ctx):
                 names = []
         if not isinstance(names, list) or len(names) > 6 or any(not isinstance(n, str) for n in names):
             raise DiscoveryError('invalid_arguments', 'Select at most six registered tool names', requested=[n for n in names if isinstance(n, str)][:6] if isinstance(names, list) else ())
+        requested_names = list(names)
+        resolved_names = []
+        aliases = {}
+        for name in names:
+            canonical = _DISCOVERY_ALIASES.get(name)
+            if canonical and canonical in catalog.inventory:
+                aliases[name] = canonical
+                resolved_names.append(canonical)
+            else:
+                resolved_names.append(name)
+        names = list(dict.fromkeys(resolved_names))
         _classify_missing_names(catalog, names)
         offset = args.get('offset', 0)
         if type(offset) is not int or not 0 <= offset <= len(catalog.inventory):
@@ -215,7 +231,7 @@ async def discover_tools(content, ctx):
             entries.append(row)
             used += size
         return {'output':json.dumps({'selected':names, 'retrieval':retrieval, 'semantic_index':index_state, 'authorization':'Selection exposes schemas only. Missing permission requires user approval; policy denials remain final.',
-            'tools':entries,
+            'tools':entries, 'resolved_aliases':aliases,
             'next_offset':offset + len(entries) if offset + len(entries) < len(catalog.inventory) else None}, ensure_ascii=False), 'exit_code':0}
     except DiscoveryError as error:
         error.catalog = catalog
