@@ -35,6 +35,59 @@ their existing execution contract. No model weights or training settings change.
    canonical output: an always-synthesize trial caused a live notes loop and was
    reverted. Compound turns cannot terminate after only one capability's result.
 
+7. The contract is the single capability decision for chat turns. The agent loop
+   executes it; it does not re-classify intent (no web-only narrowing of a
+   combined vault+web contract). Its only narrowing is the explicit single-note
+   vault-rewrite seal. Callers without a contract (scheduler, background jobs)
+   keep the legacy tool-RAG path.
+
+## Web toggle
+
+The Agent web toggle is sent as `allow_web_search=true|false` on every UI turn.
+
+- **Explicit off (`false`) is absolute for that request.** Every web-retrieval
+  entry point is denied in schema selection *and* at execution:
+  `web_search`, `web_fetch`, `get_weather`, `private_browser`, browser MCP tools,
+  `youtube_tool`, `search_hf_models` and `trigger_research` (Deep Research is
+  web-only). Earlier exemptions no longer apply when the toggle is explicitly off:
+  - a **pasted URL** no longer re-enables `web_fetch` for that exact page;
+  - an **explicit browser request**, including the reviewed **email unsubscribe**
+    flow that opens the unsubscribe link in `private_browser`, is refused. Turn
+    web on to use those flows;
+  - a contextual web follow-up cannot re-enable web.
+- A `web_egress` marker travels with the request authority into every child
+  authority. The dispatcher refuses web forms of local-capable tools before
+  admission, so no grant or approval can bypass the toggle: `pdf_extract` with a
+  URL and `research_parallel`'s web branch are refused; local PDFs and the vault
+  branch still run.
+- Authorized local work continues: vault search/reads, saved research
+  (`manage_research`), `research_parallel` with `mode=vault`, workspace reads.
+  A combined vault+web request answers the vault part and states that the web
+  part could not be checked; a purely web request gets a short refusal.
+- **Unset toggle** (API callers that omit the field) is not explicit off: web
+  tools follow prompt intent as before, and Deep Research stays available.
+- **Read-only tools never need an approval prompt** when their scope is enabled
+  (web search/fetch, weather, read-only browser actions, Deep Research, vault and
+  workspace reads). Approvals remain for writes, shell and other effects.
+
+## Routing diagnostics
+
+Every chat turn writes one `tool_routing` event to the debug console
+(`data/debug_console.sqlite3`): the runtime profile, contract families, and for
+each tool whether it was registered, authorized, discoverable, selected and
+advertised, plus the first stage that excluded it and the schema-token estimate.
+Names, reason codes and counts only — no prompt text, arguments or outputs.
+
+```sh
+python scripts/tool_routing_why.py --tool research_parallel   # latest turn
+python scripts/tool_routing_why.py --excluded                 # exclusions by reason
+python scripts/tool_routing_replay.py --live --isolate        # replay eval vs. the live model
+```
+
+The replay runs the real route and agent loop against a scratch copy of `data/`
+and never executes tools; the app key is copied only for `--live` and removed as
+soon as the endpoint headers are resolved.
+
 ## Verification
 
 Use the project's configured Python environment, not an unrelated system Python:
