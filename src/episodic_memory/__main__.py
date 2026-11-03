@@ -29,6 +29,13 @@ def main() -> int:
         "--state", choices=["pending", "deferred", "rejected", "quarantined"],
         default="pending",
     )
+    promote = sub.add_parser(
+        "promote", help="Explicitly promote one verified candidate into Mabel's vault",
+    )
+    promote.add_argument("--candidate-id", required=True)
+    promote.add_argument("--vault-root", type=Path, required=True)
+    promote.add_argument("--protected-root", type=Path, action="append", required=True)
+    promote.add_argument("--confirm-promote", action="store_true")
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
     semantic = sub.add_parser(
         "semantic-links",
@@ -103,6 +110,37 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "promote":
+        if not args.confirm_promote:
+            parser.error("promote requires --confirm-promote")
+        from core.database import SessionLocal
+        from routes.prefs_routes import _load_for_user
+        from .promotion import promote_verified_conversation
+
+        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+            "1", "true", "yes",
+        }
+        if not enabled:
+            parser.error("promote requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+        prefs = _load_for_user(queue.owner)
+        policy = CapturePolicy(
+            episodic_enabled=enabled,
+            memory_enabled=bool(prefs.get("memory_enabled", True)),
+        )
+        with SessionLocal() as db:
+            saved = promote_verified_conversation(
+                queue, args.candidate_id, db=db,
+                vault_root=args.vault_root,
+                protected_roots=tuple(args.protected_root),
+                policy=policy, approved=True,
+            )
+        output = {
+            "candidate_id": saved["id"],
+            "state": saved["state"],
+            "evidence_status": saved["evidence_status"],
+            "changed": saved["changed"],
+            "episode_path": saved["episode_path"],
+        }
     elif args.command == "semantic-links":
         if not args.send_source_to_embedding:
             parser.error("semantic-links requires --send-source-to-embedding")
