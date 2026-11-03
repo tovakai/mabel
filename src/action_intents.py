@@ -130,8 +130,12 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         # so chat→agent escalation keeps workspace_read / dispatch_dottie.
         ("workspace", "vault knowledge research request", rf"{_PLEASE}(?:search|check|look\s+(?:in|through|up)|find|research|ask)\b.{{0,100}}\b(?:vault|obsidian|dottie|core\s+of\s+truth)\b"),
         ("workspace", "assistant vault knowledge research request", rf"{_ACTION_QUESTION}(?:search|check|look\s+(?:in|through|up)|find|research|ask)\b.{{0,100}}\b(?:vault|obsidian|dottie|core\s+of\s+truth)\b"),
+        ("workspace", "vault notes content question", r"\bwhat\s+do\s+(?:my|the)\s+notes?\s+say\b"),
+        ("workspace", "vault notes lookup request", rf"{_PLEASE}(?:search|find|look\s+(?:in|through|up)|check)\s+(?:my|the)\s+notes?\b"),
         ("workspace", "parallel web and vault research request", rf"{_PLEASE}(?:research|check|compare|cross[- ]?check)\b.{{0,120}}\b(?:vault|obsidian|notes?).{{0,60}}\b(?:web|online|internet|public)\b"),
         ("workspace", "parallel vault and web research request", rf"{_PLEASE}(?:research|check|compare|cross[- ]?check)\b.{{0,120}}\b(?:web|online|internet|public).{{0,60}}\b(?:vault|obsidian|notes?)\b"),
+        ("workspace", "compare notes with online request", r"\bcompare\b.{{0,120}}\b(?:my|the)\s+notes?\b.{{0,80}}\b(?:online|web|internet|public|people\s+say)\b"),
+        ("workspace", "compare online with notes request", r"\bcompare\b.{{0,120}}\b(?:online|web|internet|public|people\s+say)\b.{{0,80}}\b(?:my|the)\s+notes?\b"),
 
         # Deep research jobs, not quick conceptual mentions of research.
         ("web", "explicit web search request", rf"{_PLEASE}(?:do|run|use|perform|make)\s+(?:a\s+)?(?:web\s+search|search\s+the\s+web)\b.+"),

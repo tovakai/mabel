@@ -95,8 +95,11 @@ FAMILY_TOOLS = {
 # Retrieval is selection, not authorization. A normal agent turn must retain
 # this small recovery surface when no family was recognized; explicit family
 # selections and policy denials remain narrower.
+# research_parallel sits with core web retrieval so Gyro-S can prefer combined
+# web+vault grounding when both matter; it does not authorize either child.
 CONTRACT_CORE_TOOLS = frozenset({
-    "bash", "python", "read_file", "web_search", "web_fetch", "ask_user", "vault_batch_edit",
+    "bash", "python", "read_file", "web_search", "web_fetch", "research_parallel",
+    "ask_user", "vault_batch_edit",
 })
 
 _WORKSPACE_PREFIX_RE = re.compile(r"/workspace/", re.I)
@@ -4803,6 +4806,83 @@ def corrected_browser_target(message: str, history: Iterable = ()) -> dict | Non
     return None
 
 
+def media_progress_boundary(message: str) -> dict | None:
+    """Detect expressed reading/play progress for spoiler restraint (no titles).
+
+    Returns ``{"unit": "chapter"|"episode"|"act"|"part"|"book"|"season", "reached": int}``
+    when the user says they finished/reached a numbered unit; otherwise None.
+    """
+    text = _normalize_request_lead(str(message or ""))
+    match = re.search(
+        r"\b(?:just\s+)?(?:finished|completed|beat|cleared|reached|got\s+through|"
+        r"made\s+it\s+through|done\s+with)\s+"
+        r"(?:(?:the|my)\s+)?"
+        r"(?P<unit>chapters?|episodes?|acts?|parts?|books?|seasons?)\s*"
+        r"(?P<num>\d{1,3})\b",
+        text,
+        re.I,
+    )
+    if not match:
+        match = re.search(
+            r"\b(?P<unit>chapters?|episodes?|acts?|parts?|books?|seasons?)\s*"
+            r"(?P<num>\d{1,3})\b.{0,40}\b(?:finished|completed|done|wow|amazing|holy)\b",
+            text,
+            re.I,
+        )
+    if not match:
+        return None
+    unit = match.group("unit").casefold().rstrip("s")
+    if unit == "chapters":
+        unit = "chapter"
+    return {"unit": unit, "reached": int(match.group("num"))}
+
+
+def conversational_retrieval_intent(message: str, *, workspace: bool = False) -> str:
+    """Lexical grounding distinction for conversational turns (not an LLM classifier).
+
+    Returns one of:
+      casual — emotional reaction; no external facts required
+      factual_public — claims about a named work need public grounding when unsure
+      vault — retrieve from the user's vault/notes only
+      parallel — both vault and public web evidence are relevant
+      none — no named-work grounding signal
+    """
+    text = _normalize_request_lead(str(message or ""))
+    if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
+        text = lead["request"].strip()
+    notes_hit = bool(re.search(r"\b(?:my|the)\s+notes?\b|\bnotes?\s+about\b", text, re.I))
+    public_hit = bool(re.search(r"\b(?:online|web|internet|public|people\s+say)\b", text, re.I))
+    if notes_hit and public_hit and re.search(
+        r"\b(?:compare|cross[- ]?check|vs\.?|versus|with\s+what)\b",
+        text,
+        re.I,
+    ):
+        return "parallel"
+    if workspace and notes_hit and not public_hit and re.search(
+        r"\b(?:what\s+do\s+(?:my|the)\s+notes?\s+say|say|about|on|regarding|mention|contain|"
+        r"search|find|look\s+(?:in|through|up)|check)\b",
+        text,
+        re.I,
+    ):
+        return "vault"
+    if re.search(
+        r"\b(?:what\s+(?:happens?|is|are|was|were)|who\s+(?:is|are|was)|"
+        r"how\s+does|end\s+of\s+chapter|plot|synopsis|summary\s+of)\b",
+        text,
+        re.I,
+    ):
+        return "factual_public"
+    if re.search(
+        r"\b(?:just\s+wow|so\s+good|loved\s+it|loving\s+this|mind\s+blown|"
+        r"finished\s+chapter|just\s+finished|holy\s+shit|omg)\b|"
+        r"\band\s+just\s+wow\b",
+        text,
+        re.I,
+    ) and not re.search(r"\?\s*$", text):
+        return "casual"
+    return "none"
+
+
 def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False) -> frozenset[str]:
     """Classify once; inherit a prior capability only for a referential follow-up."""
     message = _routing_email_scope(editor_request_instructions(message))
@@ -4813,6 +4893,23 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         return frozenset({"workspace_read"})
     raw_text = str(message or "").strip()
     text = _normalize_request_lead(message)
+    # Bound vault retrieval for note-content questions when a workspace is set.
+    # "my notes" here means the Obsidian vault, not the personal Notes product.
+    if workspace and re.search(
+        r"\b(?:what\s+do\s+(?:my|the)\s+notes?\s+say|"
+        r"(?:search|find|look\s+(?:in|through|up)|check)\s+(?:my|the)\s+notes?\b|"
+        r"(?:my|the)\s+notes?\s+(?:say|about|on|regarding|mention|contain)\b)",
+        text,
+        re.I,
+    ):
+        if re.search(r"\b(?:online|web|internet|public)\b", text, re.I) and re.search(
+            r"\b(?:compare|cross[- ]?check|vs\.?|versus|with\s+what\s+people)\b",
+            text,
+            re.I,
+        ):
+            return frozenset({"workspace_read", "search_browser"})
+        if not re.search(r"\b(?:online|web|internet|public)\b", text, re.I):
+            return frozenset({"workspace_read"})
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
     history = tuple(history)

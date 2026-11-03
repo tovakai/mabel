@@ -362,9 +362,50 @@ def _parse_child_output(result: Mapping[str, Any]) -> Any:
     return {}
 
 
+def _looks_like_empty_search_message(text: str) -> bool:
+    """True when a provider/tool wrote an empty-result notice rather than a hit."""
+    lowered = str(text or "").casefold()
+    if not lowered.strip():
+        return True
+    markers = (
+        "no search results found",
+        "all providers returned empty",
+        "duckduckgo:empty",
+        "no results found",
+        "0 results",
+        "zero results",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _substantive_web_results(items: list[dict]) -> list[dict]:
+    """Keep only hits with a real URL or non-empty-notice body.
+
+    Successful tool execution can still yield zero evidence. Empty-provider
+    notices must not count as grounded sources for synthesis.
+    """
+    kept: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        title = str(item.get("title") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+        if url:
+            kept.append(item)
+            continue
+        if title and not _looks_like_empty_search_message(title):
+            kept.append(item)
+            continue
+        if snippet and not _looks_like_empty_search_message(snippet):
+            kept.append(item)
+    return kept
+
+
 def _web_branch_payload(result: Mapping[str, Any], *, status: str, error: str = "") -> dict:
     parsed = _parse_child_output(result) if status in {"complete", "empty", "partial"} else {}
     results = []
+    empty_notice = ""
     if isinstance(parsed, dict):
         for item in parsed.get("results") or parsed.get("entries") or ():
             if not isinstance(item, dict):
@@ -376,8 +417,20 @@ def _web_branch_payload(result: Mapping[str, Any], *, status: str, error: str = 
                 "engine": str(item.get("engine") or item.get("source") or "")[:120],
             })
         if not results and isinstance(parsed.get("raw"), str):
-            results.append({"title": "", "url": "", "snippet": parsed["raw"][:1200], "engine": ""})
-    payload = {"status": status, "results": results}
+            raw = parsed["raw"][:1200]
+            if _looks_like_empty_search_message(raw):
+                empty_notice = raw
+            else:
+                results.append({"title": "", "url": "", "snippet": raw, "engine": ""})
+    results = _substantive_web_results(results)
+    # Re-classify callers may pass status=complete before empty filtering; keep the
+    # payload honest about evidence, not merely about tool exit_code.
+    effective = status
+    if status in {"complete", "partial", "empty"} and not results:
+        effective = "empty"
+    payload = {"status": effective, "results": results}
+    if empty_notice and not results:
+        payload["empty_notice"] = empty_notice[:500]
     if error:
         payload["error"] = error[:500]
         payload["failure_kind"] = _child_failure(result) or "backend_failure"
@@ -545,7 +598,8 @@ def _classify_web_result(result: Mapping[str, Any]) -> tuple[str, str]:
         return "failed", str(result.get("error") or "Web search failed.")
     payload = _web_branch_payload(result, status="complete")
     if not payload["results"]:
-        return "empty", ""
+        # Tool ran; evidence did not. Distinct from backend failure.
+        return "empty", str(payload.get("empty_notice") or "")
     return "complete", ""
 
 
@@ -1078,6 +1132,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
             if isinstance(section, dict)
         ]
         successish = {"complete", "empty", "partial", "degraded"}
+        grounded = {"complete", "partial", "degraded"}
         failedish = {"failed", "denied", "timeout", "cancelled", "approval_required"}
         if approval_bubble is not None:
             overall = "approval_required"
@@ -1090,6 +1145,11 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                 overall = "failed"
             elif any(status in {"partial", "degraded"} for status in branch_statuses):
                 overall = "partial"
+            elif branch_statuses and all(status == "empty" for status in branch_statuses):
+                # Every enabled branch ran but none returned substantive evidence.
+                overall = "empty"
+            elif any(status in grounded for status in branch_statuses):
+                overall = "complete"
             elif branch_statuses:
                 overall = "complete"
             else:
@@ -1127,7 +1187,7 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                 pending_tool=pending_tool,
                 pending_arguments=pending_arguments,
             )
-        elif seal is not None and overall in {"complete", "partial", "failed"}:
+        elif seal is not None and overall in {"complete", "partial", "failed", "empty"}:
             mark_seal_consumed(seal)
 
         total_ms = round((time.monotonic() - started) * 1000.0, 1)
@@ -1209,10 +1269,16 @@ def schema() -> dict:
                 "Concurrently search the public web and/or the authorized Obsidian vault. "
                 "Default vault_strategy=fast uses indexed vault_knowledge_search (candidate "
                 "matches, not verified claims). vault_strategy=deep runs bounded dispatch_dottie "
-                "research. Use mode=both when personal notes and public information both matter. "
-                "Returns one compact evidence package; you synthesize the final answer. "
-                "Direct web_search, web_fetch, vault_knowledge_search, and dispatch_dottie remain "
-                "available for specialized single-path work."
+                "research. Prefer mode=both with vault_strategy=fast when personal notes and "
+                "public information both matter (for example comparing vault notes with online "
+                "discussion). Use mode=web or mode=vault alone for single-source tasks. "
+                "Not for pure emotional reactions that need no facts — engage those "
+                "conversationally without a research essay. Respect expressed reading/play "
+                "progress (do not spoil later chapters/episodes). Branch status empty means "
+                "the tool ran but found no substantive sources — do not treat empty notices "
+                "as evidence. Returns one compact evidence package; you synthesize the final "
+                "answer. Direct web_search, web_fetch, vault_knowledge_search, and "
+                "dispatch_dottie remain available for specialized single-path work."
             ),
             "parameters": {
                 "type": "object",

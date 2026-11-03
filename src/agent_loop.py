@@ -7072,6 +7072,7 @@ _API_AGENT_RULES = """\
 - Be concise unless the user asks for depth.
 - With no active workspace, do not guess a folder for "this/current workspace"; ask the user to set one with `/workspace <path>` or `/workspace pick`.
 - Store facts or preferences about the user with `manage_memory`, not contacts.
+- Named works: engage emotional reactions without inventing plot, genre, cast, or chapter events. Ask a natural follow-up when unsure. Prefer a short conversational reply over a research essay for casual reactions; do not force `research_parallel` on every named-media mention. Ground factual claims about an unfamiliar work with the offered retrieval tools (`web_search`, vault tools, or `research_parallel` when both sides matter) before stating details. If the user says they finished/reached a numbered chapter, episode, act, or part, stay at or behind that progress unless they ask to go further — no unsolicited later-unit spoilers. When a search/tool returns status empty or only "No search results found", that is not evidence; say you lack sources rather than inventing details.
 """
 
 _LINK_RULES = """\
@@ -7094,7 +7095,9 @@ _DOMAIN_RULES = {
 - Do not use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
 - For YouTube comments, transcripts, metadata, or latest channel videos, use `youtube_tool` when it is available instead of scraping the JavaScript page.
 - For products, hardware, software, launches, and releases, distinguish announcement date from release/ship/availability date. Do not call an announced future product "current" or "available" unless the evidence says it is shipping/available now.
-- "Research X" means `trigger_research`, not a one-off `web_search`, unless the user explicitly asks for a quick lookup.""",
+- "Research X" means `trigger_research`, not a one-off `web_search`, unless the user explicitly asks for a quick lookup.
+- When personal notes and public web evidence both matter, prefer `research_parallel` with mode=both and vault_strategy=fast over separate sequential calls.
+- Casual reactions to a named work need no lookup; do not invent ungrounded plot/genre details.""",
     "documents": """\
 ## Document rules
 - For long code/content (>15 lines), use `create_document` instead of pasting into chat.
@@ -7182,6 +7185,7 @@ _COMPACT_AGENT_CORE_TOOLS = {
     "python",
     "web_search",
     "web_fetch",
+    "research_parallel",
     "read_file",
     "grep",
     "glob",
@@ -7351,6 +7355,9 @@ def _compact_native_route_tools(
 
     if "web" in domains:
         compact.update(WEB_TOOL_NAMES)
+        # Keep the combined web+vault coordinator when the turn already admitted
+        # it; WEB_TOOL_NAMES alone would otherwise strip it from compact Gyro-S.
+        compact.update(original & {"research_parallel"})
         if (
             "pdf_extract" in original
             and _mentions_pdf_url(text)
@@ -7947,7 +7954,7 @@ Or with JSON for fresh news:
 ```web_search
 {"query": "<your query>", "time_filter": "day"}
 ```
-Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. When a question needs BOTH personal vault notes and public web evidence together, prefer `research_parallel` with mode=both instead of separate sequential calls. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; research_parallel = concurrent web+vault evidence package; trigger_research = a researched report.
+Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. When a question needs BOTH personal vault notes and public web evidence together, prefer `research_parallel` with mode=both and vault_strategy=fast instead of separate sequential calls. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; research_parallel = concurrent web+vault evidence package; trigger_research = a researched report. Do not invent plot, genre, cast, or chapter events for a named work you have not grounded; a quick public lookup is appropriate when the user asks what something is or what happens in it.
 Choose the `query` yourself from the user's full request and recent conversation context. If the latest user message is only "can you search", "look it up", or similar, search for the prior topic, not the literal follow-up phrase.
 If this `web_search` tool section is visible, search is available. Do NOT tell the user web/search tools are unavailable.
 For products, hardware, software, launches, and releases, distinguish announcement date from release/ship/availability date. Do not call an announced future product "current" or "available" unless the evidence says it is shipping/available now.
@@ -7963,7 +7970,7 @@ Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check ex
 ```research_parallel
 {"mode":"both","vault_strategy":"fast","web_query":"<public lookup>","vault_objective":"<vault objective>","vault_constraints":{"path_prefix":null,"max_hops":1}}
 ```
-Concurrent authorized retrieval: public web via `web_search` and/or vault notes. Default `vault_strategy=fast` uses indexed `vault_knowledge_search` (candidate matches, not verified claims, no Dottie LLM). Use `vault_strategy=deep` for bounded `dispatch_dottie` verified research. Prefer mode=both when personal notes and public information both matter. Do not invent a missing branch query. Returns one compact evidence package; you synthesize the final answer. Direct `web_search` / `web_fetch` / `vault_knowledge_search` / `dispatch_dottie` remain available.""",
+Concurrent authorized retrieval: public web via `web_search` and/or vault notes. Default `vault_strategy=fast` uses indexed `vault_knowledge_search` (candidate matches, not verified claims, no Dottie LLM). Use `vault_strategy=deep` for bounded `dispatch_dottie` verified research. Prefer mode=both with vault_strategy=fast when personal notes and public information both matter (for example comparing vault notes with what people say online). Use mode=web or mode=vault alone when only one side is needed or authorized. Do not invent a missing branch query. Returns one compact evidence package; you synthesize the final answer. Branch `status=empty` (or a lone "No search results found" notice) means the tool ran without substantive sources — do not treat that as grounded evidence. Direct `web_search` / `web_fetch` / `vault_knowledge_search` / `dispatch_dottie` remain available for single-source tasks. Not for pure emotional reactions that need no facts — engage those conversationally without a research dump or unsolicited later-chapter spoilers.""",
 
     "dispatch_dottie": """\
 ```dispatch_dottie

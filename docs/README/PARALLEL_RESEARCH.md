@@ -94,15 +94,20 @@ only when both child windows actually overlap.
 ```
 
 Fast matches are candidate index hits. Deep findings are source-validated claims.
-Empty vault results are `empty`, not a backend failure. One successful + one
-failed branch is `partial`. Output is fair-budget truncated while preserving
-URLs and vault note IDs/paths/ranges. Diagnostics report vault timing and match
-counts without logging vault text.
+Empty vault results are `empty`, not a backend failure. A successful web tool
+exit that only returns a “No search results found” / provider-empty notice is
+also `empty` (results list cleared; `source_count=0`) — not `complete` evidence.
+When every enabled branch is empty, overall package status is `empty`. One
+successful + one failed branch is `partial`. Output is fair-budget truncated
+while preserving URLs and vault note IDs/paths/ranges. Diagnostics report vault
+timing and match counts without logging vault text.
 
 ## Runtime integration
 
 - Registered via `src/knowledge_engine/tools.py` (schema + handler).
 - Discoverable in chat and agent modes when `search_browser` and/or `workspace_read` capabilities apply; vault/Dottie intents escalate chat→agent.
+- Empty-capability agent turns include `research_parallel` in `CONTRACT_CORE_TOOLS` alongside `web_search` / `web_fetch`, so Gyro-S sees it without a family hit. Compact web routes also preserve it when already admitted (`_COMPACT_AGENT_CORE_TOOLS` / `_compact_native_route_tools`).
+- Lexical helper `conversational_retrieval_intent` distinguishes casual engagement vs factual public lookup vs vault-only vs parallel notes+online (not an LLM classifier). `media_progress_boundary` detects expressed chapter/episode progress for spoiler restraint. Vault note-content questions with a bound workspace route to `workspace_read`. Do not force `research_parallel` on every named-media mention.
 - Chat research budget counts the web branch of `research_parallel` toward search caps.
 - Diagnostics: `parallel_research_started`, `parallel_branch_completed`, `parallel_branch_failed`, `parallel_research_completed` (observational; safe when disabled/incognito).
 - Recursion into `research_parallel` from its own children is denied.
@@ -111,5 +116,7 @@ counts without logging vault text.
 
 - `tests/test_research_parallel.py` — fast/deep routing, overlap, partial/failure, auth, approval, truncation, discovery, cancel, budgets, empty vault, diagnostics, recursion, sequential deep fallback, concurrent fast-with-shared-endpoint.
 - `tests/test_research_parallel_turn_authority.py` — real turn-contract/authority path: both-mode with individually authorized children, web-only, vault-only, neither, explicit web deny, child missing from catalog, approval resume without sibling re-run.
+- `tests/test_conversational_research_routing.py` — casual vs factual vs vault vs parallel model-facing schema selection, compact preservation, discovery recovery, disabled surfaces, spoiler boundary, empty-web notice filtering.
+- `tests/test_research_parallel.py` — includes successful-but-empty web search (notice not counted as a source; package status `empty`).
 - `tests/benchmark_research_parallel.py` — synthetic fake-backend wall-clock comparison only.
 - `tests/live_research_parallel_fast_benchmark.py` — bounded live chat API fast-path latency check.

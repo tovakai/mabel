@@ -541,13 +541,65 @@ async def test_empty_vault_is_not_backend_failure():
             "mode": "vault", "vault_objective": "missing topic", "vault_strategy": "deep",
         }), _ctx())
     package = json.loads(result["output"])
-    assert package["status"] == "complete"
+    assert package["status"] == "empty"
     assert package["vault"]["status"] == "empty"
     assert package["vault"]["strategy"] == "fast"
     assert package["vault"].get("failure_kind") is None
     deep_pkg = json.loads(deep["output"])
+    assert deep_pkg["status"] == "empty"
     assert deep_pkg["vault"]["status"] == "empty"
     assert deep_pkg["vault"]["strategy"] == "deep"
+
+
+@pytest.mark.asyncio
+async def test_successful_but_empty_web_search_is_not_grounded_evidence():
+    """Tool exit_code=0 with an empty-provider notice must not count as a source."""
+
+    async def fake_empty_json(block, **kwargs):
+        return block.tool_type, {
+            "output": json.dumps({
+                "results": [{
+                    "title": "",
+                    "url": "",
+                    "snippet": (
+                        "No search results found. Tried: duckduckgo:empty. "
+                        "All providers returned empty — possibly a niche query."
+                    ),
+                    "engine": "",
+                }],
+            }),
+            "exit_code": 0,
+        }
+
+    async def fake_empty_raw(block, **kwargs):
+        return block.tool_type, {
+            "output": "No search results found. Tried: duckduckgo:empty.",
+            "exit_code": 0,
+        }
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_empty_json), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
+        result = await pr.execute(json.dumps({"mode": "web", "web_query": "obscure q"}), _ctx())
+    package = json.loads(result["output"])
+    assert package["web"]["status"] == "empty"
+    assert package["web"]["results"] == []
+    assert package["status"] == "empty"
+    assert (package.get("metrics") or {}).get("events")
+    web_events = [
+        e for e in package["metrics"]["events"]
+        if e.get("operation") == "parallel_branch_completed" and e.get("branch") == "web"
+    ]
+    assert web_events and web_events[0].get("source_count") == 0
+
+    with patch("src.tool_execution.execute_tool_block", new=fake_empty_raw), \
+            patch.object(pr, "research_shares_foreground_endpoint", return_value=(False, {})):
+        raw = await pr.execute(json.dumps({"mode": "web", "web_query": "obscure q"}), _ctx())
+    raw_pkg = json.loads(raw["output"])
+    assert raw_pkg["web"]["status"] == "empty"
+    assert raw_pkg["web"]["results"] == []
+    assert raw_pkg["status"] == "empty"
+    # Synthesis policy: empty is not complete grounded evidence.
+    assert raw_pkg["status"] != "complete"
 
 
 @pytest.mark.asyncio
