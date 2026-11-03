@@ -5,7 +5,10 @@ from .capture import capture_completed_turn
 from .promotion import promote_verified_conversation
 from .reviews import ReviewProposal, candidate_fingerprint, propose_review, list_reviews, apply_review
 from .dottie_review import review_candidate_with_dottie
-from .retention import purge_deleted_session, complete_episode_deletions, reconcile_missing_sessions
+from .retention import (
+    purge_deleted_session, complete_episode_deletions, reconcile_missing_sessions,
+    invalidate_session_messages, reconcile_invalid_sources,
+)
 
 __all__ = [
     "CandidateAdmissionError", "CandidateDraft", "CandidateQueue", "CapturePolicy",
@@ -14,4 +17,5 @@ __all__ = [
     "propose_review", "list_reviews", "apply_review",
     "review_candidate_with_dottie", "purge_deleted_session",
     "complete_episode_deletions", "reconcile_missing_sessions",
+    "invalidate_session_messages", "reconcile_invalid_sources",
 ]

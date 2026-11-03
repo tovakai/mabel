@@ -200,7 +200,7 @@ def test_additive_v2_to_v3_migration_preserves_candidate_and_review(sample):
     migrated = CandidateQueue(storage, owner="alice")
     assert migrated.get(one["id"]) is not None
     with migrated._connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
         assert db.execute(
             "SELECT id FROM candidate_reviews WHERE id=?", (review["id"],)
         ).fetchone() is not None

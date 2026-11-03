@@ -26,7 +26,7 @@ KINDS = frozenset({"experience", "decision", "mistake", "discovery", "open_quest
 SOURCE_KINDS = frozenset({"conversation", "tool_observation", "ledger_event", "user_seeded"})
 STATES = frozenset({"pending", "deferred", "promoting", "promoted", "rejected", "quarantined", "merged"})
 DECISIONS = frozenset({"deferred", "rejected", "quarantined"})
-_VERSION = 3
+_VERSION = 4
 
 
 class CandidateAdmissionError(ValueError):
@@ -137,7 +137,7 @@ class CandidateQueue:
     def _initialize(self) -> None:
         with self._connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, _VERSION):
+            if version not in (0, 1, 2, 3, _VERSION):
                 raise CandidateAdmissionError("Unknown episodic candidate DB schema; do not migrate automatically")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS candidates(
@@ -203,6 +203,17 @@ class CandidateQueue:
                     PRIMARY KEY(owner,candidate_id)
                 );
             """)
+            # v4: source-specific revocations without blocking subsequent
+            # valid messages in a still-active session.
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS invalidated_messages(
+                    owner TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    invalidated_at TEXT NOT NULL,
+                    PRIMARY KEY(owner,session_id,message_id)
+                );
+            """)
             db.execute(f"PRAGMA user_version={_VERSION}")
         try:
             os.chmod(self.path, 0o600)
@@ -239,6 +250,12 @@ class CandidateQueue:
                     (self.owner, match.group(1)),
                 ).fetchone():
                     raise CandidateAdmissionError("Source session was deleted; recapture forbidden")
+                if match and db.execute(
+                    "SELECT 1 FROM invalidated_messages WHERE "
+                    "owner=? AND session_id=? AND message_id=?",
+                    (self.owner,match.group(1),draft.source_ref.rsplit(":message:",1)[1]),
+                ).fetchone():
+                    raise CandidateAdmissionError("Source message was removed or edited; recapture forbidden")
             existing = db.execute(
                 "SELECT * FROM candidates WHERE owner=? AND dedup_key=?",
                 (self.owner, key)).fetchone()
