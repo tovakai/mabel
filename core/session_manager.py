@@ -686,12 +686,33 @@ class SessionManager:
             # session lives only here (never persisted, or its row was removed
             # out-of-band); without this it can never be cleared and keeps
             # 404ing on every operation (issue #1044).
-            removed_in_memory = self.sessions.pop(session_id, None) is not None
+            ghost = self.sessions.pop(session_id, None)
+            removed_in_memory = ghost is not None
+            deleted_owner = (
+                getattr(db_session, "owner", None) if db_session is not None
+                else getattr(ghost, "owner", None)
+            )
 
             if db_session or removed_in_memory:
-                # Commit the document-detach / message-delete above (a no-op when
-                # the ghost had no rows) together with the session delete.
+                # Commit canonical deletion before scrubbing the separate SQLite
+                # episodic store. No cross-database transaction is possible.
                 db.commit()
+                if deleted_owner:
+                    try:
+                        from pathlib import Path
+                        from src.constants import DATA_DIR
+                        from src.episodic_memory.retention import purge_deleted_session
+                        purge_deleted_session(
+                            Path(DATA_DIR) / "episodic_candidates",
+                            owner=deleted_owner, session_id=session_id,
+                        )
+                    except Exception:
+                        # Canonical deletion has already committed. Operator
+                        # reconciliation must clear an interrupted scrub.
+                        logger.exception(
+                            "Episodic retention scrub failed after deleting session %s",
+                            session_id,
+                        )
                 logger.info(f"Deleted session {session_id}")
                 return True
             return False
