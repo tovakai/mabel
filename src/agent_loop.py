@@ -26411,6 +26411,21 @@ async def _stream_agent_loop_impl(
             _last_route_context_length = state["context_length"]
             run_security.observe_messages(request_messages)
             candidate_tools = _tool_schemas_for_route(state)
+            # This factory, not the preceding routing audit, builds the
+            # actual provider request. Reuse the already policy-checked
+            # stable schema surface for the matching primary web route only.
+            if (
+                index == 0 and _pure_web_turn
+                and candidate_url == endpoint_url and candidate_model == model
+                and state.get("tool_surface") == _active_route_state.get("tool_surface")
+                and _web_schema_status in {"baseline", "unchanged", "stable_web_prefix"}
+                and all_tool_schemas is not None
+                and all(
+                    schema.get("function", {}).get("name") in _allowed_web_schema_names
+                    for schema in all_tool_schemas
+                )
+            ):
+                candidate_tools = list(all_tool_schemas)
             if deepseek_visual_messages is not None:
                 candidate_tools = [
                     schema
@@ -26418,6 +26433,18 @@ async def _stream_agent_loop_impl(
                     if schema.get("function", {}).get("name") != "inspect_media"
                 ]
             state["tools"] = candidate_tools
+            _route_web_max_tokens, _route_web_thinking = fast_web_round_budget(
+                candidate_model, max_tokens, state.get("thinking_mode"),
+                round_num=round_num, pure_web_turn=_pure_web_turn,
+                has_tools=bool(candidate_tools or state.get("relevant_tools")),
+            )
+            logger.info(
+                "[agent-cache-request] round=%s candidate=%s schema_digest=%s "
+                "system_prefix_digest=%s generation_cap=%s thinking=%s",
+                round_num, index, digest_schema_surface(candidate_tools),
+                digest_system_prefix(request_messages),
+                _route_web_max_tokens, _route_web_thinking,
+            )
             from src.generation_budget import (fit_output_token_budget,
                 estimate_tool_schema_tokens,estimate_multimodal_image_tokens,context_safety_margin)
             if state["context_length"] > 0:
@@ -26425,13 +26452,13 @@ async def _stream_agent_loop_impl(
                 request_messages = trim_for_context(request_messages,
                     max(1,state["context_length"]-estimate_tool_schema_tokens(candidate_tools)
                         -estimate_multimodal_image_tokens(request_messages)),
-                    reserve_tokens=min(max(max_tokens or 1024,512),2048)
+                    reserve_tokens=min(max(_route_web_max_tokens or 1024,512),2048)
                         +context_safety_margin(state["context_length"]))
                 state["request_messages"] = request_messages
                 _last_route_request_messages = request_messages
 
             candidate_max_tokens = fit_output_token_budget(
-                max_tokens,
+                _route_web_max_tokens,
                 state["context_length"],
                 request_messages,
                 candidate_tools,
@@ -26468,7 +26495,7 @@ async def _stream_agent_loop_impl(
                         if _is_odysseus_qwen_model(candidate_model)
                         else _requested_temperature
                     ),
-                    "thinking_mode": state.get("thinking_mode"),
+                    "thinking_mode": _route_web_thinking,
                     "reasoning_effort": reasoning_effort,
                 },
             }
@@ -27129,7 +27156,7 @@ async def _stream_agent_loop_impl(
                 logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
                 break
         _web_round_max_tokens, _web_round_thinking_mode = fast_web_round_budget(
-            model, max_tokens, thinking_mode,
+            model, max_tokens, _active_route_state.get("thinking_mode") or thinking_mode,
             round_num=round_num, pure_web_turn=_pure_web_turn,
             has_tools=bool(all_tool_schemas or _relevant_tools),
         )
