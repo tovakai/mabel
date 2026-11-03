@@ -30,6 +30,14 @@ def main() -> int:
         default="pending",
     )
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
+    lookup = sub.add_parser(
+        "recall", help="Explicit read-only lexical search over verified promoted episodes",
+    )
+    lookup.add_argument("query")
+    lookup.add_argument("--vault-root", type=Path, required=True)
+    lookup.add_argument("--protected-root", type=Path, action="append", required=True)
+    lookup.add_argument("--read-source-excerpts", action="store_true")
+    lookup.add_argument("--after-candidate-id")
     sub.add_parser("retention-status", help="Show deletion-tombstone and pending-note counts")
     reconcile = sub.add_parser(
         "reconcile-deletions",
@@ -72,6 +80,32 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "recall":
+        if not args.read_source_excerpts:
+            parser.error("recall requires --read-source-excerpts")
+        from core.database import SessionLocal
+        from routes.prefs_routes import _load_for_user
+        from .recall import search_verified_episodes
+
+        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+            "1", "true", "yes",
+        }
+        if not enabled:
+            parser.error("recall requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+        prefs = _load_for_user(queue.owner)
+        policy = CapturePolicy(
+            episodic_enabled=enabled,
+            memory_enabled=bool(prefs.get("memory_enabled", True)),
+        )
+        with SessionLocal() as db:
+            output = search_verified_episodes(
+                queue,args.query,db=db,
+                vault_root=args.vault_root,
+                protected_roots=tuple(args.protected_root),
+                policy=policy,approved=True,
+                max_results=min(args.limit,20),
+                after_candidate_id=args.after_candidate_id,
+            )
     elif args.command == "retention-status":
         with queue._connect() as db:
             tombstones = db.execute(
