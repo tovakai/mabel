@@ -30,6 +30,18 @@ def main() -> int:
         default="pending",
     )
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
+    semantic = sub.add_parser(
+        "semantic-links",
+        help="One-shot Dottie embeddings for read-only advisory links between verified episodes",
+    )
+    semantic.add_argument("--candidate-id", required=True)
+    semantic.add_argument("--vault-root", type=Path, required=True)
+    semantic.add_argument("--protected-root", type=Path, action="append", required=True)
+    semantic.add_argument("--send-source-to-embedding", action="store_true")
+    semantic.add_argument("--scan-limit", type=int, default=8)
+    semantic.add_argument("--max-suggestions", type=int, default=5)
+    semantic.add_argument("--min-similarity", type=float, default=0.70)
+    semantic.add_argument("--after-candidate-id")
     graph = sub.add_parser(
         "associations",
         help="Explicitly inspect source-evidenced links between promoted episodes",
@@ -91,6 +103,34 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "semantic-links":
+        if not args.send_source_to_embedding:
+            parser.error("semantic-links requires --send-source-to-embedding")
+        from core.database import SessionLocal
+        from routes.prefs_routes import _load_for_user
+        from .semantic_advisory import suggest_semantic_episode_links
+
+        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+            "1", "true", "yes",
+        }
+        if not enabled:
+            parser.error("semantic-links requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+        prefs = _load_for_user(queue.owner)
+        policy = CapturePolicy(
+            episodic_enabled=enabled,
+            memory_enabled=bool(prefs.get("memory_enabled", True)),
+        )
+        with SessionLocal() as db:
+            output = asyncio.run(suggest_semantic_episode_links(
+                queue, args.candidate_id, db=db,
+                vault_root=args.vault_root,
+                protected_roots=tuple(args.protected_root),
+                policy=policy, approved=True, send_source_to_embedding=True,
+                scan_limit=args.scan_limit,
+                max_suggestions=args.max_suggestions,
+                min_similarity=args.min_similarity,
+                after_candidate_id=args.after_candidate_id,
+            ))
     elif args.command == "associations":
         if not args.read_source_excerpts:
             parser.error("associations requires --read-source-excerpts")
