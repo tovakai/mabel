@@ -220,4 +220,4 @@ def test_schema_upgrade_keeps_previous_candidate_state(scenario):
     review = propose_review(reopened, candidate["id"], suggestion(candidate), policy=policy)
     assert review["created"]
     with sqlite3.connect(queue.path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
