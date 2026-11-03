@@ -53,6 +53,9 @@ if "src.database" not in sys.modules:
     _db = types.ModuleType("src.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
+    # MCP adapter tests import this model without querying the ORM. Keep the
+    # optional-dependency stub aligned with src.mcp_manager import names.
+    _db.McpServer = MagicMock()
     sys.modules["src.database"] = _db
 
 # Pre-import core.models before test_agent_loop.py's module-level stubs

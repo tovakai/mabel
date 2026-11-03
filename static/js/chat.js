@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20260914metricssummary1';
+import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20261028agentapprovals1';
 import chatStream from './chatStream.js?v=20260914pdfstrip1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -233,7 +233,7 @@ import { invalidateSettings } from './appConfig.js';
   document.addEventListener('odysseus:tool-approval', (event) => {
     const detail = event && event.detail ? event.detail : {};
     const decision = String(detail.decision || '').toLowerCase();
-    if (!detail.approval_id || !['approve', 'approve_task', 'deny'].includes(decision)) return;
+    if (!detail.approval_id || !['approve', 'approve_task', 'approve_once', 'deny'].includes(decision)) return;
     _pendingToolApproval = {
       approval_id: String(detail.approval_id),
       decision,
@@ -1257,7 +1257,7 @@ import { invalidateSettings } from './appConfig.js';
     fetch(`/api/chat/stop/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'X-Odysseus-Run-Id': runId },
+      headers: { 'X-M.A.B.E.L.-Run-Id': runId },
     }).catch(() => {});
   }
 
@@ -2671,6 +2671,10 @@ import { invalidateSettings } from './appConfig.js';
       if (_ws) {
         fd.append('workspace', _ws);
       }
+      try {
+        const activeDirs = await import('./activeDirectories.js');
+        activeDirs.appendActiveDirectoriesToForm(fd);
+      } catch (_) {}
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
@@ -2891,7 +2895,7 @@ import { invalidateSettings } from './appConfig.js';
         enableResearchBtn();
         return;
       }
-      const streamRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+      const streamRunId = res.headers.get('X-M.A.B.E.L.-Run-Id') || '';
       if (streamRunId) _rememberStreamRunId(streamSessionId, streamRunId, streamGeneration);
 
       // Mark the chat log busy while streaming so screen readers wait for the
@@ -2936,7 +2940,7 @@ import { invalidateSettings } from './appConfig.js';
           try {
             const response = await fetch(`${API_BASE}/api/chat/finish/${encodeURIComponent(streamSessionId)}`, {
               method: 'POST', credentials: 'same-origin',
-              headers: { 'X-Odysseus-Run-Id': runId },
+              headers: { 'X-M.A.B.E.L.-Run-Id': runId },
             });
             const result = await response.json();
             if (!response.ok || !result.accepted) throw new Error('The run has already finished or changed');
@@ -5998,7 +6002,7 @@ import { invalidateSettings } from './appConfig.js';
             if (_box && sessionModule.getCurrentSessionId() === _timeoutSessionId) {
               var _timeoutMsg = document.createElement('div');
               _timeoutMsg.className = 'msg msg-ai';
-              _timeoutMsg.innerHTML = '<div class="role">Odysseus</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
+              _timeoutMsg.innerHTML = '<div class="role">M.A.B.E.L.</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
               _box.appendChild(_timeoutMsg);
               uiModule.scrollHistory();
             }
@@ -6314,7 +6318,7 @@ import { invalidateSettings } from './appConfig.js';
       return false;
     }
     if (!res.ok || !res.body) return false;
-    const resumeRunId = res.headers.get('X-Odysseus-Run-Id') || '';
+    const resumeRunId = res.headers.get('X-M.A.B.E.L.-Run-Id') || '';
     if (resumeRunId) _streamRunIds.set(sessionId, resumeRunId);
 
     const box = document.getElementById('chat-history');

@@ -434,6 +434,10 @@ def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     raise ValueError("No vision model available")
 
 
+from src.model_role_runtime import sync_consumer as model_role_sync_consumer
+
+
+@model_role_sync_consumer('vision')
 def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> dict:
     """Analyze an image and return both text and the model that produced it."""
     logger.info(f"Analyzing image with VL model: {image_path}")
@@ -477,9 +481,15 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
         for i, (_url, _model, _headers) in enumerate([c for c in _vl_candidates if c and c[0] and c[1]]):
             try:
                 description = llm_call(_url, _model, vl_messages, headers=_headers, timeout=120)
+                from src import model_roles
+                if model_roles.configured('vision',owner or ''):
+                    _model=model_roles.diagnostics(owner or '')['vision'].get('model',_model)
                 logger.info("VL analysis complete with model %s", _model)
                 return {"text": description, "model": _model}
             except Exception as e:
+                from src.model_roles import eligible
+                if not eligible(e):
+                    raise
                 last_err = e
                 tag = "primary" if i == 0 else "candidate"
                 logger.warning(f"[vision fallback] {tag} {_model} failed ({type(e).__name__}); trying next")

@@ -86,6 +86,8 @@ The largest and most central subsystem. Chat submission → backend SSE → prog
 | **`presets.js`** | Character/preset selection, custom preset saving, inject prefix/suffix handling. |
 | **`search.js`** | Web-search settings, provider selection, API key management. |
 | **`settings.js`** | Settings panel (models, search, appearance, users, MCP, RAG, embedding, tokens). |
+| **`devices.js`** | Settings → Devices: SSH device registry, browse, allowed-directory grants. |
+| **`activeDirectories.js`** | Composer multi-select for conversation active directories + primary local shell root. |
 | **`admin.js`** | Admin panel and privileged user/endpoint configuration. |
 | **`theme.js`** | Theme presets, custom colors, fonts, backgrounds, live theme switching. |
 

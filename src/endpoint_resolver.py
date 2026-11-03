@@ -767,3 +767,20 @@ def resolve_fallback_entries_with_descriptors(
         seen.append(candidate)
         out.append((candidate, descriptor))
     return out
+
+
+def build_model_api_url(url: str, suffix: str) -> str:
+    """Build a typed inference path from an already-resolved trusted endpoint."""
+    from urllib.parse import urlsplit, urlunsplit
+    parsed = urlsplit(url)
+    path = parsed.path.rstrip('/')
+    for ending in ('/chat/completions', '/images/generations', '/audio/speech',
+                   '/audio/transcriptions', '/completions', '/api/chat', '/api/generate'):
+        if path.endswith(ending):
+            path = path[:-len(ending)]
+            break
+    if suffix.startswith('/api/'):
+        path = path.removesuffix('/v1') + suffix
+    else:
+        path = path + suffix if path.endswith('/v1') else path + '/v1' + suffix
+    return urlunsplit((parsed.scheme, parsed.netloc, path, '', ''))

@@ -1394,6 +1394,8 @@ function _renderTestLog(logEl, verdictEl, job, card, name) {
           ? `Effects: ${approval.action.effects.join(', ')}`
           : '',
         approval.action.workspace ? `Workspace: ${approval.action.workspace}` : '',
+        approval.action.execution_environment ? `Execution: ${approval.action.execution_environment}` : '',
+        Array.isArray(approval.action.resources) ? approval.action.resources.map(r => `Resource (${r.role}): ${r.path}`).join('\n') : '',
         approval.action.digest ? `Approval fingerprint: ${approval.action.digest}` : '',
       ].filter(Boolean).join('\n');
       box.appendChild(action);

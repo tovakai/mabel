@@ -24,6 +24,7 @@ _CONTEXT_ERROR_MARKERS = (
 )
 
 _CONTEXT_LIMIT_PATTERNS = (
+    r"\bcontext\s*\(([\d,]+)\)",
     r"maximum context(?: length| window| size)?(?: is(?: only)?| of|:)?\s*([\d,]+)",
     r"maximum context(?: length| window| size)?\s*\(([\d,]+)\)",
     r"context(?: length| window| size)(?: is(?: only)?| of|:|=)\s*([\d,]+)",
@@ -31,6 +32,7 @@ _CONTEXT_LIMIT_PATTERNS = (
 )
 
 _INPUT_TOKEN_PATTERNS = (
+    r"\bprompt\s*\(([\d,]+)\s+tokens\)",
     r"input length\s*\(([\d,]+)\)",
     r"(?:request has|resulted in|contains?)\s*([\d,]+)\s*(?:input|prompt)?\s*tokens",
     r"([\d,]+)\s*(?:input|prompt)\s*tokens",

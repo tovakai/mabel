@@ -138,6 +138,12 @@ DEFAULT_SETTINGS = {
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
     # rc files, SSH key files) are always blocked regardless of roots.
     "tool_path_extra_roots": [],
+    # Additive role policy: existing primary assignments remain authoritative.
+    "model_role_policies": {},
+    "embedding_endpoint_id": "",
+    "embedding_model": "",
+    "reranking_endpoint_id": "",
+    "reranking_model": "",
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",
@@ -287,6 +293,12 @@ def is_setting_overridden(key: str) -> bool:
 # model + image-generation model. The owner argument is the authed username
 # resolved by FastAPI deps; an empty/None owner falls through to the global.
 _PER_USER_KEYS = {
+    "model_role_policies", "embedding_endpoint_id", "embedding_model",
+    "reranking_endpoint_id", "reranking_model", "task_endpoint_id", "task_model",
+    "teacher_endpoint_id", "teacher_model", "vision_endpoint_id",
+    "image_endpoint_id", "tts_endpoint_id", "stt_endpoint_id",
+    "tts_model", "stt_model",
+
     "vision_model", "vision_enabled", "vision_model_fallbacks",
     "image_model", "image_gen_enabled", "image_quality",
     # Default chat endpoint / model — without per-user resolution every new

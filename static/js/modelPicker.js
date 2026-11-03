@@ -3,7 +3,7 @@
 
 import { providerLogo, providerLabel } from './providers.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
-import settingsModule from './settings.js?v=20260912writingstyle3';
+import settingsModule from './settings.js?v=20261028knowledge1';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
 

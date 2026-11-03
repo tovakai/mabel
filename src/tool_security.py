@@ -42,18 +42,23 @@ BUILTIN_EMAIL_TOOLS = frozenset({
 # state changes, or generic loopback/integration surfaces. All email tools are
 # included (SECURITY.md: email/MCP capabilities are privileged admin
 # functionality).
-NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
+from src.knowledge_engine.tool_names import KNOWLEDGE_TOOLS
+
+
+NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | KNOWLEDGE_TOOLS | {
     "bash",
     "python",
     "manage_bg_jobs",
     "read_file",
     "write_file",
     "edit_file",
+    "vault_batch_edit",
     "apply_patch",
     "grep",
     "glob",
     "ls",
     "get_workspace",
+    "vault_audit",
     "host_shell",
     "search_chats",
     "manage_memory",
@@ -98,6 +103,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "glob",
     "ls",
     "get_workspace",
+    "vault_audit",
     "web_search",
     "web_fetch",
     "search_chats",
@@ -144,7 +150,7 @@ PLAN_MODE_READONLY_TOOLS = {
 # here — read-only tools are covered by the allowlist. Keep in sync when adding
 # new mutating tools.
 _PLAN_MODE_KNOWN_MUTATORS = {
-    "write_file", "edit_file", "apply_patch", "todowrite",
+    "write_file", "edit_file", "vault_batch_edit", "apply_patch", "todowrite",
     "create_document", "edit_document", "update_document",
     "suggest_document", "manage_documents", "create_session", "manage_session",
     "send_to_session", "pipeline", "manage_memory", "manage_skills",
@@ -169,6 +175,9 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     # Controls shell processes (kill); plan mode can't run bash anyway.
     "manage_bg_jobs",
 }
+
+
+PLAN_MODE_READONLY_TOOLS = frozenset(PLAN_MODE_READONLY_TOOLS) | (KNOWLEDGE_TOOLS - {'dispatch_dottie'})
 
 
 def plan_mode_disabled_tools() -> Set[str]:

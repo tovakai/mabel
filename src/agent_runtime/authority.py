@@ -21,6 +21,7 @@ from src.tool_policy import ToolPolicy, build_effective_tool_policy
 from src.turn_contract import (
     FAMILY_TOOLS, canonical_tool, requested_capabilities,
     RequiredReadOperation, required_read_operation_for_request, selected_tools_for_request,
+    workspace_inspection_source,
 )
 
 
@@ -242,9 +243,31 @@ class RequestAuthority:
             from src.browser_identity import intersect_browser
             browser_sessions, browser_pages = intersect_browser(self.browser_sessions, self.browser_pages,
                 child.browser_sessions, child.browser_pages)
+        # A dispatcher may narrow the *same* server-sealed request more than
+        # once (for example when a tool executes inside the already-bound agent
+        # stream). That is not a delegated child request. Marking it inherited
+        # would reject a user's otherwise valid one-shot exact approval at the
+        # process producer. An actual child request, or an already-inherited
+        # scope, must retain the non-escalation boundary.
+        # Losing a sealed root is a real restriction even with the same ID;
+        # an approval must not seal a replacement root into that intersection.
+        same_request = (
+            self.request_id == child.request_id
+            and roots == child.resource_roots
+            and backends == child.backend_resources
+            and owned == child.owned_scopes
+            and launches == child.launch_scopes
+            and processes == child.process_resources
+            and jobs == child.job_resources
+            and browser_sessions == child.browser_sessions
+            and browser_pages == child.browser_pages
+            and (self.owner, self.session_id, self.workspace)
+            == (child.owner, child.session_id, child.workspace)
+        )
+        inherited = self.inherited or child.inherited or not same_request
         return replace(self, grants=tuple(grants), denied=self.denied | child.denied,
                        block_all=self.block_all or child.block_all,
-                       disable_mcp=self.disable_mcp or child.disable_mcp, inherited=True,
+                       disable_mcp=self.disable_mcp or child.disable_mcp, inherited=inherited,
                        resource_roots=roots, backend_resources=backends, owned_scopes=owned,
                        launch_scopes=launches, process_resources=processes, job_resources=jobs,
                        browser_sessions=browser_sessions, browser_pages=browser_pages)
@@ -363,26 +386,59 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
 
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,
                              history=(), policy=None, active_document=False,
-                             image_attachment=False, capabilities=None, client_runtime_context=None):
+                             image_attachment=False, capabilities=None, client_runtime_context=None, interactive_review=False):
     """Deterministic server policy over semantic facts, never schema inventory."""
     if not isinstance(request_text, str):
         raise TypeError("Authority requires trusted request text")
+    from .audit_followups import plan_for_request, operation_input
+    followup = plan_for_request(request_text, owner=_owner(owner), session_id=str(session_id or ''), workspace=str(workspace or ''))
+    if followup is not None:
+        # A new user question authorizes only these exact evidence reads, not
+        # the preceding task's tool families or arbitrary filesystem access.
+        inputs = frozenset(ExactOperation.normalize('vault_audit', operation_input(args)).input
+                           for args in followup['operations'])
+        grants = (OperationGrant('vault_audit', inputs=inputs), OperationGrant('task_results')) if inputs else ()
+        authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ''), str(workspace or ''), grants)
+        if client_runtime_context is not None:
+            from .remote_resources import seal_backends
+            authority = replace(authority, backend_resources=seal_backends(
+                (g.tool for g in grants), context=client_runtime_context, owner=authority.owner))
+        return authority.restrict(build_effective_tool_policy(last_user_message=request_text)).restrict(policy)
     intent = interpret_request(request_text, history=history, active_document=active_document,
                                workspace=workspace, image_attachment=image_attachment)
-    families = intent.capabilities
-    if capabilities is not None:
-        families |= frozenset(capabilities)
+    families = frozenset() if interactive_review else intent.capabilities
     tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in families))
-    selected = intent.selected_tools
+    selected = None if interactive_review else intent.selected_tools
+    if "workspace_read" in families and selected is not None:
+        from src.agent_runtime.structured_audits import audit_requirement
+        from src.turn_contract import WORKSPACE_READ_TOOLS
+        if audit_requirement(workspace_inspection_source(request_text, history)) and not selected <= WORKSPACE_READ_TOOLS:
+            # A lexical personal-notes selection cannot replace a typed
+            # filesystem property audit ("notes in my movie library").
+            selected = None
     if selected is not None:
         tools = tools & set(selected) if families else set(selected)
         if tools & {"web_search", "web_fetch"}:
             tools.add("private_browser")
-    operation = intent.required_read
+    operation = None if interactive_review else intent.required_read
     if operation is not None and canonical_tool(operation.tool) in {canonical_tool(n) for n in tools}:
         tools = {canonical_tool(operation.tool)}
     else:
         operation = None
+    from .task_artifacts import select as saved_task
+    has_saved_task = saved_task(_owner(owner), str(session_id or ''), str(workspace or '')) is not None
+    if has_saved_task:
+        tools.add('task_results')
+    # Explicit server/UI capability scopes are permission declarations, not
+    # lexical retrieval hints; a narrow selected-tools interpretation cannot
+    # discard a workspace or Web scope the user selected.
+    if capabilities is not None:
+        explicit_families = set(capabilities)
+        if has_saved_task and not intent.capabilities and not interactive_review:
+            # An unresolved conversational reference starts with saved evidence;
+            # a proposed new filesystem read can still request human review.
+            explicit_families.discard('workspace_read')
+        tools.update(set().union(*(FAMILY_TOOLS.get(f, ()) for f in explicit_families)))
     grants = []
     for name in sorted(tools | {"ask_user", "update_plan"}):
         name = canonical_tool(name)
@@ -391,19 +447,29 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
             actions = _BROWSER_READ_ACTIONS
             # Explicit interaction intent admits its operation class. A
             # browser offered only as static-Web fallback gets no such grant.
-            if re.search(r"\b(?:browser|browse|private_browser)\b", request_text, re.I):
+            if not interactive_review and re.search(r"\b(?:browser|browse|private_browser)\b", request_text, re.I):
                 actions |= frozenset(action for action in ("click", "fill", "type", "press", "evaluate", "select")
                                      if re.search(r"\b" + action + r"\b", request_text, re.I))
         if operation is not None and name == canonical_tool(operation.tool):
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))
+    # A named human owner may list their own saved memories without repeated
+    # exact-approval prompts. This does not grant memory writes or wider reads.
+    # Keep the policy/disabled-tool restrictions below authoritative.
+    if _owner(owner) and not any(g.tool == "manage_memory" for g in grants):
+        grants.append(OperationGrant("manage_memory", actions=frozenset({"list"})))
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),
                                  str(workspace or ""), tuple(grants))
     if client_runtime_context is not None:
         from src.agent_runtime.remote_resources import seal_backends
         authority = replace(authority, backend_resources=seal_backends(
             (g.tool for g in authority.grants), context=client_runtime_context, owner=authority.owner))
-    return authority.restrict(policy or build_effective_tool_policy(last_user_message=request_text))
+    if "workspace_read" in intent.capabilities:
+        # Continuation retains the original user's restrictions as well as the current policy.
+        authority = authority.restrict(build_effective_tool_policy(
+            last_user_message=workspace_inspection_source(request_text, history)))
+    # Caller policy composes with explicit user prohibitions; neither replaces the other.
+    return authority.restrict(build_effective_tool_policy(last_user_message=request_text)).restrict(policy)
 
 
 _ACTIVE: ContextVar[RequestAuthority | None] = ContextVar("request_authority", default=None)
@@ -433,6 +499,28 @@ def request_authority_for_http(request, request_text, **context):
         return RequestAuthority.empty(owner=context.get("owner"),
             session_id=context.get("session_id"), workspace=context.get("workspace")).restrict(context.get("policy"))
     return create_request_authority(request_text, **context)
+
+
+def approval_can_admit(authority, tool_name, content, *, owner=None, session_id=None, workspace=None,
+                       policy=None, disabled_tools=()):
+    """Whether only a missing grant blocks this exact call.
+
+    True means the user, not the model or the request text, can admit it with
+    one exact approval: the authority is a valid root for this context and no
+    hard restriction denies the operation. A child authority never qualifies,
+    because an approval may not widen it. Mirrors the dispatcher's admission.
+    """
+    if not isinstance(authority, RequestAuthority) or authority.inherited:
+        return False
+    if not authority.bound_to(owner=owner, session_id=session_id, workspace=workspace):
+        return False
+    try:
+        operation = ExactOperation.normalize(tool_name, content)
+    except (ValueError, TypeError):
+        return False
+    authority = authority.restrict(policy, disabled_tools)
+    from src.tool_approvals import tool_approval_store
+    return not authority.restricted(operation) and not authority.permits(operation) and not tool_approval_store.operation_was_denied(authority, operation)
 
 
 @contextmanager
@@ -491,19 +579,80 @@ def with_request_authority(func):
                     workspace=parameters.get("workspace"),
                     history=getattr(parameters.get("history_session"), "history", ()) or (),
                     active_document=bool(parameters.get("active_document")),
-                    client_runtime_context=parameters.get("client_runtime_context"))
+                    client_runtime_context=parameters.get("client_runtime_context"),
+                    interactive_review=bool(parameters.get('authority_gap_approvals')),
+                    capabilities=({'workspace_read'} if parameters.get('authority_gap_approvals') and parameters.get('workspace') else set()) |
+                        ({'search_browser'} if parameters.get('authority_gap_approvals') and parameters.get('tool_policy') and not parameters['tool_policy'].blocks('web_search') else set()))
         if not isinstance(authority, RequestAuthority):
             raise TypeError("Missing or malformed server request authority")
+        # A terse new user turn ("Apply") normally has no shell_files intent.
+        # The previous preview can instead authorize exactly its reviewed
+        # apply input, for one execution only. Never inherit other file tools.
+        current_policy = parameters.get("tool_policy")
+        currently_disabled = set(parameters.get("disabled_tools") or ())
+        if (
+            parent is None
+            and parameters.get("request_authority", MISSING_AUTHORITY) is MISSING_AUTHORITY
+            and parameters.get("exact_approval") is None
+            and not parameters.get("_parent_run_id")
+            and not parameters.get("_is_teacher_run")
+            and parameters.get("workload") != "background"
+            and not parameters.get("plan_mode")
+            and not parameters.get("delegated_credential")
+            and not authority.block_all
+            and "vault_batch_edit" not in authority.denied
+            and "vault_batch_edit" not in currently_disabled
+            and not (current_policy and current_policy.blocks("vault_batch_edit"))
+        ):
+            from src.agent_runtime.batch_preview_claims import activate_explicit_confirmation
+            # The request-id prefix lets the dispatcher reject expired claims
+            # even after their in-memory state has been evicted.
+            batch_request_id = "batch:" + authority.request_id
+            exact_input = activate_explicit_confirmation(
+                request_text=_request_text(parameters.get("messages")),
+                owner=parameters.get("owner"),
+                session_id=parameters.get("session_id"),
+                workspace=parameters.get("workspace"),
+                request_id=batch_request_id,
+            )
+            if exact_input is not None:
+                # Construct a fresh sealed authority with no generic filesystem
+                # grants. Its only mutating permission is this exact apply call.
+                narrow_grants = tuple(
+                    grant for grant in authority.grants
+                    if grant.tool in {"ask_user", "update_plan"}
+                ) + (OperationGrant("vault_batch_edit", inputs=frozenset({exact_input})),)
+                authority = RequestAuthority(
+                    batch_request_id, authority.owner, authority.session_id,
+                    authority.workspace, narrow_grants, denied=authority.denied,
+                    block_all=authority.block_all, disable_mcp=authority.disable_mcp,
+                )
         if parent is None and parameters.get("exact_approval") is not None:
             authority = replace(authority, inherited=False)
+        if parameters.get('authority_gap_approvals') and parent is None and not authority.inherited and not parameters.get('delegated_credential') and not parameters.get('_parent_run_id') and not parameters.get('_is_teacher_run') and parameters.get('workload') != 'background':
+            # Agent-mode schema discovery is a metadata read, never permission
+            # for the selected tools. Its provenance is this interactive host.
+            if not any(g.tool == 'discover_tools' for g in authority.grants):
+                authority = replace(authority, grants=authority.grants + (OperationGrant('discover_tools'),))
         authority = authority.restrict(parameters.get("tool_policy"), parameters.get("disabled_tools"))
-        with bind_request_authority(authority) as effective:
+        from .tool_catalog import bind_catalog
+        from src.tool_approvals import bind_approval_history
+        review_enabled = bool(parameters.get('authority_gap_approvals') and not authority.inherited and not parameters.get('delegated_credential'))
+        with bind_request_authority(authority) as effective, bind_catalog(parameters.get('turn_contract'), review_enabled), bind_approval_history(parameters.get('history_session'), review_enabled):
+            from .tool_catalog import active_catalog
+            catalog = active_catalog(parameters.get('turn_contract'))
+            approval = parameters.get('exact_approval')
+            pending = approval.pending if approval is not None else parameters.get('rejected_tool_approval')
+            if catalog is not None and pending is not None and (pending.owner, pending.session_id, pending.workspace) == (effective.owner, effective.session_id, effective.workspace):
+                if pending.tool_name in catalog.inventory:
+                    catalog.selected.add(pending.tool_name)
             if "request_authority" in parameters:
                 parameters["request_authority"] = effective
             async with aclosing(func(*bound.args, **bound.kwargs)) as stream:
                 async for chunk in stream:
                     yield chunk
-    return wrapped
+    from .owned_stream import owned_stream
+    return owned_stream(wrapped)
 
 
 def task_operation(task_type, action, prompt):

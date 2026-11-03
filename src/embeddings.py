@@ -132,7 +132,7 @@ class EmbeddingClient:
 class FastEmbedClient:
     """Local embedding client using fastembed (ONNX). No external service needed."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, *, local_files_only: bool = False):
         try:
             from fastembed import TextEmbedding
         except ImportError as e:
@@ -158,7 +158,7 @@ class FastEmbedClient:
         # broken-symlink model in the cache and drop the contaminated hub dir so
         # fastembed re-fetches (it falls back to its CDN tarball of real files,
         # which load fine). Best-effort; only ever removes a verifiably dead link.
-        if os.name == "nt":
+        if os.name == "nt" and not local_files_only:
             try:
                 import glob, shutil
                 for _onnx in glob.glob(os.path.join(cache_dir, "**", "*.onnx"), recursive=True):
@@ -178,6 +178,9 @@ class FastEmbedClient:
             except Exception as _e:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
+        if local_files_only:
+            kwargs["local_files_only"] = True
+            kwargs["providers"] = ["CPUExecutionProvider"]
         # Isolated evaluation and worker fleets can run many Odysseus
         # processes on one host.  FastEmbed otherwise lets ONNX Runtime size
         # a thread pool from the whole machine for every process, which can

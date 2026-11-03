@@ -112,6 +112,13 @@ export const SETTINGS_PANELS = Object.freeze([
   }),
 
   definePanel({
+    id: 'devices',
+    label: 'Devices',
+    group: 'administration',
+    adminOnly: true,
+    keywords: ['devices', 'ssh', 'sftp', 'directories', 'workspace', 'filesystem', 'allowed'],
+  }),
+  definePanel({
     id: 'tools',
     label: 'Agent Tools',
     group: 'administration',

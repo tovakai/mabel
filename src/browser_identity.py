@@ -48,6 +48,14 @@ PAGE_ACTIONS = frozenset({"open", "read", "snapshot", "find", "evaluate", "click
     "select_page", "close_page", "network", "console", "new_page", "tabs"})
 SESSION_ACTIONS = frozenset({"session_info"})
 PAGE_FAILURE = "browser_page_authority_unavailable"
+
+# Native page execution is deliberately denied in this producer release.
+# Keep this explicit so request-scoped tool surfaces can avoid advertising
+# nonfunctional navigation/screenshot commands to local models. If a future
+# trusted producer implements atomic page identity binding, enabling this
+# requires a separately reviewed capability change.
+PAGE_COMMANDS_ENABLED = False
+
 _ACTIVE = ContextVar("browser_resource_operation", default=None)
 _REGISTRY: dict[tuple[str, str], "RegisteredBrowser"] = {}
 

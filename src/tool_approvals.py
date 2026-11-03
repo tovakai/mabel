@@ -1,9 +1,10 @@
 """Opaque exact-action approvals with explicit task and chat scopes.
 
-The server still seals and claims the first displayed action exactly once. The
-selected scope then bypasses only the automatic post-external-context approval
-gate for the rest of the resumed task or chat session. Browser-visible fields
-are display copies, never authority.
+The server seals and claims the displayed action exactly once. Missing-authority
+consent can cover repeated uses of that exact operation and its sealed resources
+for a bounded task/chat lifetime. Legacy external-context consent bypasses only
+that gate; it never supplies missing request authority. Browser fields are
+display copies, never authority.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from src.tool_approval_scopes import (
     CHAT_SESSION_APPROVAL_DECISION,
     DENY_APPROVAL_DECISION,
     TASK_APPROVAL_DECISION,
+    SINGLE_ACTION_APPROVAL_DECISION,
     ToolApprovalScope,
     scope_for_decision,
 )
@@ -131,8 +133,10 @@ def _binding_payload(
     owned_operation=None,
     process_operation=None,
     browser_operation=None,
+    authority_gap: bool = False,
 ) -> dict[str, Any]:
     return {
+        "authority_gap": bool(authority_gap),
         "owner": _normalized_owner(owner),
         "session_id": str(session_id or ""),
         "origin_run_id": str(origin_run_id or ""),
@@ -192,8 +196,44 @@ class PendingToolApproval:
     owned_operation: BoundOwnedOperation | None = None
     process_operation: BoundProcessOperation | None = None
     browser_operation: BoundBrowserOperation | None = None
+    # Digest-bound. True when the run-security gate allowed the call and only
+    # a missing request-authority grant blocked it. Approving admits exactly
+    # this sealed operation; it never bypasses a gate for later calls.
+    authority_gap: bool = False
 
     def public_payload(self, *, reason: str | None = None) -> dict[str, Any]:
+        if self.authority_gap:
+            return {
+                "kind": "tool_approval",
+                "approval_id": self.approval_id,
+                "session_id": self.session_id,
+                "question": "Allow this action?",
+                "description": reason or (
+                    "Your request did not cover this action, so it needs your approval."
+                ),
+                "authority_gap": True,
+                "expires_at": self.expires_at,
+                "options": [
+                    {
+                        "label": "Allow once",
+                        "value": SINGLE_ACTION_APPROVAL_DECISION,
+                        "description": (
+                            "Run exactly this action, then continue. Later actions "
+                            "your request did not cover will ask again."
+                        ),
+                    },
+                    {"label":"Allow this exact operation for this task", "value":TASK_APPROVAL_DECISION,
+                     "description":"Same tool, arguments, backend and sealed resources only; expires with this task or the displayed approval lifetime."},
+                    {"label":"Allow this exact operation for this chat", "value":CHAT_SESSION_APPROVAL_DECISION,
+                     "description":"Same operation and sealed resources only, while this card remains in this chat and until the displayed expiry. Other operations ask again."},
+                    {
+                        "label": "Deny",
+                        "value": DENY_APPROVAL_DECISION,
+                        "description": "Do not run the proposed action.",
+                    },
+                ],
+                "action": self._public_action(),
+            }
         return {
             "kind": "tool_approval",
             "approval_id": self.approval_id,
@@ -207,6 +247,8 @@ class PendingToolApproval:
                 "otherwise-gated actions needs your explicit approval."
             ),
             "options": [
+                {"label":"Allow once", "value":SINGLE_ACTION_APPROVAL_DECISION,
+                 "description":"Execute only this sealed action; keep other approval gates active."},
                 {
                     "label": "Allow for this task",
                     "value": TASK_APPROVAL_DECISION,
@@ -231,18 +273,59 @@ class PendingToolApproval:
                     "description": "Do not execute the proposed action.",
                 },
             ],
-            "action": {
-                "tool": self.tool_name,
-                # Show the complete sealed input so approval never hides
-                # trailing lines.  This is not read back as authority.
-                "content": self.content,
-                "digest": self.digest[:16],
-                "effects": list(self.effects),
-                "workspace": self.workspace or None,
-                "document_id": self.document_id or None,
-                "document_version": self.document_version,
-            },
+            "action": self._public_action(),
         }
+
+    def _public_action(self) -> dict[str, Any]:
+        return {
+            "tool": self.tool_name,
+            # Show the complete sealed input so approval never hides
+            # trailing lines.  This is not read back as authority.
+            "content": self.content,
+            "digest": self.digest[:16],
+            "effects": list(self.effects),
+            "workspace": self.workspace or None,
+            "document_id": self.document_id or None,
+            "document_version": self.document_version,
+            "resources": self.public_resources(),
+            "execution_environment": self.execution_environment(),
+        }
+
+    def public_resources(self):
+        resources = []
+        if self.resource_operation is not None:
+            resources.extend({'path':b.resource.path, 'role':b.role} for b in self.resource_operation.bindings)
+        if self.process_operation is not None and self.process_operation.launch is not None:
+            resources.append({'path':self.process_operation.launch.scope.root.path, 'role':'process_workspace'})
+        if self.owned_operation is not None:
+            resources.extend({'path':r.record_id, 'role':r.namespace} for r in self.owned_operation.resources)
+        if self.backend_operation is not None:
+            from src.agent_runtime.resources import ExternalResource
+            backend = self.backend_operation.resource
+            if isinstance(backend, ExternalResource):
+                # endpoint_id is a credential-free origin, never the original
+                # configured URL/path/query, credentials or incarnation token.
+                resources.append({'path':backend.endpoint_id, 'role':backend.namespace + ':' + backend.server_id})
+        return resources
+
+    def execution_environment(self):
+        if self.process_operation is not None and self.process_operation.launch is not None:
+            from src.agent_tools.subprocess_tools import _owned_spec
+            from src.tool_execution import _agent_subprocess_env
+            from src.containment import probe
+            scope = self.process_operation.launch.scope
+            try:
+                available = probe(_owned_spec(scope.root.path, _agent_subprocess_env(), scope.max_runtime_s,
+                    tuple(r.path for r in scope.runtime_roots)))
+                return f"Required containment: {', '.join(sorted(scope.required))}; mechanism: {available.mechanism}; available: {available.contained}"
+            except (ValueError, OSError, RuntimeError):
+                return "Required process containment is unavailable; approval cannot bypass it"
+        if self.resource_operation is not None:
+            return "Native filesystem access confined to sealed workspace resources"
+        if self.backend_operation is not None:
+            from src.agent_runtime.resources import NativeBackendResource
+            return "Native application operation; no shell execution" if isinstance(self.backend_operation.resource, NativeBackendResource) else "External backend; execution isolation is managed by that backend"
+        return "Unavailable: backend identity could not be sealed"
 
 
 @dataclass
@@ -251,11 +334,9 @@ class ExactToolApproval:
 
     pending: PendingToolApproval
     scope: ToolApprovalScope = ToolApprovalScope.TASK
-    # The seam consumed by agent_loop. Both chat-card allow choices cover the
-    # complete resumed task, because one-action scope there immediately
-    # re-entered the same gate on the next round. Callers with no resumable
-    # chat still get SINGLE_ACTION, which leaves the gate armed behind the
-    # sealed action.
+    # Only legacy external-context consent can bypass that gate for the
+    # resumed task. Missing-authority consent always revalidates exact inputs
+    # and resources; it never grants a blanket continuation bypass.
     allow_remaining_actions: bool = True
     _claimed: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -306,6 +387,7 @@ class ExactToolApproval:
             owned_operation=self.pending.owned_operation,
             process_operation=self.pending.process_operation,
             browser_operation=self.pending.browser_operation,
+            authority_gap=self.pending.authority_gap,
         )
         return _canonical_digest(expected) == self.pending.digest
 
@@ -361,6 +443,8 @@ class ToolApprovalStore:
         self._ttl_seconds = max(1, int(ttl_seconds))
         self._max_pending = max(1, int(max_pending))
         self._pending: dict[str, PendingToolApproval] = {}
+        self._denied_operations = {}
+        self._scoped = {}
         self._lock = threading.Lock()
 
     def _purge_expired_locked(self, now: float) -> None:
@@ -371,6 +455,16 @@ class ToolApprovalStore:
         ]
         for approval_id in expired:
             self._pending.pop(approval_id, None)
+
+    def operation_was_denied(self, authority, operation):
+        if authority is None:
+            return False
+        key = (authority.owner, authority.session_id, authority.workspace, authority.request_id,
+               operation.tool, operation.input)
+        with self._lock:
+            now = time.time()
+            self._denied_operations = {k:v for k,v in self._denied_operations.items() if v > now}
+            return key in self._denied_operations
 
     def create(
         self,
@@ -391,6 +485,7 @@ class ToolApprovalStore:
         request_text: Any = "",
         request_authority: RequestAuthority | None = None,
         client_runtime_context: dict | None = None,
+        authority_gap: bool = False,
     ) -> PendingToolApproval:
         if request_authority is not None and not isinstance(request_authority, RequestAuthority):
             raise TypeError("Approval authority must be server-owned RequestAuthority")
@@ -493,6 +588,7 @@ class ToolApprovalStore:
             owned_operation=owned_operation,
             process_operation=process_operation,
             browser_operation=browser_operation,
+            authority_gap=authority_gap,
         )
         pending = PendingToolApproval(
             approval_id=secrets.token_urlsafe(32),
@@ -522,6 +618,7 @@ class ToolApprovalStore:
             owned_operation=owned_operation,
             process_operation=process_operation,
             browser_operation=browser_operation,
+            authority_gap=payload["authority_gap"],
         )
         with self._lock:
             self._purge_expired_locked(now)
@@ -570,6 +667,10 @@ class ToolApprovalStore:
         into a run-long bypass just because the chat card reuses the same wire
         value.
         """
+        normalized = str(decision or "").strip().lower()
+        if normalized not in {SINGLE_ACTION_APPROVAL_DECISION, TASK_APPROVAL_DECISION,
+                              CHAT_SESSION_APPROVAL_DECISION, DENY_APPROVAL_DECISION}:
+            return None  # A malformed reconnect must not consume a pending card.
         now = time.time()
         with self._lock:
             self._purge_expired_locked(now)
@@ -586,11 +687,29 @@ class ToolApprovalStore:
                 # another owner's pending action.
                 return None
             self._pending.pop(approval_key, None)
+            if str(decision or "").strip().lower() == "deny" and pending.request_authority is not None:
+                from src.agent_runtime.authority import ExactOperation
+                op = ExactOperation.normalize(pending.tool_name, pending.content)
+                auth = pending.request_authority
+                key = (auth.owner, auth.session_id, auth.workspace, auth.request_id, op.tool, op.input)
+                self._denied_operations[key] = now + self._ttl_seconds
+                for grant_id, (previous, _, _) in list(self._scoped.items()):
+                    if (previous.owner, previous.session_id, previous.workspace, previous.tool_name, previous.content) == (pending.owner, pending.session_id, pending.workspace, pending.tool_name, pending.content):
+                        self._scoped.pop(grant_id, None)
+                while len(self._denied_operations) > self._max_pending:
+                    self._denied_operations.pop(next(iter(self._denied_operations)))
         normalized_decision = str(decision or "").strip().lower()
         scope = scope_for_decision(normalized_decision)
         if scope is None:
             return None
-        if not allow_continuation:
+        if pending.authority_gap and allow_continuation and scope is not ToolApprovalScope.SINGLE_ACTION:
+            with self._lock:
+                self._scoped[pending.approval_id] = (pending, scope, secrets.token_urlsafe(32))
+                while len(self._scoped) > self._max_pending:
+                    self._scoped.pop(next(iter(self._scoped)))
+        if not allow_continuation or scope is ToolApprovalScope.SINGLE_ACTION:
+            # An authority-gap card allows only "this action": it admits the sealed
+            # action and leaves every gate armed for later calls.
             return ExactToolApproval(
                 pending,
                 scope=ToolApprovalScope.SINGLE_ACTION,
@@ -599,8 +718,16 @@ class ToolApprovalStore:
         return ExactToolApproval(
             pending,
             scope=scope,
-            allow_remaining_actions=True,
+            allow_remaining_actions=not pending.authority_gap,
         )
+
+    def scope_proof(self, approval_id):
+        with self._lock:
+            value = self._scoped.get(str(approval_id))
+            if value is None:
+                return None
+            _, scope, opaque = value
+            return {'approval_id':str(approval_id), 'scope':scope.value, 'token':opaque}
 
     def peek(self, approval_id: Any) -> PendingToolApproval | None:
         now = time.time()
@@ -640,3 +767,180 @@ class ToolApprovalStore:
 
 
 tool_approval_store = ToolApprovalStore()
+
+
+def approval_request_result(pending, *, reason=None, client_runtime_context=None):
+    """Do not present an executable approval when its resources cannot be sealed.
+
+    Both interactive runtimes use this existing-store adapter. An approval never
+    creates a backend, resource identity or a weaker containment mechanism.
+    """
+    from src.agent_runtime.authority import ExactOperation
+    from src.agent_runtime.resource_binding import NATIVE_FILESYSTEM_TOOLS
+    from src.agent_runtime.process_resources import needs_process_binding
+    from src.agent_runtime.resources import NativeBackendResource
+    try:
+        operation = ExactOperation.normalize(pending.tool_name, pending.content)
+        authority = pending.request_authority
+        if authority is not None and (not authority.bound_to(owner=pending.owner, session_id=pending.session_id, workspace=pending.workspace)
+                                      or authority.restricted(operation)
+                                      or (authority.inherited and not authority.permits(operation))):
+            return {'error':'The operation is denied by current authority or request binding.',
+                    'exit_code':1, 'blocked':True, 'failure_kind':'request_authority_denied', 'executed':False}
+        backend = pending.backend_operation
+        if backend is None:
+            raise ValueError('The proposed backend identity could not be sealed')
+        backend.validate(client_runtime_context)
+        if authority is not None and authority.disable_mcp and getattr(backend.resource, 'namespace', '') == 'mcp':
+            return {'error':'MCP is disabled by current policy.', 'exit_code':1, 'blocked':True,
+                    'failure_kind':'user_policy_denied', 'executed':False}
+        if needs_process_binding(operation, backend.resource):
+            if pending.process_operation is None:
+                raise ValueError('The proposed process/job identity could not be sealed')
+            pending.process_operation.validate()
+            if pending.process_operation.launch is not None:
+                from src.agent_tools.subprocess_tools import _owned_spec
+                from src.tool_execution import _agent_subprocess_env
+                from src.containment import probe
+                scope = pending.process_operation.launch.scope
+                spec = _owned_spec(scope.root.path, _agent_subprocess_env(), scope.max_runtime_s,
+                                   tuple(r.path for r in scope.runtime_roots))
+                available = probe(spec)
+                if not available.contained:
+                    return {'error':'Required containment is unavailable; approval cannot bypass it.',
+                            'exit_code':1, 'failure_kind':'containment_unavailable', 'executed':False,
+                            'containment':{'executed':False, 'contained':False,
+                                           'unenforced_required':list(available.unenforced_required)}}
+        from src.agent_runtime.owned_resources import needs_owned_binding
+        from src.browser_identity import native_browser
+        if isinstance(backend.resource, NativeBackendResource) and needs_owned_binding(operation):
+            if pending.owned_operation is None:
+                raise ValueError('The proposed owned-record identity could not be sealed')
+            pending.owned_operation.validate()
+        if native_browser(operation, backend.resource):
+            if pending.browser_operation is None:
+                raise ValueError('The proposed browser session/page could not be sealed')
+            pending.browser_operation.validate()
+        if operation.tool in NATIVE_FILESYSTEM_TOOLS and isinstance(backend.resource, NativeBackendResource):
+            if pending.resource_operation is None:
+                raise ValueError('The proposed filesystem resource could not be sealed')
+            pending.resource_operation.validate()
+    except (ValueError, TypeError, OSError, RuntimeError) as error:
+        return {'error':str(error), 'exit_code':1, 'blocked':True,
+                'failure_kind':'resource_identity_denied', 'executed':False}
+    return {'output':'Waiting for an exact user approval.', 'exit_code':None, 'executed':False,
+            'approval_required':True, 'ask_user':pending.public_payload(reason=reason)}
+
+
+from contextlib import contextmanager
+from contextvars import ContextVar
+_APPROVAL_HISTORY = ContextVar('interactive_approval_history', default=None)
+
+
+@contextmanager
+def bind_approval_history(history_session, enabled):
+    if not enabled or _APPROVAL_HISTORY.get() is not None:
+        yield
+        return
+    token = _APPROVAL_HISTORY.set((history_session,))
+    try:
+        yield
+    finally:
+        _APPROVAL_HISTORY.reset(token)
+
+
+def _history_has_scope(history_session, proof):
+    for item in getattr(history_session, 'history', ()) or ():
+        get = item.get if isinstance(item, dict) else lambda key, default=None:getattr(item, key, default)
+        if get('role') != 'assistant':
+            continue
+        metadata = get('metadata') or {}
+        if not isinstance(metadata, dict):
+            continue
+        for event in metadata.get('tool_events', ()):
+            card = event.get('ask_user') if isinstance(event, dict) else None
+            if isinstance(card, dict) and card.get('_scope_grant') == proof and card.get('approval_id') == proof['approval_id'] and card.get('resolved') == CHAT_SESSION_APPROVAL_DECISION:
+                return True
+    return False
+
+
+def _pending_digest(pending):
+    from inspect import signature
+    return _canonical_digest(_binding_payload(**{name:getattr(pending, name) for name in signature(_binding_payload).parameters}))
+
+
+def scoped_exact_approval(authority, tool_name, content, *, security_context, client_runtime_context=None):
+    """Reuse only the user's exact reviewed operation, never a tool-wide bypass.
+
+    Resumption creates a fresh one-use reservation with the original resource
+    ceilings. A selected schema or arbitrary model output cannot create scope.
+    """
+    from dataclasses import replace
+    from src.agent_runtime.authority import ExactOperation
+    history = _APPROVAL_HISTORY.get()
+    if history is None or authority is None or authority.inherited:
+        return None
+    try:
+        operation = ExactOperation.normalize(tool_name, content)
+        if authority.restricted(operation) or tool_approval_store.operation_was_denied(authority, operation):
+            return None
+        with tool_approval_store._lock:
+            candidates = list(tool_approval_store._scoped.items())
+        for grant_id, (pending, scope, opaque) in reversed(candidates):
+            if pending.expires_at <= time.time():
+                with tool_approval_store._lock:
+                    tool_approval_store._scoped.pop(grant_id, None)
+                continue
+            if (pending.owner, pending.session_id, pending.workspace) != (authority.owner, authority.session_id, authority.workspace):
+                continue
+            if ExactOperation.normalize(pending.tool_name, pending.content) != operation:
+                continue
+            proof = {'approval_id':grant_id, 'scope':scope.value, 'token':opaque}
+            if scope is ToolApprovalScope.TASK:
+                if pending.request_authority is None or pending.request_authority.request_id != authority.request_id:
+                    continue
+            elif not _history_has_scope(history[0], proof):
+                continue
+            if security_context.external_untrusted_context_seen and not pending.external_untrusted_context_seen:
+                continue  # A newly tainted run needs a newly informed decision.
+            backend = pending.backend_operation
+            if backend is None:
+                continue
+            backend.validate(client_runtime_context)
+            rebound = {'request_authority':authority, 'backend_operation':replace(backend, request_id=authority.request_id)}
+            for attr in ('resource_operation', 'owned_operation', 'browser_operation'):
+                bound = getattr(pending, attr)
+                if bound is not None:
+                    bound.validate()
+                    rebound[attr] = replace(bound, request_id=authority.request_id)
+            process = pending.process_operation
+            if process is not None:
+                if process.launch is not None:
+                    from src.agent_runtime.process_resources import BoundProcessOperation, digest
+                    from uuid import uuid4
+                    process.launch.scope.validate()
+                    launch = replace(process.launch, request_id=authority.request_id, generation=uuid4().hex,
+                        ceiling_digest=digest(json.dumps(authority.to_dict(), sort_keys=True)))
+                    rebound['process_operation'] = BoundProcessOperation(operation, authority.request_id,
+                        authority.owner, authority.session_id, launch)
+                else:
+                    process.validate()
+                    rebound['process_operation'] = replace(process, request_id=authority.request_id)
+            reviewed = replace(pending, **rebound)
+            reviewed = replace(reviewed, digest=_pending_digest(reviewed))
+            return ExactToolApproval(reviewed, scope=ToolApprovalScope.SINGLE_ACTION, allow_remaining_actions=False)
+    except (ValueError, TypeError, OSError, RuntimeError, AttributeError):
+        return None  # Changed resources never silently receive replacement grants.
+    return None
+
+
+def rejection_context(pending, authority):
+    """A user decision is control state, not a fabricated executed tool call."""
+    if authority is None or (pending.owner, pending.session_id, pending.workspace) != (authority.owner, authority.session_id, authority.workspace):
+        raise ValueError('Approval rejection identity mismatch')
+    if pending.request_authority is not None and pending.request_authority.request_id != authority.request_id:
+        raise ValueError('Approval rejection belongs to another task')
+    return {'role':'system', '_harness_control':True, 'content':json.dumps({
+        'type':'operation_rejected', 'tool':pending.tool_name, 'arguments':pending.content,
+        'failure_kind':'user_denied', 'executed':False,
+        'instruction':'The user denied this exact operation. Continue the original task using permitted alternatives; do not repeat the denied operation.'})}

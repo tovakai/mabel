@@ -585,6 +585,10 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+from src.model_role_runtime import consumer as model_role_consumer
+
+
+@model_role_consumer("utility")
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
@@ -1515,6 +1519,7 @@ def _memory_context_lines(mems, limit: int = 40) -> list:
     return lines
 
 
+@model_role_consumer("utility")
 async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     """Hybrid classification of upcoming calendar events: fast heuristic for
     obvious cases, LLM fallback for ambiguous ones. Assigns event_type +
@@ -1751,6 +1756,7 @@ _SIG_SKIP_PREFIXES = (
 )
 
 
+@model_role_consumer("utility")
 async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, bool]:
     """For each sender with ≥3 recent inbox emails, ask the LLM to extract
     the common signature block across their messages. The cached sig is

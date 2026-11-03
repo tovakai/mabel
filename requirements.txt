@@ -66,3 +66,13 @@ httpx2
 # create_engine() and raises ModuleNotFoundError if missing. -binary avoids
 # needing libpq-dev/pg_config on the host/image to compile it.
 psycopg2-binary
+
+# Deterministic read-only Markdown frontmatter audits.
+PyYAML>=6.0.2
+
+# Multi-device filesystem: SSH/SFTP adapters for registered remote devices.
+# Used only for filesystem operations (browse/read/write); not for remote shell.
+paramiko>=3.4.0
+
+# Local SQLite dense-vector kernels; lexical retrieval works without them.
+sqlite-vec>=0.1.6,<0.2

@@ -9,7 +9,7 @@
 import spinnerModule from '../spinner.js';
 import { styledConfirm, showToast, emptyStateIcon } from '../ui.js?v=20260916largetoolscroll1';
 import { folderDisplayName, sortedFolders } from '../emailInbox.js?v=20260914aireply4';
-import settingsModule from '../settings.js?v=20260912writingstyle3';
+import settingsModule from '../settings.js?v=20261028knowledge1';
 import * as Modals from '../modalManager.js';
 import { makeWindowDraggable } from '../windowDrag.js';
 import {

@@ -91,12 +91,21 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"discover_tools"}, ToolEffect.READ_PUBLIC,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
+_register(
+    {"task_results"},
+    ToolEffect.READ_PRIVATE,
+    result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
+)
+_register(
     {"search_hf_models"},
     ToolEffect.BROKERED_NETWORK_READ,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"get_workspace", "glob", "grep", "ls", "read_file"},
+    {"get_workspace", "glob", "grep", "ls", "read_file", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie"},
     ToolEffect.READ_WORKSPACE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
@@ -145,7 +154,7 @@ _register(
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
 _register(
-    {"apply_patch", "edit_file", "write_file"},
+    {"apply_patch", "edit_file", "write_file", "vault_batch_edit"},
     ToolEffect.WRITE_WORKSPACE,
     # Successful writes include unified diffs that can echo arbitrary existing
     # workspace content back into the next model round.
@@ -388,7 +397,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         "manage_endpoints": frozenset({"add", "delete", "enable", "disable"}),
         "manage_mcp": frozenset({"add", "delete", "enable", "disable", "reconnect"}),
         "manage_settings": frozenset(
-            {"set", "delete", "reset", "disable_tool", "enable_tool"}
+            {"set", "delete", "reset", "disable_tool"}
         ),
         "manage_tokens": frozenset({"create", "delete"}),
         "manage_webhooks": frozenset({"add", "delete", "enable", "disable"}),
@@ -843,6 +852,20 @@ class ToolRunSecurityContext:
             _CONTROL_PLANE_CONTEXT_SOURCES
         )
         capabilities = capabilities_for_action(tool_name, content)
+        # A trusted, owner-bound request grant already authorizes the private
+        # read. Untrusted discovery results must not force a second approval
+        # for that same read. Never relax writes, execution, egress, mixed
+        # effects, unknown actions, or operations without a sealed grant.
+        if capabilities.known and capabilities.effects == frozenset({ToolEffect.READ_PRIVATE}):
+            from src.agent_runtime.authority import ExactOperation, active_request_authority
+            authority = active_request_authority()
+            if authority is not None and authority.owner:
+                try:
+                    operation = ExactOperation.normalize(tool_name, content)
+                except (TypeError, ValueError):
+                    operation = None
+                if operation is not None and authority.permits(operation):
+                    return ToolGateDecision(True)
         read_only_effects = frozenset(
             {
                 ToolEffect.READ_PUBLIC,

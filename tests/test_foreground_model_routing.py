@@ -423,10 +423,11 @@ async def test_chat_stream_denial_returns_control_resolution(monkeypatch):
     response = await endpoint(request)
     chunks = [chunk async for chunk in response.body_iterator]
 
-    event = json.loads(chunks[0][len("data: "):])
-    assert event == {"type": "tool_approval_resolved", "decision": "deny"}
+    events = [json.loads(chunk[len("data: "):]) for chunk in chunks
+              if chunk.startswith("data: ") and "[DONE]" not in chunk]
+    assert {"type": "tool_approval_resolved", "decision": "deny"} in events
     assert chunks[-1] == "data: [DONE]\n\n"
-    assert "agent" not in captured
+    assert "agent" in captured
     assert "exact_approval" not in captured
     assert chat_routes.tool_approval_store.peek(pending.approval_id) is None
 
@@ -3139,8 +3140,9 @@ def test_agent_round_ignores_malformed_usage_and_uses_estimate(
         ("Recovered final answer.", "Recovered final answer."),
         (
             "",
-            "I gathered some search results but couldn't pull a clean answer together. "
-            "Want me to try a more specific question, or summarize what I did find?",
+            "No usable final answer was produced. "
+            "The Debug Console records why synthesis failed; "
+            "earlier tool results remain available.",
         ),
     ],
 )
@@ -3529,7 +3531,10 @@ def test_agent_fallback_request_uses_candidate_context_budget(
         (backup[0], backup[1]),
         (backup[0], backup[1]),
     ]
-    assert trim_budgets == [primary_context, backup_context, backup_context]
+    # Each route's history trim is followed by a provider-boundary trim
+    # reserving native schemas, media and generation within that same limit.
+    assert trim_budgets[::2] == [primary_context, backup_context, backup_context]
+    assert all(0 < wire <= route for route,wire in zip(trim_budgets[::2],trim_budgets[1::2]))
     fallback_messages = requests_by_round[0][1]["messages"]
     assert len(fallback_messages) == expected_fallback_message_count
     assert fallback_messages[0]["content"] == "route prompt for backup-model"

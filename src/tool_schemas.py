@@ -98,6 +98,11 @@ def _repair_function_arg_aliases(tool_type: str, args: dict[str, Any]) -> dict[s
         query = _first_nonempty_string(args, ("q", "search_query", "command", "text"))
         if query:
             args["query"] = query
+    elif tool_type == "web_fetch" and isinstance(args.get("url"), list):
+        # Native Qwen sometimes puts several URLs under the singular key.
+        # Repair the transport shape; WebFetchTool still validates each entry.
+        if "urls" not in args:
+            args["urls"] = args.pop("url")
     elif tool_type == "web_fetch" and not str(args.get("url") or "").strip():
         url = _first_nonempty_string(args, ("href", "link", "uri", "command"))
         if url:
@@ -289,11 +294,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command. Native execution requires enforced process/filesystem containment and fails closed when unavailable. Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The shell command to execute"}
+                    "command": {"type": "string", "description": "The shell command to execute"},
+                    "cwd": {"type": "string", "description": "Optional working directory for this command only. Absolute paths in the command stay independent of cwd. Omit to use the preferred cwd or the documented default workspace. This does not change authorization."}
                 },
                 "required": ["command"]
             }
@@ -318,11 +324,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Execute Python code to compute a result or test something. Native execution requires enforced containment and fails closed when unavailable. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "Python code to execute"}
+                    "code": {"type": "string", "description": "Python code to execute"},
+                    "cwd": {"type": "string", "description": "Optional working directory for this process only. Does not change which paths are authorized."}
                 },
                 "required": ["code"]
             }
@@ -360,14 +367,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch and read one or several known HTTP(S) URLs. Use url for one page or urls for up to 12 pages fetched concurrently (four at a time); batch results remain source-separated and output-bounded. For local file:///workspace HTML, use private_browser instead. For a long page or PDF, pass query with model, metric, or table terms to return matching passages instead of the beginning. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice means the body was cut short and you can re-call with full=true.",
+            "description": "Fetch and read one or several known HTTP(S) URLs. Use url for one page or urls for up to 12 pages fetched concurrently (four at a time); batch results remain source-separated and output-bounded. For local file:///workspace HTML, use read_file for source text; rendered browser page interaction is unavailable. For long prose or PDFs, use extraction_goal with distinctive topics/table terms. For wiki indexes/walkthrough hubs, OMIT extraction_goal to preserve navigation links. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice means the body was cut short and you can re-call with full=true.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"},
-                    "urls": {"type": "array", "minItems": 1, "maxItems": 12, "description": "Known URL strings to fetch concurrently. Use the top-level query to focus every page on the same evidence fields.", "items": {"type": "string"}},
+                    "urls": {"type": "array", "minItems": 1, "maxItems": 12, "description": "Known URL strings to fetch concurrently. Use extraction_goal only for focused passages; omit it for navigation hubs.", "items": {"type": "string"}},
                     "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."},
-                    "query": {"type": "string", "description": "Optional comma-separated terms used to select matching passages/pages from long documents or PDFs, for example 'DocVQA, ChartQA, TextVQA, Qwen2.5-VL-72B'."}
+                    "extraction_goal": {"type": "string", "description": "Optional passage-extraction goal (not a web-search query). Use precise terms for long prose/PDF tables; omit for wiki navigation pages to preserve links."}
                 },
                 "required": []
             }
@@ -577,7 +584,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_workspace",
-            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; code execution requires enforced containment and is unavailable when the required isolation cannot be established. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
@@ -613,6 +620,69 @@ FUNCTION_TOOL_SCHEMAS = [
                     "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring a unique match"}
                 },
                 "required": ["path", "old_string", "new_string"]
+            }
+        }
+    },
+    {
+        "type":"function", "function":{
+            "name":"discover_tools",
+            "description":"Find registered tools for a task or conversational follow-up in any language. Use query for retrieval or names to expose up to six known tools (e.g. manage_calendar, manage_notes); omit both for a paginated capability catalog. Selected schemas appear on the next round; discovery grants no execution permission. The server asks for human approval where needed.",
+            "parameters":{"type":"object", "additionalProperties":False, "properties":{
+                "query":{"type":"string"}, "names":{"type":"array", "items":{"type":"string"}, "maxItems":6},
+                "offset":{"type":"integer", "minimum":0}
+            }}
+        }
+    },
+    {
+        "type": "function", "function": {
+            "name": "task_results",
+            "description": "Retrieve verified completed task results from this session. Interpret conversational references and request the latest relevant task with kind/query; the server supplies real identifiers. No rescan or filesystem access grant. Use classification/offset for bounded audit filename pages; missing owned means unmarked. Returns unavailable/changed explicitly.",
+            "parameters": {"type":"object", "additionalProperties":False, "properties": {
+                "kind":{"type":"string", "description":"Optional producer kind, e.g. markdown_property_audit; omit for latest task"},
+                "query":{"type":"string", "description":"Optional words from task title or directory; server requires a unique match"},
+                "classification":{"type":"string", "enum":["true","false","missing","invalid","uninspected","not_true"]},
+                "offset":{"type":"integer", "minimum":0, "maximum":1000}
+            }}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_audit",
+            "description": "Read-only bulk Markdown frontmatter audit. PREFER for collection metadata inspection over reading each file or running Bash/Python. Returns complete and discovered/inspected coverage, property_counts for true/false/missing/invalid/malformed/unreadable, errors and file classifications; follow next_offset with report_offset for remaining report entries; missing/false do not mean an error. Never modifies files. At most 1000 files, 2 MiB each, 32 MiB total; narrow the pattern if exceeded.",
+            "parameters": {"type": "object", "properties": {
+                "path": {"type": "string", "description": "Use the requested collection directory itself, not a broad workspace-root search. Defaults to workspace root for whole-workspace audits; omitted continuation fields reuse the receipt's selection."},
+                "glob": {"type": "string", "description": "Relative Markdown pattern, default **/*.md"},
+                "property": {"type": "string", "description": "Boolean frontmatter property to audit; default owned"},
+                "include_control_dirs": {"type": "boolean", "description": "Default false. Include conventional hidden/control/history directories only when explicitly requested by the user; never overrides resource policy."},
+                "classification": {"type": "string", "enum": ["true", "false", "missing", "invalid", "uninspected", "not_true"], "description": "Filter paginated filenames; not_true is false plus missing, not proof of physical non-ownership. Invalid includes malformed frontmatter. Aggregate counts remain for the whole audit."},
+                "require_current": {"type": "boolean", "description": "Check saved file and directory metadata before reusing a receipt; changed evidence requires a fresh authorized audit."},
+                "audit_id": {"type": "string", "description": "Copy the identifier returned by the initial audit; never invent one. Required to reuse its snapshot in a later request. Never grants resource access."},
+                "report_offset": {"type": "integer", "minimum": 0, "maximum": 1000, "description": "Omit for compact aggregate evidence. Supply an offset to retrieve filename details from the existing snapshot without re-reading files; follow next_offset until null."}
+            }}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_batch_edit",
+            "description": "Bulk edit Markdown files in the ACTIVE WORKSPACE. For more than one matching note, PREFER this over repeated grep/read_file/edit_file. Always call mode=preview first, inspect counts and sample diffs, then call mode=apply with the identical spec and preview plan_id. Supports exact-line selection, structural YAML frontmatter key changes and safe batch string replacement. The apply result gives authoritative counts. NEVER claim success from a preview.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["preview", "apply"], "description": "Preview by default; apply requires a matching plan_id from preview"},
+                    "operation": {"type": "string", "enum": ["frontmatter", "replace"], "description": "Frontmatter-aware editing or exact string replacement"},
+                    "glob": {"type": "string", "description": "Relative Markdown glob, e.g. **/*.md or Movies/*.md; scoped to selected workspace"},
+                    "contains_line": {"type": "string", "description": "Optional exact entire line; only matching files are transformed"},
+                    "set_properties": {"type": "object", "description": "Frontmatter keys and scalar values to set inside YAML delimiters"},
+                    "remove_properties": {"type": "array", "items": {"type": "string"}, "description": "Frontmatter keys to delete"},
+                    "remove_lines": {"type": "array", "items": {"type": "string"}, "description": "Exact standalone lines to remove from frontmatter or Markdown body"},
+                    "old_string": {"type": "string", "description": "Exact string to replace for operation=replace"},
+                    "new_string": {"type": "string", "description": "Replacement for operation=replace"},
+                    "replace_all": {"type": "boolean", "description": "Whether to replace multiple occurrences within a file"},
+                    "plan_id": {"type": "string", "description": "64-digit plan fingerprint returned by mode=preview, required for apply"}
+                },
+                "required": ["operation", "glob"]
             }
         }
     },
@@ -1282,14 +1352,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_settings",
-            "description": "Manage user preferences and settings. Use `disable_tool`/`enable_tool`/`list_tools` to turn individual tools on or off globally (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Use list/get/set/delete for free-form preferences.",
+            "description": "Manage user preferences and settings. Use `disable_tool`/`list_tools` to turn individual tools off globally or list what is disabled (e.g. shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email). Disabled tools can only be re-enabled by the user in Settings > Agent Tools, never from chat. Use list/get/set/delete for free-form preferences.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "enable_tool", "list_tools"]},
+                    "action": {"type": "string", "enum": ["list", "get", "set", "delete", "disable_tool", "list_tools"]},
                     "key": {"type": "string", "description": "Setting key (for get/set/delete)"},
                     "value": {"description": "Setting value (for set) — can be string, number, boolean, or object"},
-                    "tool": {"type": "string", "description": "Tool name to disable/enable (for disable_tool/enable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
+                    "tool": {"type": "string", "description": "Tool name to disable (for disable_tool). Accepts aliases: shell, search, browser, documents, memory, skills, images, tasks, notes, calendar, email — or a raw tool name like 'bash' or 'web_search'."}
                 },
                 "required": ["action"]
             }
@@ -2207,7 +2277,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             # Preserve missing/empty intent for WriteFileTool instead of folding
             # all empty shapes into the same path-plus-newline representation.
             content = json.dumps(args)
-    elif tool_type == "edit_file":
+    elif tool_type in ("edit_file", "vault_batch_edit"):
         content = json.dumps(args)
     elif tool_type == "apply_patch":
         content = args.get("patch_text") or args.get("patchText") or args.get("patch") or ""
@@ -2381,3 +2451,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
 
     return ToolBlock(tool_type, content)
+
+# Native Obsidian tools share existing discovery and admission.
+from src.knowledge_engine.tools import schemas as knowledge_schemas
+FUNCTION_TOOL_SCHEMAS.extend(knowledge_schemas())

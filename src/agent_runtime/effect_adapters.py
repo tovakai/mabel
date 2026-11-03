@@ -25,7 +25,7 @@ from src.agent_runtime.effects import (
 )
 
 
-_FILESYSTEM_READS = frozenset({"read_file", "ls", "glob", "grep"})
+_FILESYSTEM_READS = frozenset({"read_file", "ls", "glob", "grep", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie"})
 _JOB_READS = frozenset({"list", "ls", "jobs", "output", "get", "read", "tail", "status", "show"})
 _OWNED_READS = frozenset({"vault_get", "vault_search", "list_sessions", "search_chats"})
 _JOB_SETTLED = {"done", "failed"}

@@ -74,6 +74,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         # ── Phase 1: Delete empty/throwaway sessions ──
         deleted_empty = 0
         deleted_throwaway = 0
+        episodic_deleted_sessions = []
 
         rows = db.query(DbSession).filter(
             DbSession.archived == False,
@@ -88,6 +89,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             is_fresh = (_utcnow_naive() - created_at) < _FRESH_EMPTY_SESSION_GRACE
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1
+                episodic_deleted_sessions.append((row.owner, row.id))
                 db.delete(row)
                 continue
             if is_session_recently_active(row, now=cleanup_now):
@@ -134,10 +136,28 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
                         deleted_throwaway += 1
 
             if should_delete:
+                episodic_deleted_sessions.append((row.owner, row.id))
                 db.delete(row)
 
         if deleted_empty or deleted_throwaway:
             db.commit()
+            # Respect deletion even if episodic staging is disabled. The
+            # scrub is a no-op when the owner has no candidate queue.
+            from pathlib import Path
+            from src.constants import DATA_DIR
+            from src.episodic_memory.retention import purge_deleted_session
+            for deleted_owner, deleted_id in episodic_deleted_sessions:
+                if not deleted_owner:
+                    continue
+                try:
+                    purge_deleted_session(
+                        Path(DATA_DIR) / "episodic_candidates",
+                        owner=deleted_owner, session_id=deleted_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Episodic scrub failed after auto-sort deletion %s", deleted_id
+                    )
             logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
 
         # ── Phase 2: AI folder assignment ──

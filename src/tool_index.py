@@ -44,6 +44,8 @@ ALWAYS_AVAILABLE = frozenset({
     "grep",
     "glob",
     "ls",
+    "vault_batch_edit",
+    "vault_audit", "task_results",
     "web_search",
     "web_fetch",
     "pdf_extract",
@@ -104,6 +106,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
+    "discover_tools": "Discover policy-permitted tool schemas from this request's catalog by query, exact names, or catalog page. Selection exposes metadata only; it never grants execution permission. Catalog discovery remains available when semantic retrieval is offline.",
     "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "host_shell": "Run shell commands on the TUI host through an explicitly advertised host bridge, not in the backend Docker container. Use for LAN, local IP, subnet, mDNS, Tailscale fallback, SSH target discovery, arp/nmap/ip route diagnostics when backend runtime is container-limited.",
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
@@ -120,8 +123,11 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "grep": "Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.",
     "glob": "Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.",
     "ls": "List a directory's entries (folders then files with sizes). Use to see what's in a folder — prefer over bash ls.",
-    "get_workspace": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without giving a path, instead of asking them.",
+    "get_workspace": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; code execution requires enforced containment and is unavailable when the required isolation cannot be established. Call this first when the user refers to 'the project'/'the code'/'this folder' without giving a path, instead of asking them.",
     "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc. For SVG content, write a .svg first and use inspect_media to render .png/.jpg; do not put SVG XML in a raster-named file.",
+    "vault_audit": "Read-only bulk audit of Markdown YAML frontmatter. Exact boolean property counts and paths, malformed/missing values and inspection failures across a workspace collection; no shell or writes.",
+    "task_results": "Retrieve verified completed task results from this session by kind or title context. The server resolves identifiers and resource scope. Supports filtered audit filename pages without rescanning.",
+    "vault_batch_edit": "Preview and apply structured BULK Markdown/frontmatter changes across many Obsidian notes in one operation. Select matching files by glob and exact line, preserve other note content, verify all writes. Must preview before apply.",
     "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
     "apply_patch": "Apply a multi-file patch to source files ON DISK. Use for implementation, refactors, and bug fixes where several edits belong together. Workspace-confined and returns a diff. Prefer over bash redirects/heredocs/sed.",
     "todowrite": "Maintain a structured task list for the current coding session. Use for multi-step code work: inspect, edit, test, and mark statuses current.",
@@ -145,7 +151,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_tokens": "API token management: list, create, or delete API access tokens.",
     "manage_documents": "List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content; supports offset=<N> + limit=<N> to page through large docs (response includes next_offset when more remains, so you can keep calling with offset=next_offset). action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.",
     "manage_research": "List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.",
-    "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
+    "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also turns tools off globally (disable_tool) and lists disabled ones (list_tools); re-enabling is only done by the user in Settings > Agent Tools. Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
     "create_session": "Create a new chat with a name and model.",
     "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
     "send_to_session": "Send a message to another chat. Cross-chat communication.",
@@ -195,6 +201,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a `#!bg` marker). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
 }
 
+
+# Same semantic index as other built-in tools; no prompt phrase classifier.
+from src.knowledge_engine.tools import schemas as _knowledge_schemas
+BUILTIN_TOOL_DESCRIPTIONS.update({s['function']['name']:s['function']['description'] for s in _knowledge_schemas()})
 
 class ToolIndex:
     """ChromaDB-backed tool index for RAG-based tool selection."""

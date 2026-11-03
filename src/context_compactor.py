@@ -471,6 +471,10 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     return result
 
 
+from src.model_role_runtime import consumer as model_role_consumer
+
+
+@model_role_consumer("utility")
 async def maybe_compact(
     session,
     endpoint_url: str,

@@ -123,6 +123,10 @@ def _extract_json_object(text: str) -> Optional[dict]:
     return top_level[0][2]
 
 
+from src.model_role_runtime import consumer as model_role_consumer
+
+
+@model_role_consumer("utility")
 async def maybe_extract_skill(
     session,
     skills_manager,

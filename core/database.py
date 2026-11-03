@@ -203,6 +203,10 @@ class Session(TimestampMixin, Base):
     # Organization
     folder = Column(String, nullable=True, default=None)
     cwd = Column(String, nullable=True, default=None)
+    # JSON list of allowed-directory grant ids active for this conversation.
+    active_directory_ids = Column(JSON, nullable=True, default=list)
+    # Explicit primary local grant id for shell/Python containment.
+    primary_local_directory_id = Column(String, nullable=True, default=None)
     # Registered ModelEndpoint this session is bound to. endpoint_url alone
     # cannot distinguish two endpoints that share a provider URL but use
     # different credentials (e.g. two ChatGPT Subscription accounts), so the
@@ -1479,6 +1483,40 @@ def _migrate_add_session_cwd_column():
         except Exception:
             pass
 
+
+def _migrate_add_session_active_directories_columns():
+    """Add multi-directory conversation scope columns to sessions."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        changed = False
+        if "active_directory_ids" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN active_directory_ids JSON")
+            changed = True
+        if "primary_local_directory_id" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN primary_local_directory_id TEXT")
+            changed = True
+        if changed:
+            conn.commit()
+            logging.getLogger(__name__).info(
+                "Migrated: added active_directory_ids / primary_local_directory_id to sessions"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"Migration check for active directories failed: {e}"
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_add_session_endpoint_id_column():
     """Add the nullable binding and index without rewriting existing sessions."""
     with engine.begin() as connection:
@@ -2407,6 +2445,7 @@ def init_db():
     _migrate_add_session_generation_settings_columns()
     _migrate_add_folder_column()
     _migrate_add_session_cwd_column()
+    _migrate_add_session_active_directories_columns()
     _migrate_add_session_endpoint_id_column()
     _migrate_add_token_columns()
     _migrate_add_total_cost_usd()

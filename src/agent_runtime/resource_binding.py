@@ -17,7 +17,7 @@ from src.path_confinement import canonical_root, confine
 
 
 NATIVE_FILESYSTEM_TOOLS = frozenset({
-    "read_file", "write_file", "edit_file", "apply_patch", "ls", "glob", "grep",
+    "read_file", "write_file", "edit_file", "apply_patch", "ls", "glob", "grep", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie",
 })
 
 
@@ -120,7 +120,7 @@ def _resolve(roots, selector, *, workspace, allow_missing):
     raise ValueError(f"Resource path is outside {boundary}, sensitive, missing or changed")
 
 
-def resolve_filesystem_operation(operation, *, roots, workspace="", request_id=""):
+def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="", authority=None):
     """Server adapter. This does not grant the operation or authorize its roots."""
     if not isinstance(operation, ExactOperation) or operation.tool not in NATIVE_FILESYSTEM_TOOLS:
         raise ValueError("Operation has no native filesystem adapter")
@@ -170,7 +170,8 @@ def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="
                     break
         execution_input = json.dumps({"patch_text": "\n".join(lines)}, sort_keys=True)
     else:
-        search = tool in {"ls", "glob", "grep"}
+        from src.knowledge_engine.tools import TOOLS as knowledge_reads
+        search = tool in {"ls", "glob", "grep", "vault_audit"} | knowledge_reads
         if args is None:
             if tool == "write_file":
                 path, _, body = content.partition("\n")
@@ -181,9 +182,20 @@ def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="
                 args = {"pattern": content.strip()}
             else:
                 args = {"path": content.split("\n", 1)[0].strip()}
+        if tool == "vault_audit" and authority is not None:
+            # Validate any supplied path before consulting receipt metadata.
+            if args.get("path"):
+                _resolve(roots, args["path"], workspace=workspace, allow_missing=False)
+            from src.agent_runtime.audit_receipts import resolve_arguments
+            args = resolve_arguments(authority, args)
         selector = args.get("path", "" if search else None)
         if search and selector == "":
-            if workspace:
+            # Vault and index tools do not inherit an authorization root.
+            # Filesystem search tools may still use the active workspace.
+            if tool == "vault_audit" or tool in knowledge_reads:
+                from src.agent_runtime.vault_target import require_configured_vault
+                selector = require_configured_vault()
+            elif workspace:
                 selector = canonical_root(workspace)
             elif len(roots) == 1:
                 selector = roots[0].path

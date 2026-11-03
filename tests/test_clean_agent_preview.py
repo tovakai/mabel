@@ -3442,6 +3442,7 @@ def test_saved_tool_trace_retains_only_latest_browser_screenshot():
 
 def test_every_compactly_offered_preview_tool_has_valid_policy_permitted_call():
     samples = {
+        'task_results': ({}, 'retrieve the latest completed task result'),
             'ask_user': ({'question': 'Which one?', 'options': [{'label': 'First'}, {'label': 'Second'}]}, 'ask me which one'),
             'python': ({'code': 'print(2 + 2)'}, 'calculate this'),
             'read_file': ({'path': '/workspace/input.txt'}, 'read this file'),

@@ -10,6 +10,8 @@ PREFS_FILE = USER_PREFS_FILE
 _FOREGROUND_POLICY_KEYS = (
     "foreground_fallback_enabled",
     "foreground_model_fallbacks",
+    # Role fallback choices carry the same owner-scoped routing consent.
+    "model_role_policies",
 )
 
 

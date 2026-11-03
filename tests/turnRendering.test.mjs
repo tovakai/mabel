@@ -329,3 +329,22 @@ test('terminal cleanup removes transient rounds introduced after a structured sn
   });
   assert.deepEqual(result, { same: true, transient: false, markers: 0 });
 });
+
+test('canonical audit summary replaces listing drafts across the turn and retains tool evidence', async () => {
+  const result = await run('<section id="tools"><pre>raw ls tool listing</pre></section><div class="msg-ai" id="draft"><div class="body">Movie 000.md Movie 001.md</div></div><div class="msg-ai" id="final"><div class="body"></div></div>', () => {
+    owner.accepts({ type: 'final_response', render_owner: 'structured' });
+    const event = { type: 'final_response', render_owner: 'streamed', replacement_scope: 'turn' };
+    const accepted = owner.accepts(event);
+    const rendered = owner.render({ body: document.querySelector('#final .body'),
+      html: '<p>173 notes inspected; 159 owned, 14 missing. No metadata issues.</p>',
+      raw: '173 notes inspected; 159 owned, 14 missing. No metadata issues.',
+      render_owner: event.render_owner, replacement_scope: event.replacement_scope });
+    return { accepted, rendered: rendered.accepted, draftGone: !document.querySelector('#draft'),
+      toolsRetained: document.querySelector('#tools').textContent, final: document.querySelector('#final').textContent };
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(result.rendered, true);
+  assert.equal(result.draftGone, true);
+  assert.equal(result.toolsRetained, 'raw ls tool listing');
+  assert.match(result.final, /173 notes inspected; 159 owned, 14 missing/);
+});

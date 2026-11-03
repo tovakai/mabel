@@ -74,7 +74,7 @@ async def test_actual_route_constructs_contract_with_real_mcp_apis(
         selected = kwargs["turn_contract"]
         assert selected is not None
         assert active_turn_contract() is selected
-        observed.append((selected, kwargs["tool_policy"], kwargs["disabled_tools"]))
+        observed.append((selected, kwargs["tool_policy"], kwargs["disabled_tools"], kwargs["request_authority"]))
         yield 'data: {"delta":"Route contract constructed."}\n\n'
         yield "data: [DONE]\n\n"
 
@@ -91,7 +91,7 @@ async def test_actual_route_constructs_contract_with_real_mcp_apis(
     assert any("Route contract constructed." in chunk for chunk in chunks)
     assert any("[DONE]" in chunk for chunk in chunks)
     assert len(observed) == 1
-    selected, policy, disabled = observed[0]
+    selected, policy, disabled, authority = observed[0]
     assert "host_shell" not in selected.executable
     assert selected.required <= selected.offered <= selected.executable
     assert not any(policy.blocks(name) for name in selected.offered)
@@ -107,7 +107,12 @@ async def test_actual_route_constructs_contract_with_real_mcp_apis(
             assert selected.offered == {"mcp__email__list_email_accounts", "ask_user", "update_plan"}
         for name in ("send_email", "mcp__email__send_email", "list_emails", "mcp__email__list_emails"):
             assert not selected.permits(name)
-            assert policy.blocks(name)
+            # Retrieval omissions are no longer hard denials. They still
+            # have neither a schema nor automatic request permission.
+            from src.agent_runtime.authority import ExactOperation
+            assert not authority.permits(ExactOperation.normalize(name, "{}"))
+            if case == "discovery_reader" and name.endswith("send_email"):
+                assert policy.blocks(name)  # Explicit reader policy stays hard.
     elif case == "calendar":
         assert selected.capabilities == {"calendar"}
         assert selected.required_read_operation.args == {"action": "list_events"}

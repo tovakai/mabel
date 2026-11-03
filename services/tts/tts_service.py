@@ -219,8 +219,24 @@ class TTSService:
                 return cached
 
         audio_data = None
-
-        if provider == "local":
+        from src import model_roles
+        from src.model_role_runtime import current_owner
+        role_owner=current_owner('tts')
+        if model_roles.configured('tts',role_owner):
+            from src.model_role_adapters import audio
+            try:
+                local_primary=None
+                primary_route=None
+                if provider=='local' and not model_roles.primary_assignment('tts',role_owner).endpoint_id:
+                    def local_primary():
+                        kokoro=self._get_kokoro()
+                        return kokoro.synthesize_raw(text,voice) if kokoro and kokoro.available else None
+                    primary_route=('local://tts','kokoro-82m',{})
+                audio_data = audio('tts',owner=role_owner,text=text,voice=voice,speed=speed,
+                    local_primary=local_primary,primary_route=primary_route)
+            except (model_roles.RoleUnavailable, httpx.HTTPError, RuntimeError):
+                return None
+        elif provider == "local":
             kokoro = self._get_kokoro()
             if kokoro and kokoro.available:
                 audio_data = kokoro.synthesize_raw(text, voice)

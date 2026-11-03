@@ -34,6 +34,7 @@ from src.tool_security import (
 from src.tool_capabilities import ToolRunSecurityContext, blocked_tool_result
 from src.tool_approvals import ExactToolApproval
 from src.tool_policy import ToolPolicy
+from src.agent_runtime.tool_recovery import normalize_tool_failures
 from src.client_tool_contract import TUI_ROUTED_BRIDGE_TOOL_NAMES
 from src.constants import (
     DATA_DIR,
@@ -1062,6 +1063,9 @@ def _resolve_tool_path(raw_path: str) -> str:
         if _is_denied_tool_path(resolved):
             raise ValueError("bound path is sensitive, application state or a hard-linked file")
         return resolved
+    scope = get_active_directory_scope()
+    if scope is not None:
+        return _resolve_tool_path_in_scope(scope, raw_path)
     ws = get_active_workspace()
     if ws:
         return _resolve_tool_path_in_workspace(ws, raw_path)
@@ -1090,6 +1094,50 @@ def _resolve_tool_path(raw_path: str) -> str:
             return resolved
     raise ValueError(
         f"path '{raw_path}' is outside the allowed roots"
+    )
+
+
+def _resolve_tool_path_in_scope(scope, raw_path: str) -> str:
+    """Confine a path to the conversation's active local directory grants."""
+    if raw_path is None or not str(raw_path).strip():
+        raise ValueError("path is required")
+    local_roots = [r for r in scope.available_roots if r.backend == "local"]
+    if not local_roots:
+        raise ValueError(
+            "No active local directories are available for this path. "
+            "Select allowed directories in the conversation, or pass a remote "
+            "grant_id for SFTP-backed operations."
+        )
+    primary = scope.primary_local()
+    last_error = None
+    # Prefer explicit primary for /workspace alias and relative paths.
+    ordered = []
+    if primary is not None:
+        ordered.append(primary)
+    for root in local_roots:
+        if primary is None or root.grant_id != primary.grant_id:
+            ordered.append(root)
+    matches = []
+    for root in ordered:
+        try:
+            resolved = _resolve_tool_path_in_workspace(root.path, raw_path)
+            matches.append(resolved)
+        except ValueError as exc:
+            last_error = exc
+            continue
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        # Absolute path uniquely inside multiple overlapping grants — allow if
+        # all resolutions agree on the same realpath.
+        uniq = {os.path.realpath(m) for m in matches}
+        if len(uniq) == 1:
+            return matches[0]
+        raise ValueError(
+            "path matches multiple active directories; pass grant_id to disambiguate"
+        )
+    raise last_error or ValueError(
+        f"path '{raw_path}' is outside the active directories"
     )
 
 
@@ -1149,11 +1197,39 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 _active_workspace: contextvars.ContextVar = contextvars.ContextVar(
     "agent_active_workspace", default=None
 )
+_active_directory_scope: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_active_directory_scope", default=None
+)
+# Turn-level scope set by stream_agent_loop so every execute_tool_block inherits
+# multi-root grants without threading a new kwarg through every call site.
+_turn_directory_scope: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_turn_directory_scope", default=None
+)
+
+
+@contextmanager
+def bind_turn_directory_scope(scope):
+    """Bind conversation directory scope for the duration of an agent turn."""
+    token = _turn_directory_scope.set(scope)
+    try:
+        yield scope
+    finally:
+        _turn_directory_scope.reset(token)
 
 
 def get_active_workspace() -> Optional[str]:
-    """The folder the agent is confined to this turn, or None."""
+    """The folder the agent is confined to this turn, or None.
+
+    With multi-directory scope this is only the explicit primary local directory
+    used for shell containment / ``/workspace`` alias — never an inferred
+    first-of-list fallback.
+    """
     return _active_workspace.get()
+
+
+def get_active_directory_scope():
+    """Conversation active-directory scope for this turn, or None."""
+    return _active_directory_scope.get()
 
 
 def _display_tool_path(path: str) -> str:
@@ -1204,10 +1280,57 @@ def vet_workspace(raw: str) -> Optional[str]:
     return resolved
 
 
+_invocation_cwd: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_invocation_cwd", default=None
+)
+
+
+def _explicit_cwd_from_content(tool, content):
+    if tool not in {"bash", "python", "host_shell"}:
+        return None
+    try:
+        args = json.loads(content or "")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(args, dict):
+        return None
+    cwd = args.get("cwd")
+    return cwd.strip() if isinstance(cwd, str) and cwd.strip() else None
+
+
+def resolve_invocation_cwd(raw: str) -> str:
+    """Validate one call's working directory. Do not rewrite it to another root."""
+    expanded = os.path.realpath(os.path.expanduser(str(raw or "").strip()))
+    if not expanded or not os.path.isdir(expanded):
+        raise ValueError("cwd is not a directory")
+    if vet_workspace(expanded) != expanded:
+        raise ValueError("cwd is not a permitted working directory")
+    scope = get_active_directory_scope()
+    if scope is None:
+        return expanded
+    local_roots = [root for root in scope.available_roots if root.backend == "local" and root.available]
+    if not local_roots:
+        raise ValueError("Remote-only conversations cannot use a local working directory")
+    default = os.path.realpath(default_agent_workspace())
+    allowed = {os.path.realpath(root.path) for root in local_roots}
+    allowed.add(default)
+    if expanded in allowed or any(is_inside(root, expanded) for root in allowed):
+        return expanded
+    raise ValueError("cwd is outside the authorized local directories and the documented default workspace")
+
+
 def agent_cwd() -> str:
-    """Working directory for agent subprocesses (bash/python/background jobs):
-    a validated sealed launch root, active workspace, or agent workspace."""
+    """Working directory for agent subprocesses (bash/python/background jobs).
+
+    Order: per-invocation cwd, sealed launch root, optional preferred primary,
+    then the documented data-directory workspace. A missing primary does not
+    select the first authorized directory. Remote-only conversations do not
+    inherit a local cwd.
+    """
     from src.agent_runtime.process_resources import active_process_operation
+    override = _invocation_cwd.get()
+    if override:
+        return override
     bound = active_process_operation()
     if bound is not None and bound.launch is not None:
         bound.launch.scope.validate()
@@ -1215,6 +1338,21 @@ def agent_cwd() -> str:
         if vet_workspace(root) != root:
             raise RuntimeError("sealed process root is not a safe real directory")
         return root
+    scope = get_active_directory_scope()
+    if scope is not None:
+        primary = scope.primary_local()
+        if primary is not None:
+            vetted = vet_workspace(primary.path)
+            if vetted is None:
+                raise RuntimeError("preferred local directory is not a safe real directory")
+            return vetted
+        local_roots = [root for root in scope.available_roots if root.backend == "local" and root.available]
+        if not local_roots:
+            raise RuntimeError(
+                "Remote-only conversations have no local working directory. "
+                "They do not inherit an unrelated local cwd."
+            )
+        return default_agent_workspace()
     workspace = get_active_workspace()
     if workspace:
         vetted = vet_workspace(workspace)
@@ -1628,6 +1766,7 @@ from src.browser_identity import (
 
 
 @record_action
+@normalize_tool_failures
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -1645,6 +1784,7 @@ async def execute_tool_block(
     active_document_id: Optional[str] = None,
     client_runtime_context: Optional[Dict[str, Any]] = None,
     request_authority=MISSING_AUTHORITY,
+    directory_scope=None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -1684,6 +1824,10 @@ async def execute_tool_block(
             owner=owner, session_id=session_id, workspace=workspace)
         if valid:
             authority = authority.restrict(tool_policy, disabled_tools)
+        if valid and exact_approval is None and isinstance(security_context, ToolRunSecurityContext):
+            from src.tool_approvals import scoped_exact_approval
+            exact_approval = scoped_exact_approval(authority, operation.transport_tool, operation.input,
+                security_context=security_context, client_runtime_context=client_runtime_context)
         exact_admission = bool(
             valid and not authority.inherited and not authority.restricted(operation)
             and exact_approval is not None and exact_approval.matches(
@@ -1696,16 +1840,48 @@ async def execute_tool_block(
                       if isinstance(error, json.JSONDecodeError) else str(error)),
             "exit_code": 1, "blocked": True,
             "failure_kind": "request_authority_denied",
+            "failure_reason": "invalid_arguments", "executed": False,
         }
+    from src.tool_approvals import tool_approval_store
+    if valid and tool_approval_store.operation_was_denied(authority, operation):
+        return f"{operation.tool}: DENIED", {"error":"The user denied this exact operation. Choose a permitted alternative.",
+            "exit_code":1, "blocked":True, "failure_kind":"user_denied", "executed":False}
     if not admitted:
         reason = "The exact operation is outside server request authority."
         if tool_policy and any(tool_policy.blocks(name) for name in email_tool_policy_names(getattr(block, "tool_type", ""))):
-            reason = f"Execution of tool '{getattr(block, 'tool_type', '')}' is forbade by the active tool policy."
+            reason = f"Execution of tool '{getattr(block, 'tool_type', '')}' is forbidden by the active tool policy."
         elif isinstance(authority, RequestAuthority) and authority.restricted(operation):
             reason = "The exact operation is disabled by user or server request authority policy."
+        # Workspace inspection is read-only. Explain which security layer
+        # denied it rather than encouraging the model to retry or use bash.
+        denial_sources = []
+        if getattr(block, "tool_type", None) == "get_workspace":
+            if not valid:
+                denial_sources.append("request_binding")
+            if isinstance(authority, RequestAuthority):
+                if authority.block_all:
+                    denial_sources.append("request_block_all")
+                if "get_workspace" in authority.denied:
+                    denial_sources.append("request_denied_tools")
+            if "get_workspace" in (disabled_tools or ()):
+                denial_sources.append("caller_disabled_tools")
+            if tool_policy is not None:
+                if tool_policy.block_all_tool_calls:
+                    denial_sources.append("tool_policy_block_all")
+                if "get_workspace" in tool_policy.disabled_tools:
+                    denial_sources.append("tool_policy_disabled")
+                if "get_workspace" in tool_policy.hidden_tools:
+                    denial_sources.append("tool_policy_hidden")
+            if not denial_sources:
+                denial_sources.append("missing_workspace_read_grant")
+            logger.warning("get_workspace admission denied by %s", ",".join(denial_sources))
+            reason = reason + " Workspace inspection denied by: " + ", ".join(denial_sources) + "."
         return f"{getattr(block, 'tool_type', '')}: BLOCKED", {
             "error": reason,
             "exit_code": 1, "blocked": True, "failure_kind": "request_authority_denied",
+            "failure_reason": "user_policy_denied" if valid and authority.restricted(operation) else "request_authority_denied",
+            "executed": False,
+            **({"denial_sources": denial_sources} if denial_sources else {}),
         }
 
     from src.turn_contract import active_turn_contract
@@ -1715,6 +1891,17 @@ async def execute_tool_block(
             "error": "Tool is outside the requested turn capabilities.",
             "exit_code": 1, "failure_kind": "turn_contract_denied",
         }
+
+    if operation.tool == "vault_batch_edit":
+        from src.agent_runtime.batch_preview_claims import consume_if_continuation
+        continuation = consume_if_continuation(
+            request_id=authority.request_id, operation=operation,
+        )
+        if continuation is False:
+            return "vault_batch_edit: BLOCKED", {
+                "error": "Batch approval has already been used or its exact apply arguments changed. Request a new preview.",
+                "exit_code": 1, "blocked": True, "failure_kind": "batch_continuation_denied",
+            }
 
     transport = operation.transport_tool
     if operation.tool == "private_browser":
@@ -1774,6 +1961,7 @@ async def execute_tool_block(
             "failure_kind": "resource_identity_denied",
             **({"policy": "exact_tool_approval"} if exact_approval is not None else {}),
         }
+    from src.agent_runtime.audit_receipts import AuditReceiptError
     resource_operation = None
     if operation.tool in NATIVE_FILESYSTEM_TOOLS and not external_resource_call:
         try:
@@ -1788,12 +1976,17 @@ async def execute_tool_block(
             if any(r.owner and r.owner != authority.owner for r in roots):
                 raise ValueError("Filesystem resource owner differs from request authority")
             resource_operation = resolve_filesystem_operation(
-                operation, roots=roots, workspace=authority.workspace, request_id=authority.request_id)
+                operation, roots=roots, workspace=authority.workspace, request_id=authority.request_id, authority=authority)
             if approved_resource is not None:
                 if approved_resource.request_id and approved_resource.request_id != authority.request_id:
                     raise ValueError("Approved resource belongs to another request")
                 if replace(resource_operation, request_id=approved_resource.request_id) != approved_resource:
                     raise ValueError("Approved filesystem resource identity changed")
+        except AuditReceiptError as error:
+            return f"{transport}: invalid audit receipt", {
+                "error": str(error), "exit_code": 1, "failure_kind": error.code,
+                "executed": False, "recoverable": True,
+            }
         except (ValueError, TypeError, OSError, RuntimeError) as error:
             return f"{transport}: BLOCKED", {
                 "error": str(error), "exit_code": 1, "blocked": True,
@@ -1802,11 +1995,20 @@ async def execute_tool_block(
 
     approval_claimed = False
     if exact_approval is not None:
-        if (
-            not isinstance(security_context, ToolRunSecurityContext)
-            or not security_context.external_untrusted_context_seen
-            or not exact_approval.pending.external_untrusted_context_seen
-        ):
+        _armed_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and security_context.external_untrusted_context_seen
+            and exact_approval.pending.external_untrusted_context_seen
+        )
+        # A request-authority gap is approvable without untrusted context, but
+        # the card must have been shown under the run's current taint state.
+        _authority_gap_approval = bool(
+            isinstance(security_context, ToolRunSecurityContext)
+            and exact_approval.pending.authority_gap
+            and (exact_approval.pending.external_untrusted_context_seen
+                 or not security_context.external_untrusted_context_seen)
+        )
+        if not (_armed_approval or _authority_gap_approval):
             return (
                 f"{getattr(block, 'tool_type', None)}: BLOCKED",
                 {
@@ -1885,7 +2087,24 @@ async def execute_tool_block(
             )
 
     token = _active_workspace.set(workspace or None)
+    effective_scope = directory_scope if directory_scope is not None else _turn_directory_scope.get()
+    scope_token = _active_directory_scope.set(effective_scope)
+    cwd_token = _invocation_cwd.set(None)
     try:
+        explicit_cwd = _explicit_cwd_from_content(
+            getattr(block, "tool_type", None), getattr(block, "content", None)
+        )
+        if explicit_cwd:
+            try:
+                _invocation_cwd.set(resolve_invocation_cwd(explicit_cwd))
+            except ValueError as error:
+                return f"{transport}: ERROR", {
+                    "error": str(error),
+                    "exit_code": 1,
+                    "failure_kind": "invalid_arguments",
+                    "executed": False,
+                    "recoverable": True,
+                }
         backend_operation.validate(client_runtime_context)
         if process_operation is not None and approval_claimed:
             process_operation = replace(process_operation, exact_approval=exact_approval)
@@ -1924,6 +2143,8 @@ async def execute_tool_block(
             "failure_kind": "resource_identity_denied",
         }
     finally:
+        _invocation_cwd.reset(cwd_token)
+        _active_directory_scope.reset(scope_token)
         _active_workspace.reset(token)
 
 
@@ -2209,7 +2430,7 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await dispatched(_call_mcp_tool(tool, content, progress_cb=progress_cb, owner=owner))
-    elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell"):
+    elif tool in ("grep", "glob", "ls", "get_workspace", "host_shell", "vault_batch_edit", "vault_audit", "task_results", "discover_tools"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
@@ -2218,6 +2439,9 @@ async def _execute_tool_block_impl(
             content,
             progress_cb=progress_cb,
             owner=owner,
+            # Bind the preview to the originating chat session; other tool
+            # fallbacks retain their previous session-less behavior.
+            session_id=session_id if tool in {"vault_batch_edit", "task_results", "discover_tools"} else None,
             client_runtime_context=client_runtime_context,
         )) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
@@ -2507,6 +2731,8 @@ def _compact_binary_like_output(value: object) -> str:
 def format_tool_result(description: str, result: Dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
+    if isinstance(result.get("listing"), dict):
+        parts.append("Listing coverage: " + json.dumps(result["listing"]))
 
     if "stdout" in result:
         if result["stdout"]:
@@ -2569,7 +2795,8 @@ def format_tool_result(description: str, result: Dict) -> str:
     # documents, attachments, etc.) that the dedicated branches above don't show.
     # Without this, tools that return {"response": "...", "events": [...]} would
     # silently drop the events list and the model would only see the summary line.
-    extra = {k: v for k, v in result.items() if k not in _FORMATTER_HANDLED_KEYS}
+    extra = {k: v for k, v in result.items() if k not in _FORMATTER_HANDLED_KEYS and k != "listing"
+             and not (k == "result" and description.startswith("vault_audit:") and "output" in result)}
     if extra:
         try:
             extra_json = json.dumps(extra, indent=2, default=str, ensure_ascii=False)
@@ -2584,3 +2811,8 @@ def format_tool_result(description: str, result: Dict) -> str:
     # without using the built-in tools' output cap. Bound the final model-facing
     # text here so one verbose command cannot consume the next request window.
     return _truncate("\n".join(parts))
+
+# Optional research budgets count dispatcher attempts, including denied calls.
+# This wrapper neither grants operations nor executes a second tool framework.
+from src.knowledge_engine.research import limit_dispatch as _limit_research_dispatch
+execute_tool_block = _limit_research_dispatch(execute_tool_block)

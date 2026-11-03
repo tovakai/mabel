@@ -6,9 +6,10 @@ import os
 import re
 import time
 import logging
+from contextlib import aclosing
 import re as _re
 from urllib.parse import urlparse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query, Depends
@@ -165,6 +166,25 @@ def _request_privileges(request, user) -> Dict[str, Any]:
     if not user or not auth_manager:
         return {}
     return auth_manager.get_privileges(user) or {}
+
+
+def _conversational_agent_opt_in(request, chat_mode, *, compare_mode=False,
+                                 plan_mode=False, tool_approval_id=None) -> bool:
+    """Server-owned experiment: ordinary Chat uses the existing Agent executor.
+
+    This changes only which runtime handles an authorized Chat turn. It does
+    not grant any tool permission, set a workspace root, or pre-approve an
+    action. ToolPolicy, RequestAuthority, TurnContract, and user approvals
+    remain the separate execution gates. Disabled by default.
+    """
+    if os.getenv("ODYSSEUS_CONVERSATIONAL_AGENT", "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    if chat_mode != "chat" or compare_mode or plan_mode or tool_approval_id:
+        return False
+    user = effective_user(request)
+    return _request_privileges(request, user).get("can_use_agent", True) is not False
 
 
 def _native_runtime_requires_local_browser(client_runtime_context):
@@ -850,15 +870,22 @@ def _external_execution_bridge(
     )
 
 
+from src.agent_runtime.owned_stream import owned_stream
+
+
+@owned_stream
 async def _stream_agent_with_execution_bridge(bridge, *args, **kwargs):
-    with bind_turn_contract(kwargs.get("turn_contract")):
+    from src.model_role_runtime import role_scope
+    with bind_turn_contract(kwargs.get("turn_contract")), role_scope('default', kwargs.get('owner') or '', 'tools'):
         if bridge is None:
-            async for chunk in stream_agent_loop(*args, **kwargs):
-                yield chunk
+            async with aclosing(stream_agent_loop(*args, **kwargs)) as stream:
+                async for chunk in stream:
+                    yield chunk
             return
         with bind_execution_bridge(bridge):
-            async for chunk in stream_agent_loop(*args, **kwargs):
-                yield chunk
+            async with aclosing(stream_agent_loop(*args, **kwargs)) as stream:
+                async for chunk in stream:
+                    yield chunk
 
 
 def _should_detach_chat_stream(
@@ -1307,12 +1334,12 @@ def _reject_delegated_tool_approval(request: Request) -> None:
         )
 
 
-def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
+def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any, scope_proof=None, authority_gap=None) -> bool:
     """Persist a consumed approval decision on its existing tool event."""
 
     approval_key = str(approval_id or "")
     normalized_decision = str(decision or "").strip().lower()
-    if not approval_key or normalized_decision not in {"approve", "approve_task", "deny"}:
+    if not approval_key or normalized_decision not in {"approve", "approve_task", "approve_once", "deny"}:
         return False
 
     message_id = None
@@ -1331,6 +1358,10 @@ def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any) -> bool:
             if str(ask_user.get("approval_id") or "") != approval_key:
                 continue
             ask_user["resolved"] = normalized_decision
+            if authority_gap is not None:
+                ask_user['authority_gap'] = bool(authority_gap)
+            if scope_proof is not None:
+                ask_user['_scope_grant'] = scope_proof
             stamp_chat_session_grant(
                 ask_user,
                 getattr(sess, "id", ""),
@@ -2341,6 +2372,14 @@ def setup_chat_routes(
         )
         if is_internal_tool_request(request):
             _append_internal_chat_context(ctx, message)
+        else:
+            # Personal recall is a narrative question, not automatically an
+            # inventory request. Keep this cue turn-local and persona-neutral.
+            from src.agent_runtime.personal_overview_style import apply_personal_overview_style
+            apply_personal_overview_style(
+                ctx, message,
+                is_overview=chat_processor._requests_personal_overview(message),
+            )
 
         # Research injection
         research_blocked_by_policy = (
@@ -2450,6 +2489,7 @@ def setup_chat_routes(
             character_name=ctx.preset.character_name,
             owner=ctx.user,
             allow_background_extraction=not tool_policy.block_all_tool_calls,
+            allow_episodic_capture=not is_internal_tool_request(request),
         )
 
         return {
@@ -2467,6 +2507,9 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
     async def chat_stream(request: Request) -> StreamingResponse:
+        _debug_turn_started = time.monotonic()
+        _debug_turn_wall = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+        _debug_turn_epoch = time.time()
         require_api_token_scope(request, "chat")
         body = None
         try:
@@ -2545,12 +2588,23 @@ def setup_chat_routes(
         )
         exact_tool_approval = None
         pending_tool_approval = None
+        rejected_tool_approval = None
         retired_tool_approval_taint = False
         external_untrusted_context_seen = False
         tool_approval_continuation = False
-        # Workspace: confine the agent's file/shell tools to this folder.
+        # Workspace: legacy single-root FormData (admin-vetted). Active directory
+        # scope is resolved after the session loads; unknown paths never mint grants.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace") or form_data.get("cwd")
+        )
+        directory_scope = None
+        _request_active_directories = (
+            form_data.get("active_directories")
+            or (body or {}).get("active_directories")
+        )
+        _request_primary_local_directory_id = (
+            form_data.get("primary_local_directory_id")
+            or (body or {}).get("primary_local_directory_id")
         )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
@@ -2567,6 +2621,19 @@ def setup_chat_routes(
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
         user_requested_agent = (chat_mode == "agent")
+        _conversational_agent = _conversational_agent_opt_in(
+            request, chat_mode,
+            compare_mode=compare_mode,
+            plan_mode=plan_mode,
+            tool_approval_id=tool_approval_id,
+        )
+        if _conversational_agent:
+            chat_mode = "agent"
+            auto_escalated = True
+            logger.info(
+                "chat→agent: opt-in conversational tool runtime; owner=%s",
+                effective_user(request),
+            )
         _search_enabled = web_search_enabled_for_turn(allow_web_search, use_web)
         _explicit_web_intent = False
         _explicit_personal_store_intent = False
@@ -2793,6 +2860,33 @@ def setup_chat_routes(
                 current_workspace=workspace,
                 current_rejected=workspace_rejected,
             )
+            try:
+                from src.fs_devices.turn_bind import bind_turn_directory_scope
+                directory_scope, scope_compat, scope_rejected = bind_turn_directory_scope(
+                    request_active_ids=_request_active_directories,
+                    request_primary_local_id=_request_primary_local_directory_id,
+                    request_workspace_path=workspace or (
+                        form_data.get("workspace") or form_data.get("cwd") or ""
+                    ),
+                    session=sess,
+                    allow_trusted_migration=True,
+                )
+                if scope_compat:
+                    workspace = scope_compat
+                elif directory_scope and directory_scope.roots:
+                    # Multi-root without explicit primary: FS tools use sealed
+                    # roots; shell requires primary. Clear stale single-cwd
+                    # workspace so remote-only sessions do not inherit it.
+                    if not directory_scope.primary_local():
+                        workspace = ""
+                if scope_rejected:
+                    workspace_rejected = scope_rejected or workspace_rejected
+                    from src.fs_devices.registry import find_local_grant_by_path
+                    if find_local_grant_by_path(scope_rejected) is None:
+                        if workspace == scope_rejected or not workspace:
+                            workspace = scope_compat or ""
+            except Exception:
+                directory_scope = None
             owner = effective_user(request)
             selected_notes = []
             if selected_note_ids:
@@ -2832,7 +2926,7 @@ def setup_chat_routes(
                     external_untrusted_context_seen or pending_taint
                 )
                 decision = str(tool_approval_decision or "").strip().lower()
-                if decision not in {"approve", "approve_task", "deny"}:
+                if decision not in {"approve", "approve_task", "approve_once", "deny"}:
                     raise HTTPException(400, "Invalid tool approval decision.")
                 if plan_mode:
                     raise HTTPException(
@@ -2847,7 +2941,7 @@ def setup_chat_routes(
                 )
                 tool_approval_continuation = True
                 if (
-                    decision in {"approve", "approve_task"}
+                    decision in {"approve", "approve_task", "approve_once"}
                     and exact_tool_approval is None
                 ):
                     raise HTTPException(
@@ -2858,16 +2952,15 @@ def setup_chat_routes(
                     sess,
                     tool_approval_id,
                     decision,
+                    scope_proof=tool_approval_store.scope_proof(tool_approval_id),
+                    authority_gap=pending_tool_approval.authority_gap,
                 ):
                     logger.warning(
                         "Tool approval %s was consumed but its persisted card could not be marked resolved",
                         tool_approval_id,
                     )
                 if decision == "deny":
-                    return StreamingResponse(
-                        _tool_approval_resolution_stream(decision),
-                        media_type="text/event-stream",
-                    )
+                    rejected_tool_approval = pending_tool_approval
                 # Approval is a control-plane continuation, not a new user turn.
                 # Reuse the sealed interrupted request only for internal context,
                 # retrieval, and policy reconstruction; never persist or display it.
@@ -3031,6 +3124,12 @@ def setup_chat_routes(
 
         image_generation_session = _is_image_generation_session(sess, owner=effective_user(request))
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+        # Obsidian Companion sends no_skills as a per-turn form field. Suppress
+        # skills-index context for that turn without changing tool permissions.
+        from src.companion_compat import include_agent_skills_index
+        no_skills = form_data.get("no_skills")
+        if no_skills is None and isinstance(body, dict):
+            no_skills = body.get("no_skills")
         if image_generation_session:
             no_memory = True
             use_rag = "false"
@@ -3064,12 +3163,14 @@ def setup_chat_routes(
             ).get("can_use_agent", True),
             image_generation=image_generation_session,
         )
-        # A compact turn resolves its typed context window once, here, with
-        # the session's provider credentials. History shaping below and the
-        # compact runtime both reuse this exact object, so the turn neither
-        # probes twice nor mixes the legacy untyped lookup into it.
+        # Resolve agent serving limits once with the session credentials.
+        # Both runtimes reuse this object; unauthenticated legacy probes can
+        # otherwise mistake a model-family maximum for the serving window.
         _compact_context_resolution = None
-        if _compact_preview_turn:
+        if _compact_preview_turn or (
+            chat_mode == "agent" and not image_generation_session
+            and _request_privileges(request,effective_user(request)).get("can_use_agent",True)
+        ):
             from src.agent_runtime.context_resolution import resolve_effective_context
             _compact_context_resolution = await resolve_effective_context(
                 sess.endpoint_url, sess.model, headers=sess.headers,
@@ -3096,7 +3197,7 @@ def setup_chat_routes(
             # Skills index only ships when the model can actually call
             # manage_skills (agent mode). In plain chat or incognito the
             # index would be useless / unwanted noise.
-            agent_mode=(chat_mode == "agent"),
+            agent_mode=include_agent_skills_index(chat_mode, no_skills),
             allow_tool_preprocessing=allow_tool_preprocessing,
             defer_context_shaping=foreground_policy.enabled,
             continuation_context_message=(
@@ -3113,6 +3214,14 @@ def setup_chat_routes(
         )
         if is_internal_tool_request(request):
             _append_internal_chat_context(ctx, message)
+        else:
+            # Personal recall is a narrative question, not automatically an
+            # inventory request. Keep this cue turn-local and persona-neutral.
+            from src.agent_runtime.personal_overview_style import apply_personal_overview_style
+            apply_personal_overview_style(
+                ctx, message,
+                is_overview=chat_processor._requests_personal_overview(message),
+            )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 
@@ -3255,12 +3364,19 @@ def setup_chat_routes(
                 )
             )
         )
-        _use_turn_contract = _turn_contract_enabled(
-            exact_tool_approval=exact_tool_approval,
-            runtime_surface=_runtime_surface,
-            native_workspace_contract=_native_workspace_contract,
-            clean_v3_route=_clean_v3_route_requested,
-            full_schema_route=(_effective_tool_schema_mode == "full"),
+        _use_turn_contract = (
+            _turn_contract_enabled(
+                exact_tool_approval=exact_tool_approval,
+                runtime_surface=_runtime_surface,
+                native_workspace_contract=_native_workspace_contract,
+                clean_v3_route=_clean_v3_route_requested,
+                full_schema_route=(_effective_tool_schema_mode == "full"),
+            )
+            # The experiment bypasses the lexical *turn-contract selection*
+            # for ordinary models. It does NOT override the model's configured
+            # tool transport or claim the underlying Agent RAG offered a tool.
+            # Compact models preserve their normal constrained contract.
+            and not (_conversational_agent and not _clean_v3_route_requested)
         )
         _turn_history = getattr(sess, "history", []) or []
         from src.turn_contract import corrected_browser_target
@@ -3319,6 +3435,12 @@ def setup_chat_routes(
         if _use_turn_contract and _turn_capabilities and "search_browser" not in _turn_capabilities:
             _explicit_web_intent = False
         disabled_tools = set()
+        # The installed browser producer cannot bind page actions safely.
+        # Hide it before constructing the immutable turn contract; execution
+        # still denies page operations independently.
+        from src.browser_identity import PAGE_COMMANDS_ENABLED
+        if not PAGE_COMMANDS_ENABLED:
+            disabled_tools.add("private_browser")
         # Minting is admin-only, so every owner-keyed check below answers
         # "admin" for a token. Cap it at the non-admin policy instead.
         # stream_agent_loop repeats this from delegated_credential.
@@ -3495,9 +3617,15 @@ def setup_chat_routes(
         # tries to shell out for a request that never needed it, then fails
         # (and looks broken when the shell is disabled).
         if auto_escalated and not _workspace_agent_intent and not _use_turn_contract:
-            disabled_tools.update({
-                "bash", "python", "read_file", "write_file",
-            })
+            disabled_tools.update({"bash", "python", "write_file"})
+            # Conversational reads may use an existing server-validated
+            # workspace/active-directory grant. Never manufacture a root from
+            # message wording or the client-side mode toggle.
+            _bound_read_scope = bool(workspace) or bool(
+                directory_scope and directory_scope.available_roots
+            )
+            if not _conversational_agent or not _bound_read_scope:
+                disabled_tools.add("read_file")
             if not _allow_browser_for_web_turn:
                 disabled_tools.update(_BROWSER_MCP_TOOLS)
 
@@ -3558,24 +3686,38 @@ def setup_chat_routes(
             }.issubset(disabled_tools),
         }
         # Capture permission state before schema selection/reconciliation.
-        # Only deterministic request intent supplies grants, never inventory.
+        # Interactive grants come from trusted UI scopes and exact user review,
+        # independently of schema retrieval and the language of the prompt.
+        _interactive_tool_review = bool(chat_mode == 'agent' and not plan_mode
+            and not is_internal_tool_request(request) and not _delegated_credential
+            and (client_runtime_context or {}).get('unattended_mode') is not True)
+        _has_fs_scope = bool(workspace) or bool(
+            directory_scope and directory_scope.available_roots
+        )
         _request_authority = request_authority_for_http(
             request, message, owner=_user, session_id=session, workspace=workspace,
             history=_turn_history, policy=tool_policy,
+            interactive_review=_interactive_tool_review,
             client_runtime_context=client_runtime_context,
             active_document=bool(active_doc),
             image_attachment=any(str(a.get('mime') or '').startswith('image/')
                                  for a in (ctx.preprocessed.attachment_meta or [])),
             capabilities=({'search_browser'} if (
-                _explicit_browser_intent or _external_discovery_intent
-            ) else ()),
+                _explicit_browser_intent or _external_discovery_intent or "web_search" not in disabled_tools
+            ) else set()) | ({'workspace_read'} if _has_fs_scope and chat_mode == 'agent' else set()),
         )
-        if exact_tool_approval is not None:
+        if directory_scope is not None:
+            from src.fs_devices.seal import attach_scope_roots
+            _request_authority = attach_scope_roots(_request_authority, directory_scope)
+        if exact_tool_approval is not None or rejected_tool_approval is not None:
             from src.agent_runtime.authority import RequestAuthority
             _request_authority = (
-                exact_tool_approval.pending.request_authority
+                pending_tool_approval.request_authority
                 or RequestAuthority.empty(owner=_user, session_id=session, workspace=workspace)
             ).restrict(tool_policy)
+            if directory_scope is not None:
+                from src.fs_devices.seal import attach_scope_roots
+                _request_authority = attach_scope_roots(_request_authority, directory_scope)
         _turn_contract = None
         # Image models execute directly, not through the text-agent inventory.
         # Keep the permission policy above, but do not apply routing omissions
@@ -3697,12 +3839,18 @@ def setup_chat_routes(
             if _corrected_browser_target:
                 _selected_tools = {'private_browser', 'web_fetch', 'web_search'}
                 _required_tools = {'private_browser'}
+            from src.agent_runtime.task_artifacts import select as _saved_task_result
+            _task_result_tools = {'task_results'} if _saved_task_result(_user, session, workspace) else set()
+            if tool_approval_continuation and pending_tool_approval is not None:
+                # Restore relevance from the server's interrupted turn, while
+                # current policy and the exact approval still govern execution.
+                _task_result_tools.update(pending_tool_approval.selected_tools)
             _turn_contract = resolve_turn_contract(
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
                 policy=_contract_policy, required_tools=_required_tools,
                 required_capabilities=_active_turn_capabilities,
                 selected_tools=_selected_tools,
-                always_available_tools=(FAMILY_TOOLS["documents"] if active_doc else ()),
+                always_available_tools=set(FAMILY_TOOLS["documents"] if active_doc else ()) | _task_result_tools,
                 warm_tools=_warm_tools,
                 message=message, history=getattr(sess, "history", []) or [],
             )
@@ -3715,7 +3863,7 @@ def setup_chat_routes(
             if _clean_v3_preview:
                 from dataclasses import replace
                 from src.clean_agent_preview import (
-                    INTERACTIVE_CORE_TOOLS, MODE, NATIVE_WORKSPACE_TOOLS, PREVIEW_TOOLS, canonical,
+                    INTERACTIVE_CORE_TOOLS, MODE, NATIVE_WORKSPACE_TOOLS, PREVIEW_TOOLS, WORKSPACE_READ_TOOLS, canonical,
                     scope_preview_contract,
                 )
                 from src.turn_contract import resolve_full_inventory_contract
@@ -3724,6 +3872,8 @@ def setup_chat_routes(
                     NATIVE_WORKSPACE_TOOLS
                     if _native_workspace_contract else frozenset()
                 )
+                if workspace and "workspace_read" in _turn_capabilities:
+                    _clean_runtime_tools |= WORKSPACE_READ_TOOLS
                 _preview_schemas = [
                     s for s in _contract_schemas
                     if canonical(s['function']['name']) in _clean_runtime_tools
@@ -3790,12 +3940,22 @@ def setup_chat_routes(
                         user_text=message,
                         browser_requested=_explicit_browser_intent,
                     )
+            if _interactive_tool_review and _clean_v3_preview:
+                _turn_contract = replace(
+                    _turn_contract, catalog_json=_routed_turn_contract.catalog_json,
+                )
             # Every recovery path receives the same scope denial. The central
             # dispatcher also checks the immutable contract after rewrites.
-            disabled_tools.update(
-                s["function"]["name"] for s in _contract_schemas
-                if not _turn_contract.permits(s["function"]["name"])
-            )
+            if _interactive_tool_review:
+                # Retrieval is relevance, not a permanent policy denial. A
+                # later model discovery may advertise a vetted alternative;
+                # authority/approval must still admit its exact operation.
+                disabled_tools = set(_contract_policy.all_disabled_names())
+            else:
+                disabled_tools.update(
+                    s["function"]["name"] for s in _contract_schemas
+                    if not _turn_contract.permits(s["function"]["name"])
+                )
             # Contract resolution is the final policy-and-routing authority.
             # Some legacy/API-model paths arrive with a stale disabled snapshot
             # assembled before routing.  The scope-denial pass above may retain
@@ -3803,10 +3963,45 @@ def setup_chat_routes(
             # never let that stale snapshot reject a tool the final immutable
             # contract explicitly offers.  User/global denials cannot be
             # restored here because resolve_turn_contract filtered them out.
-            disabled_tools.difference_update(_turn_contract.offered)
+            if not _interactive_tool_review:
+                disabled_tools.difference_update(_turn_contract.offered)
             tool_policy = build_effective_tool_policy(
                 disabled_tools=disabled_tools, last_user_message=message,
             )
+        if (
+            _conversational_agent
+            and _interactive_tool_review
+            and not _clean_v3_preview
+            and _turn_contract is None
+        ):
+            # Supply a real request-local discovery catalog instead of relying
+            # on a keyword tool family or an unavailable semantic index.
+            # This is schema visibility only. Operation grants remain sealed
+            # to the server-created RequestAuthority and exact user review.
+            from src.agent_runtime.conversational_catalog import conversational_catalog_contract
+            from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+            from src.tool_utils import get_mcp_manager
+            from src.tool_security import blocked_tools_for_owner
+            from src.agent_loop import _load_mcp_disabled_map
+
+            disabled_tools.update(blocked_tools_for_owner(_user))
+            tool_policy = build_effective_tool_policy(
+                disabled_tools=disabled_tools,
+                last_user_message=message,
+            )
+            _request_authority = _request_authority.restrict(tool_policy)
+            _available_schemas = list(FUNCTION_TOOL_SCHEMAS)
+            _catalog_mcp = get_mcp_manager()
+            if _catalog_mcp and not tool_policy.disable_mcp:
+                _available_schemas.extend(
+                    _catalog_mcp.get_all_openai_schemas(_load_mcp_disabled_map())
+                )
+            _turn_contract = conversational_catalog_contract(
+                _available_schemas,
+                tool_policy,
+                workspace_read=_has_fs_scope,
+            )
+
         research_blocked_by_policy = bool(
             tool_policy.blocks("trigger_research")
             or tool_policy.blocks("manage_research")
@@ -3834,6 +4029,12 @@ def setup_chat_routes(
         _effective_mode = 'research' if effective_do_research else (chat_mode or 'chat')
         if _effective_mode in ('agent', 'research', 'chat'):
             set_session_mode(session, _effective_mode)
+
+        _debug_observer = None
+        def _debug_callback(data):
+            if _debug_observer is not None:
+                try: _debug_observer.observe('data: ' + json.dumps(data) + '\n\n')
+                except Exception: logger.warning('Debug callback failed', exc_info=True)
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
@@ -4052,6 +4253,8 @@ def setup_chat_routes(
                     owner=_user,
                 )
 
+            if rejected_tool_approval is not None:
+                yield f'data: {json.dumps({"type": "tool_approval_resolved", "decision": "deny"})}\n\n'
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if effective_do_research else None
             _selected_route = _foreground_route_descriptors[0]
@@ -4179,6 +4382,8 @@ def setup_chat_routes(
                 _actual_route = _requested_route
                 _actual_candidate_index = 0
                 _chat_terminal_saved = False
+                _chat_stream_failed = False
+                _chat_stream_finished = False
                 def _commit_chat_compaction(candidate_index: int) -> bool:
                     return apply_compaction_state(
                         sess,
@@ -4190,6 +4395,7 @@ def setup_chat_routes(
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
                         messages,
+                        model_role='default', role_owner=_user or '',
                         temperature=(temperature_override if temperature_override is not None else 1.0),
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
@@ -4206,6 +4412,7 @@ def setup_chat_routes(
                         candidate_route_descriptors=_foreground_route_descriptors,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
+                        diagnostic_events=not incognito,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -4228,6 +4435,8 @@ def setup_chat_routes(
                                     else:
                                         full_response += data["delta"]
                                         _stream_set(session, partial=full_response)
+                                    yield chunk
+                                elif data.get("type") == "diagnostic_event":
                                     yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
@@ -4324,6 +4533,7 @@ def setup_chat_routes(
                             except json.JSONDecodeError:
                                 yield chunk
                         elif chunk.startswith("event: error"):
+                            _chat_stream_failed = True
                             logger.warning(f"Stream error for {sess.model} on {sess.endpoint_url}: {chunk!r}")
                             if (
                                 not _chat_terminal_saved
@@ -4421,11 +4631,30 @@ def setup_chat_routes(
                                 _stream_set(session, status="error")
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
-                            if _chat_terminal_saved:
+                            _chat_stream_finished = True
+                            if _chat_terminal_saved or _chat_stream_failed:
                                 # Some providers append DONE after a terminal
                                 # error.  The failed partial is already saved;
                                 # never re-save/post-process it as a success or
                                 # advertise successful completion to the client.
+                                continue
+                            # DONE is a transport event, not evidence of a visible answer.
+                            if not _visible_response_text_for_save(full_response).strip():
+                                _chat_terminal_saved = True
+                                _stream_set(session, status="error")
+                                _terminal_metrics = dict(last_metrics or {})
+                                _terminal_metrics.update({
+                                    "failed": True,
+                                    "failure": {
+                                        "status": 502,
+                                        "message": "Model completed without a visible answer",
+                                        "reason": "empty_visible_response",
+                                    },
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                })
+                                yield f'data: {json.dumps({"type": "chat_terminal", "data": _terminal_metrics})}\n\n'
+                                yield f'event: error\ndata: {json.dumps({"error": "Model completed without a visible answer", "status": 502, "code": "empty_visible_response"})}\n\n'
                                 continue
                             # Generate fallback metrics if LLM didn't send usage
                             if not last_metrics and full_response:
@@ -4504,6 +4733,9 @@ def setup_chat_routes(
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     allow_background_extraction=_post_response_extraction_allowed(
                                         tools_blocked=tool_policy.block_all_tool_calls,
                                         tool_approval_continuation=tool_approval_continuation,
@@ -4512,6 +4744,11 @@ def setup_chat_routes(
                                 )
                             _stream_set(session, status="done")
                             yield chunk
+                    # A provider closing the stream without DONE is an incomplete
+                    # request, even if it yielded partial visible text.
+                    if not (_chat_stream_finished or _chat_stream_failed or _chat_terminal_saved):
+                        _stream_set(session, status="error")
+                        yield f'event: error\ndata: {json.dumps({"error": "Model stream ended before completion", "status": 502, "code": "incomplete_stream"})}\n\n'
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response and not incognito:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
@@ -4635,6 +4872,7 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        directory_scope=directory_scope,
                         relevant_tools=(
                             set(pending_tool_approval.selected_tools)
                             if exact_tool_approval
@@ -4651,12 +4889,17 @@ def setup_chat_routes(
                         external_untrusted_context_seen=external_untrusted_context_seen,
                         delegated_credential=_delegated_credential,
                         exact_approval=exact_tool_approval,
+                        rejected_tool_approval=rejected_tool_approval,
+                        # Ask for ungranted actions only when a person can
+                        # answer: not tool loopback, API tokens, or unattended
+                        # terminal runs.
+                        authority_gap_approvals=_interactive_tool_review,
                         client_runtime_context=client_runtime_context,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
-                        context_resolution=(
-                            _compact_context_resolution if _clean_v3_preview else None
-                        ),
+                        context_resolution=_compact_context_resolution,
+                        diagnostic_events=not incognito,
+                        diagnostic_callback=_debug_callback if not incognito else None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -4701,6 +4944,7 @@ def setup_chat_routes(
                                     "tool_routing_audit",
                                     "tool_resolution_audit",
                                     "turn_contract",
+                                    "diagnostic_event", "completion_decision",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _event_round = data.get("round", 1)
@@ -4899,10 +5143,13 @@ def setup_chat_routes(
                                     _metrics_to_save, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
-                                                            agent_rounds=_agent_rounds,
+                                    agent_rounds=_agent_rounds,
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,
+                                    no_memory=no_memory,
+                                    saved_assistant_message_id=_saved_id,
+                                    allow_episodic_capture=not tool_approval_continuation,
                                     extract_skills=(
                                         user_requested_agent
                                         and not tool_approval_continuation
@@ -4960,10 +5207,39 @@ def setup_chat_routes(
         async def _safe_stream() -> AsyncGenerator[str, None]:
             """Wrapper that guarantees _active_streams cleanup even if stream_with_save
             raises before reaching a mode-specific finally block."""
+            nonlocal _debug_observer
+            observer = None
+            status = 'completed'
+            if not incognito:
+                try:
+                    from src.agent_runtime.debug_trace import TraceObserver, get_store
+                    observer = TraceObserver(get_store(), str(owner or 'local'), str(session),
+                                             started=_debug_turn_started, started_wall=_debug_turn_wall)
+                    _debug_observer = observer
+                    observer.emit('RUNTIME','context_build','completed',
+                                  duration_ms=(time.monotonic()-_debug_turn_started)*1000)
+                    if tool_approval_continuation and pending_tool_approval is not None:
+                        observer.approval_resolved(str(tool_approval_decision or ''),
+                            pending_tool_approval.approval_id, pending_tool_approval.created_at, _debug_turn_epoch)
+                except Exception:
+                    logger.warning('Debug trace initialization failed', exc_info=True)
             try:
                 async for chunk in stream_with_save():
+                    if observer is not None:
+                        try: observer.observe(chunk)
+                        except Exception: logger.warning('Debug trace observation failed', exc_info=True)
                     yield chunk
+            except (asyncio.CancelledError, GeneratorExit):
+                status = 'cancelled'
+                raise
+            except BaseException:
+                status = 'error'
+                raise
             finally:
+                if observer is not None:
+                    try: observer.finish(status)
+                    except Exception: logger.warning('Debug trace finalization failed', exc_info=True)
+                _debug_observer = None
                 _active_streams.pop(session, None)
 
         # Compare panes and explicitly unattended native clients are
@@ -5003,6 +5279,22 @@ def setup_chat_routes(
         )
 
     # ------------------------------------------------------------------ #
+    # GET /api/chat/debug — replay owner-scoped diagnostics with a cursor.
+    @router.get('/api/chat/debug/{session_id}')
+    async def chat_debug_events(request: Request, session_id: str, after: int = 0,
+                                limit: int = 500, turn: str | None = None) -> Dict[str, Any]:
+        _verify_session_owner(request, session_id)
+        if after < 0 or not 1 <= limit <= 1000 or (turn is not None and not re.fullmatch(r'turn_[a-f0-9]{32}', turn)):
+            raise HTTPException(400, 'Invalid trace cursor or turn')
+        try:
+            from src.agent_runtime.debug_trace import get_store
+            events = await asyncio.to_thread(get_store().read, str(effective_user(request) or 'local'),
+                                             str(session_id), after=after, limit=limit, turn=turn)
+            return {'events':events, 'next_cursor':events[-1]['seq'] if events else after}
+        except Exception:
+            logger.warning('Debug trace replay failed', exc_info=True)
+            raise HTTPException(503, 'Diagnostic trace unavailable')
+
     # GET /api/chat/resume — reconnect to a detached run that's still going
     # (e.g. after reopening a session whose agent kept running in the background)
     # ------------------------------------------------------------------ #
@@ -5196,8 +5488,22 @@ def setup_chat_routes(
                                     .first()
                                 )
                                 if db_msg:
+                                    rewritten_id = str(db_msg.id)
+                                    old_content = db_msg.content
                                     db_msg.content = full_response
                                     db.commit()
+                                    if old_content != full_response:
+                                        from core.session_manager import (
+                                            _invalidate_episodic_message_sources,
+                                        )
+                                        source_owner = (
+                                            getattr(db_msg.session, "owner", None)
+                                            if getattr(db_msg, "session", None) is not None
+                                            else getattr(sess, "owner", None)
+                                        )
+                                        _invalidate_episodic_message_sources(
+                                            source_owner, session_id, [rewritten_id],
+                                        )
                             except Exception as e:
                                 logger.warning("Failed to update rewritten message in DB: %s", e)
                                 db.rollback()

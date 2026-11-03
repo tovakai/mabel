@@ -56,3 +56,14 @@ timetree*.png
 # Include distribution notices despite the general documentation exclusion.
 !ACKNOWLEDGMENTS.md
 !services/hwfit/data/README.md
+
+# Private Mabel/Obsidian vault content must never enter Docker build context.
+/memory/
+/identity/
+/knowledge/
+/projects/
+/journal/
+/attachments/
+/.obsidian/
+/.stversions/
+/.stfolder

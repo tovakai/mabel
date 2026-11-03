@@ -74,6 +74,10 @@ def resolve_task_candidates(
     return candidates
 
 
+from src.model_role_runtime import consumer as model_role_consumer
+
+
+@model_role_consumer("task")
 async def task_llm_call_async(
     messages,
     *,

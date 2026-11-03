@@ -74,7 +74,7 @@ def test_web_fetch_does_not_decode_local_html_or_binary_media(tmp_path):
         _active_workspace.reset(token)
 
     assert html["exit_code"] == 1
-    assert "private_browser" in html["error"]
+    assert "browser page rendering is unavailable" in html["error"]
     assert video["exit_code"] == 1
     assert "inspect_media" in video["error"]
 

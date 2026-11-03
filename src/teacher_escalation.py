@@ -285,17 +285,30 @@ portable across users / hosts.
 """
 
 
+from src.model_role_runtime import consumer as model_role_consumer
+
+
+@model_role_consumer("teacher")
 async def _call_teacher(teacher_model_spec: str, prompt: str,
                         owner: Optional[str] = None) -> Optional[str]:
     """Call the configured teacher endpoint with the escalation prompt."""
     from src.llm_core import llm_call_async
     from src.ai_interaction import _resolve_model
     from src.agent_tools.model_interaction_tools import _TEACHER_SYSTEM_PROMPT
+    from src import model_roles
+    messages=[{'role':'system','content':_TEACHER_SYSTEM_PROMPT},{'role':'user','content':prompt}]
+    if model_roles.configured('teacher',owner or ''):
+        try:
+            return await model_roles.call('teacher',messages,owner=owner or '')
+        except Exception as error:
+            logger.warning('teacher role inference failed: %s',type(error).__name__)
+            return None
     try:
         url, model, headers = await asyncio.to_thread(_resolve_model, teacher_model_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_model_spec!r}): {e}")
         return None
+
     try:
         return await llm_call_async(
             url, model,

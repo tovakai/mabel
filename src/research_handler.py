@@ -1059,6 +1059,7 @@ class ResearchHandler:
                 category=category,
                 session_id=session_id,
             )
+            researcher.owner = str((_task_entry or {}).get('owner') or '')
             if _task_entry is not None:
                 _task_entry["researcher"] = researcher
 
