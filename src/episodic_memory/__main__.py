@@ -30,6 +30,17 @@ def main() -> int:
         default="pending",
     )
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
+    graph = sub.add_parser(
+        "associations",
+        help="Explicitly inspect source-evidenced links between promoted episodes",
+    )
+    graph.add_argument("--candidate-id", required=True)
+    graph.add_argument("--vault-root", type=Path, required=True)
+    graph.add_argument("--protected-root", type=Path, action="append", required=True)
+    graph.add_argument("--read-source-excerpts", action="store_true")
+    graph.add_argument("--depth", type=int, choices=(1, 2), default=2)
+    graph.add_argument("--scan-limit", type=int, default=200)
+    graph.add_argument("--after-candidate-id")
     lookup = sub.add_parser(
         "recall", help="Explicit read-only lexical search over verified promoted episodes",
     )
@@ -80,6 +91,34 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "associations":
+        if not args.read_source_excerpts:
+            parser.error("associations requires --read-source-excerpts")
+        from core.database import SessionLocal
+        from routes.prefs_routes import _load_for_user
+        from .associations import related_verified_episodes
+
+        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+            "1", "true", "yes",
+        }
+        if not enabled:
+            parser.error("associations requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+        prefs = _load_for_user(queue.owner)
+        policy = CapturePolicy(
+            episodic_enabled=enabled,
+            memory_enabled=bool(prefs.get("memory_enabled", True)),
+        )
+        with SessionLocal() as db:
+            output = related_verified_episodes(
+                queue, args.candidate_id, db=db,
+                vault_root=args.vault_root,
+                protected_roots=tuple(args.protected_root),
+                policy=policy, approved=True,
+                max_depth=args.depth,
+                max_nodes=min(30, max(2, args.limit)),
+                scan_limit=args.scan_limit,
+                after_candidate_id=args.after_candidate_id,
+            )
     elif args.command == "recall":
         if not args.read_source_excerpts:
             parser.error("recall requires --read-source-excerpts")
