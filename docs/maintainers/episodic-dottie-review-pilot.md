@@ -14,7 +14,10 @@ promote Markdown into a vault, or inject episodic recall into prompts.
 - Resolves **only** the configured owner-scoped **Research / Dottie** endpoint
   and model. It does not fall back to Utility, Default or cloud models when
   the research role is unconfigured or unavailable.
-- Waits for Mabel's interactive-quiet gate. Sends bounded excerpts (up to
+- Uses the interactive-quiet gate when called in the Mabel backend process.
+  The standalone CLI has separate process-local gate state and **cannot**
+  detect foreground WebUI activity. Run this manual pilot only while the
+  server is idle. Sends bounded excerpts (up to
   500 characters of each side of the exchange, plus up to 500 characters of
   clearly labelled unverified interpretation) for strict JSON classification.
 - Treats model output as untrusted advisory data. Only the exact three-field
