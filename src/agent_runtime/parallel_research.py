@@ -13,10 +13,11 @@ import hashlib
 import json
 import logging
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Mapping, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,15 @@ def research_shares_foreground_endpoint(owner: str = "") -> tuple[bool, dict]:
     return shared, detail
 
 
-def _authority_permits(tool: str, arguments: dict, authority) -> bool:
+def _authority_permits(
+    tool: str,
+    arguments: dict,
+    authority,
+    *,
+    tool_policy=None,
+    disabled_tools=None,
+) -> bool:
+    """Mirror execute_tool_block admission: restrict then ExactOperation.permits."""
     if authority is None:
         return False
     from src.agent_runtime.authority import ExactOperation
@@ -282,9 +291,41 @@ def _authority_permits(tool: str, arguments: dict, authority) -> bool:
         operation = ExactOperation.normalize(tool, json.dumps(arguments, ensure_ascii=False))
     except (TypeError, ValueError):
         return False
+    if hasattr(authority, "restrict"):
+        authority = authority.restrict(tool_policy, disabled_tools or ())
     if authority.restricted(operation):
         return False
     return bool(authority.permits(operation))
+
+
+@contextmanager
+def _authorized_child_turn_scope(child_tools: list[str]) -> Iterator[frozenset[str]]:
+    """Derive nested turn selection from the request catalog — never from model args.
+
+    Compact/conversational turns often discover only ``research_parallel``.
+    ``TurnContract.permits`` then allows the parent via ``catalog.selected`` while
+    children remain outside ``offered | selected``, so nested ``execute_tool_block``
+    fails with turn_contract_denied even when RequestAuthority already grants those
+    children. Promote only names already present in the policy-filtered catalog
+    inventory (executable for this request). Temporary; does not mint grants.
+    """
+    from src.agent_runtime.tool_catalog import active_catalog
+
+    catalog = active_catalog()
+    added: list[str] = []
+    if catalog is not None:
+        for name in child_tools:
+            if not isinstance(name, str) or not name or name in catalog.selected:
+                continue
+            if name not in catalog.inventory:
+                continue
+            catalog.selected.add(name)
+            added.append(name)
+    try:
+        yield frozenset(added)
+    finally:
+        if catalog is not None and added:
+            catalog.selected.difference_update(added)
 
 
 def _child_failure(result: Mapping[str, Any] | None, *, default: str = "backend_failure") -> str:
@@ -777,10 +818,14 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
 
         # Authorization is checked before restricted work starts. A compound
         # call must never turn two unauthorized operations into one authorized one.
+        policy = ctx.get("tool_policy")
+        disabled = ctx.get("disabled_tools")
         web_allowed = True
         vault_allowed = True
         if web_args is not None and "web" not in reused_branches:
-            web_allowed = _authority_permits("web_search", web_args, authority)
+            web_allowed = _authority_permits(
+                "web_search", web_args, authority, tool_policy=policy, disabled_tools=disabled,
+            )
             if not web_allowed:
                 web_section = {
                     "status": "denied",
@@ -796,7 +841,9 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                     "source_count": 0,
                 })
         if vault_args is not None and "vault" not in reused_branches:
-            vault_allowed = _authority_permits(vault_tool, vault_args, authority)
+            vault_allowed = _authority_permits(
+                vault_tool, vault_args, authority, tool_policy=policy, disabled_tools=disabled,
+            )
             if not vault_allowed:
                 vault_section = {
                     "status": "denied",
@@ -847,6 +894,70 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
                         "failure_kind": "exact_operation_mismatch",
                     }
 
+        # Child may be authorized but outside discovery-selected turn surface.
+        # Inherit only inventoried, authority-permitted children for nested dispatch.
+        # If a child is not in this request's executable catalog at all, omit it —
+        # the parent grant must not invent a missing capability.
+        from src.agent_runtime.tool_catalog import active_catalog
+        from src.turn_contract import active_turn_contract
+
+        catalog = active_catalog()
+        contract = active_turn_contract()
+
+        def _child_turn_available(tool: str) -> bool:
+            if contract is not None and contract.permits(tool):
+                return True
+            if catalog is not None and tool in catalog.inventory:
+                return True
+            if contract is not None and tool in contract.executable:
+                return True
+            # No turn contract / catalog (non-interactive tests): do not block.
+            return catalog is None and contract is None
+
+        if run_web and not _child_turn_available("web_search"):
+            run_web = False
+            web_section = {
+                "status": "denied",
+                "results": [],
+                "error": "web_search is outside requested turn capabilities",
+                "failure_kind": "turn_contract_denied",
+            }
+            unresolved.append("Web branch unavailable on this turn")
+            await note({
+                "operation": "parallel_branch_failed",
+                "branch": "web",
+                "status": "denied",
+                "failure_kind": "turn_contract_denied",
+                "source_count": 0,
+            })
+        if run_vault and not _child_turn_available(vault_tool):
+            run_vault = False
+            vault_section = {
+                "status": "denied",
+                "strategy": vault_strategy,
+                "kind": "index_candidates" if vault_strategy == "fast" else "verified_findings",
+                "findings": [],
+                "error": f"{vault_tool} is outside requested turn capabilities",
+                "failure_kind": "turn_contract_denied",
+            }
+            if vault_strategy == "fast":
+                vault_section["matches"] = []
+            unresolved.append("Vault branch unavailable on this turn")
+            await note({
+                "operation": "parallel_branch_failed",
+                "branch": "vault",
+                "status": "denied",
+                "vault_strategy": vault_strategy,
+                "failure_kind": "turn_contract_denied",
+                "source_count": 0,
+            })
+
+        inherit_tools: list[str] = []
+        if run_web:
+            inherit_tools.append("web_search")
+        if run_vault:
+            inherit_tools.append(vault_tool)
+
         async def web_job() -> tuple[str, dict, float, float, float]:
             t0 = time.monotonic()
             result = await _run_child("web_search", web_args, ctx, timeout_s=_WEB_TIMEOUT_S)
@@ -869,82 +980,83 @@ async def execute(content: str, ctx: Mapping[str, Any]) -> dict:
         timings = {"web_ms": 0.0, "vault_ms": 0.0, "vault_index_ms": 0.0}
         launched_concurrent = plan_concurrent and len(jobs) == 2
         if jobs:
-            if launched_concurrent:
-                tasks = [asyncio.create_task(job) for job in jobs]
-                try:
-                    gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                except asyncio.CancelledError:
-                    for task in tasks:
-                        task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    raise
-            else:
-                # Conservative sequential fallback when deep research shares the
-                # foreground endpoint, or when only one branch is enabled.
-                gathered = []
-                for job in jobs:
+            with _authorized_child_turn_scope(inherit_tools):
+                if launched_concurrent:
+                    tasks = [asyncio.create_task(job) for job in jobs]
                     try:
-                        gathered.append(await job)
-                    except Exception as error:  # noqa: BLE001 - branch isolation
-                        gathered.append(error)
-
-            for item in gathered:
-                if isinstance(item, Exception):
-                    if isinstance(item, asyncio.CancelledError):
-                        raise item
-                    unresolved.append(f"Branch crashed: {type(item).__name__}")
-                    continue
-                branch, result, elapsed_ms, t0, t1 = item
-                timings[f"{branch}_ms"] = round(elapsed_ms, 1)
-                branch_windows[branch] = (t0, t1)
-                if branch == "web":
-                    status, error = _classify_web_result(result)
-                    web_section = _web_branch_payload(result, status=status, error=error)
-                    if status == "approval_required":
-                        approval_bubble = result
-                    if status in {"failed", "denied", "timeout", "cancelled", "approval_required"}:
-                        unresolved.append(error or f"Web branch {status}")
-                        await note({
-                            "operation": "parallel_branch_failed",
-                            "branch": "web",
-                            "status": status,
-                            "duration_ms": timings["web_ms"],
-                            "source_count": len(web_section.get("results") or []),
-                        })
-                    else:
-                        await note({
-                            "operation": "parallel_branch_completed",
-                            "branch": "web",
-                            "status": status,
-                            "duration_ms": timings["web_ms"],
-                            "source_count": len(web_section.get("results") or []),
-                        })
+                        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                    except asyncio.CancelledError:
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        raise
                 else:
-                    status, error = _classify_vault_result(result, strategy=vault_strategy)
-                    vault_section = _vault_branch_payload(
-                        result, status=status, error=error, strategy=vault_strategy,
-                    )
-                    if vault_strategy == "fast":
-                        # Fast path is index lookup; total branch time ≈ index time.
-                        timings["vault_index_ms"] = timings["vault_ms"]
-                    match_count = _vault_source_count(vault_section)
-                    if status == "approval_required":
-                        approval_bubble = result
-                    diag = {
-                        "branch": "vault",
-                        "status": status,
-                        "duration_ms": timings["vault_ms"],
-                        "vault_strategy": vault_strategy,
-                        "vault_index_ms": timings.get("vault_index_ms") or None,
-                        "match_count": match_count,
-                        "source_count": match_count,
-                        "failure_kind": vault_section.get("failure_kind"),
-                    }
-                    if status in {"failed", "denied", "timeout", "cancelled", "approval_required"}:
-                        unresolved.append(error or f"Vault branch {status}")
-                        await note({"operation": "parallel_branch_failed", **diag})
+                    # Conservative sequential fallback when deep research shares the
+                    # foreground endpoint, or when only one branch is enabled.
+                    gathered = []
+                    for job in jobs:
+                        try:
+                            gathered.append(await job)
+                        except Exception as error:  # noqa: BLE001 - branch isolation
+                            gathered.append(error)
+
+                for item in gathered:
+                    if isinstance(item, Exception):
+                        if isinstance(item, asyncio.CancelledError):
+                            raise item
+                        unresolved.append(f"Branch crashed: {type(item).__name__}")
+                        continue
+                    branch, result, elapsed_ms, t0, t1 = item
+                    timings[f"{branch}_ms"] = round(elapsed_ms, 1)
+                    branch_windows[branch] = (t0, t1)
+                    if branch == "web":
+                        status, error = _classify_web_result(result)
+                        web_section = _web_branch_payload(result, status=status, error=error)
+                        if status == "approval_required":
+                            approval_bubble = result
+                        if status in {"failed", "denied", "timeout", "cancelled", "approval_required"}:
+                            unresolved.append(error or f"Web branch {status}")
+                            await note({
+                                "operation": "parallel_branch_failed",
+                                "branch": "web",
+                                "status": status,
+                                "duration_ms": timings["web_ms"],
+                                "source_count": len(web_section.get("results") or []),
+                            })
+                        else:
+                            await note({
+                                "operation": "parallel_branch_completed",
+                                "branch": "web",
+                                "status": status,
+                                "duration_ms": timings["web_ms"],
+                                "source_count": len(web_section.get("results") or []),
+                            })
                     else:
-                        await note({"operation": "parallel_branch_completed", **diag})
+                        status, error = _classify_vault_result(result, strategy=vault_strategy)
+                        vault_section = _vault_branch_payload(
+                            result, status=status, error=error, strategy=vault_strategy,
+                        )
+                        if vault_strategy == "fast":
+                            # Fast path is index lookup; total branch time ≈ index time.
+                            timings["vault_index_ms"] = timings["vault_ms"]
+                        match_count = _vault_source_count(vault_section)
+                        if status == "approval_required":
+                            approval_bubble = result
+                        diag = {
+                            "branch": "vault",
+                            "status": status,
+                            "duration_ms": timings["vault_ms"],
+                            "vault_strategy": vault_strategy,
+                            "vault_index_ms": timings.get("vault_index_ms") or None,
+                            "match_count": match_count,
+                            "source_count": match_count,
+                            "failure_kind": vault_section.get("failure_kind"),
+                        }
+                        if status in {"failed", "denied", "timeout", "cancelled", "approval_required"}:
+                            unresolved.append(error or f"Vault branch {status}")
+                            await note({"operation": "parallel_branch_failed", **diag})
+                        else:
+                            await note({"operation": "parallel_branch_completed", **diag})
 
         if mode in {"web", "both"} and web_section is None:
             web_section = {"status": "failed", "results": [], "error": "Web branch did not run", "failure_kind": "backend_failure"}

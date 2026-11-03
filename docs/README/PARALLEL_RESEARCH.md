@@ -43,11 +43,17 @@ remain registered.
 ## Authorization
 
 - Parent admission uses mode-dependent effects (`BROKERED_NETWORK_READ` / `READ_WORKSPACE`).
-- Each enabled child is checked with `RequestAuthority.permits` **before** work starts.
+- Each enabled child is checked with `RequestAuthority.permits` (after the same
+  policy/disabled-tool restrict as `execute_tool_block`) **before** work starts.
 - Fast checks `vault_knowledge_search`; deep checks `dispatch_dottie`. Neither
   inherits the other tool’s permission.
 - Children execute only through `execute_tool_block` (same policy, resource binding, accounting).
 - A compound call cannot authorize an individually unauthorized child.
+- Compact/conversational turns often discover only `research_parallel`. The
+  coordinator temporarily promotes already-inventoried, authority-permitted
+  children into the request-local catalog selection for nested dispatch only.
+  That derived turn scope never invents tools, never mints grants, and never
+  bypasses approval. Children absent from the turn catalog stay denied.
 - Approval/resumption bubbles `approval_required` without fake success. Completed sibling evidence is sealed for the exact parent operation + request id; resume reuses it and executes only the pending child (exact scope), so siblings are not re-run or duplicated.
 
 ## Dottie / endpoint contention
@@ -104,5 +110,6 @@ counts without logging vault text.
 ## Tests / benchmark
 
 - `tests/test_research_parallel.py` — fast/deep routing, overlap, partial/failure, auth, approval, truncation, discovery, cancel, budgets, empty vault, diagnostics, recursion, sequential deep fallback, concurrent fast-with-shared-endpoint.
+- `tests/test_research_parallel_turn_authority.py` — real turn-contract/authority path: both-mode with individually authorized children, web-only, vault-only, neither, explicit web deny, child missing from catalog, approval resume without sibling re-run.
 - `tests/benchmark_research_parallel.py` — synthetic fake-backend wall-clock comparison only.
 - `tests/live_research_parallel_fast_benchmark.py` — bounded live chat API fast-path latency check.

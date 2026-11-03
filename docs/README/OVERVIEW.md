@@ -27,6 +27,6 @@ See `docs/README/WEB_VISIT_LEDGER.md`, `docs/README/CHAT_RESEARCH_BUDGET.md`, `d
 
 ## Parallel web + vault research (2026-11-03)
 
-`research_parallel` concurrently runs authorized `web_search` plus a vault branch. Default `vault_strategy=fast` uses indexed `vault_knowledge_search` (candidate matches, no Dottie LLM). `vault_strategy=deep` keeps bounded `dispatch_dottie` verified research. Direct tools remain available. Chat and agent modes can reach both `dispatch_dottie` and `research_parallel` when workspace/vault scope is present. Deep mode falls back to sequential execution when research shares the foreground endpoint; fast mode does not.
+`research_parallel` concurrently runs authorized `web_search` plus a vault branch. Default `vault_strategy=fast` uses indexed `vault_knowledge_search` (candidate matches, no Dottie LLM). `vault_strategy=deep` keeps bounded `dispatch_dottie` verified research. Direct tools remain available. When only the parent is discovery-selected, nested children still require individual request-authority grants and are temporarily turn-selected only if already in the request catalog inventory. Chat and agent modes can reach both `dispatch_dottie` and `research_parallel` when workspace/vault scope is present. Deep mode falls back to sequential execution when research shares the foreground endpoint; fast mode does not.
 
 See `docs/README/PARALLEL_RESEARCH.md`.
