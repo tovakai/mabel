@@ -182,7 +182,7 @@ def test_reconciliation_recovers_scrub_lost_after_canonical_session_delete(sampl
         conn.execute(text("INSERT INTO sessions VALUES('chat-2','alice')"))
     with Session(engine) as db:
         result = reconcile_missing_sessions(queue, db=db)
-    assert result == {"checked_sessions": 2, "deleted_sessions": 1, "scrubbed": 2}
+    assert result == {"checked_sessions": 2, "deleted_sessions": 1, "scrubbed": 2, "next_after_session_id": None}
     assert queue.get(one["id"]) is None
     assert queue.get(two["id"]) is None
     assert queue.get(other["id"]) is not None
@@ -269,3 +269,25 @@ def test_pilot_deletion_before_first_capture_persists_tombstone(tmp_path, monkey
             origin="completed_persisted_turn",
             summary="An out-of-order synthetic reply after source deletion",
         ), policy=policy)
+
+
+def test_reconciliation_cursor_reaches_later_sessions(sample, tmp_path):
+    storage, queue, policy, one, two, other, *_ = sample
+    engine = create_engine(f"sqlite:///{tmp_path / 'cursor.sqlite'}")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE sessions(id TEXT PRIMARY KEY, owner TEXT)"))
+    with Session(engine) as db:
+        first = reconcile_missing_sessions(queue, db=db, limit=1)
+        assert first["checked_sessions"] == 1
+        assert first["deleted_sessions"] == 1
+        assert first["next_after_session_id"] == "chat-1"
+        second = reconcile_missing_sessions(
+            queue, db=db, limit=1,
+            after_session_id=first["next_after_session_id"],
+        )
+        assert second["checked_sessions"] == 1
+        assert second["deleted_sessions"] == 1
+        assert second["next_after_session_id"] is None
+    assert queue.get(one["id"]) is None
+    assert queue.get(other["id"]) is None
+    engine.dispose()
