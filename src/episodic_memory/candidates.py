@@ -26,7 +26,7 @@ KINDS = frozenset({"experience", "decision", "mistake", "discovery", "open_quest
 SOURCE_KINDS = frozenset({"conversation", "tool_observation", "ledger_event", "user_seeded"})
 STATES = frozenset({"pending", "deferred", "promoting", "promoted", "rejected", "quarantined", "merged"})
 DECISIONS = frozenset({"deferred", "rejected", "quarantined"})
-_VERSION = 2
+_VERSION = 3
 
 
 class CandidateAdmissionError(ValueError):
@@ -137,7 +137,7 @@ class CandidateQueue:
     def _initialize(self) -> None:
         with self._connect() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, _VERSION):
+            if version not in (0, 1, 2, _VERSION):
                 raise CandidateAdmissionError("Unknown episodic candidate DB schema; do not migrate automatically")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS candidates(
@@ -185,6 +185,24 @@ class CandidateQueue:
                 CREATE INDEX IF NOT EXISTS candidate_reviews_lookup
                     ON candidate_reviews(owner,candidate_id,created_at);
             """)
+            # Privacy tombstones prevent a deleted conversation being re-captured,
+            # including after the canonical session row has disappeared.
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS deleted_sessions(
+                    owner TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    deleted_at TEXT NOT NULL,
+                    PRIMARY KEY(owner,session_id)
+                );
+                CREATE TABLE IF NOT EXISTS episode_deletion_queue(
+                    owner TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL,
+                    expected_digest TEXT NOT NULL,
+                    queued_at TEXT NOT NULL,
+                    PRIMARY KEY(owner,candidate_id)
+                );
+            """)
             db.execute(f"PRAGMA user_version={_VERSION}")
         try:
             os.chmod(self.path, 0o600)
@@ -210,6 +228,17 @@ class CandidateQueue:
             separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if draft.source_kind == "conversation":
+                # Source refs are exact opaque chat receipts, not free text.
+                match = re.fullmatch(
+                    r"chat:([A-Za-z0-9_.:-]{1,128}):message:[A-Za-z0-9_.:-]{1,128}",
+                    draft.source_ref,
+                )
+                if match and db.execute(
+                    "SELECT 1 FROM deleted_sessions WHERE owner=? AND session_id=?",
+                    (self.owner, match.group(1)),
+                ).fetchone():
+                    raise CandidateAdmissionError("Source session was deleted; recapture forbidden")
             existing = db.execute(
                 "SELECT * FROM candidates WHERE owner=? AND dedup_key=?",
                 (self.owner, key)).fetchone()

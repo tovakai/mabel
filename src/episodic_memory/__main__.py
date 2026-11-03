@@ -30,6 +30,21 @@ def main() -> int:
         default="pending",
     )
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
+    sub.add_parser("retention-status", help="Show deletion-tombstone and pending-note counts")
+    reconcile = sub.add_parser(
+        "reconcile-deletions",
+        help="Explicitly scrub candidates whose canonical sessions are missing",
+    )
+    reconcile.add_argument("--confirm-scrub", action="store_true")
+    reconcile.add_argument("--after-session-id")
+    cleanup = sub.add_parser(
+        "cleanup-deleted-episodes",
+        help="Explicitly remove only verified, owner-scoped episode files",
+    )
+    cleanup.add_argument("--vault-root", type=Path, required=True)
+    cleanup.add_argument("--protected-root", type=Path, action="append", required=True)
+    cleanup.add_argument("--confirm-remove-files", action="store_true")
+    cleanup.add_argument("--session-id")
     reviewer = sub.add_parser(
         "review", help="One explicitly consented Dottie inference; advice only",
     )
@@ -51,6 +66,35 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "retention-status":
+        with queue._connect() as db:
+            tombstones = db.execute(
+                "SELECT count(*) FROM deleted_sessions WHERE owner=?", (queue.owner,),
+            ).fetchone()[0]
+            pending = db.execute(
+                "SELECT count(*) FROM episode_deletion_queue WHERE owner=?", (queue.owner,),
+            ).fetchone()[0]
+        output = {"owner": queue.owner, "deleted_sessions": tombstones,
+                  "pending_episode_files": pending}
+    elif args.command == "reconcile-deletions":
+        if not args.confirm_scrub:
+            parser.error("reconcile-deletions requires --confirm-scrub")
+        from core.database import SessionLocal
+        from .retention import reconcile_missing_sessions
+        with SessionLocal() as db:
+            output = reconcile_missing_sessions(
+                queue, db=db, limit=args.limit,
+                after_session_id=args.after_session_id,
+            )
+    elif args.command == "cleanup-deleted-episodes":
+        if not args.confirm_remove_files:
+            parser.error("cleanup-deleted-episodes requires --confirm-remove-files")
+        from .retention import complete_episode_deletions
+        output = complete_episode_deletions(
+            queue, vault_root=args.vault_root,
+            protected_roots=tuple(args.protected_root),
+            session_id=args.session_id, limit=args.limit,
+        )
     elif args.command == "review":
         if not args.send_source_to_dottie:
             parser.error("review requires --send-source-to-dottie")
