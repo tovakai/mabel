@@ -221,6 +221,8 @@ class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
         model_context._catalog_ctx_cache.clear()
+        model_context._provider_context_overrides.clear()
+        model_context._runtime_served_models.clear()
 
     def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
         calls = []
@@ -326,15 +328,119 @@ class TestGetContextLength:
     def test_configured_proxy_known_model_skips_model_listing(self, monkeypatch):
         # A model covered by the known-context table must still resolve without
         # touching /models — the cheap path the proxy short-circuit exists for.
+        # A Tailscale proxy may receive one trusted-host /health probe; only a
+        # loaded Strata payload is authoritative, so non-Strata health falls
+        # through to the known table without catalog download.
         self._proxy_db(monkeypatch)
+        fetches = []
 
-        def fake_get(*args, **kwargs):
+        def fake_get(url, *args, **kwargs):
+            fetches.append(url)
+            if str(url).endswith("/health"):
+                return _FakeResp({"status": "ok"}, ok=True)
             raise AssertionError("/models must not be queried for a known proxy model")
 
         monkeypatch.setattr(model_context.httpx, "get", fake_get)
 
         endpoint = "http://100.117.136.97:34521/v1/chat/completions"
         assert model_context.get_context_length(endpoint, "gpt-4o") == 128000
+        assert all(str(url).endswith("/health") for url in fetches)
+
+    def test_proxy_classified_local_strata_uses_health_over_known_table(self, monkeypatch):
+        # Localhost Strata with an API key is often stored as endpoint_kind=proxy.
+        # That must not skip /health or budget the generic Qwen 131072 card.
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="http://127.0.0.1:8080/v1",
+                endpoint_kind="proxy",
+                api_key="sk-strata-test",
+                is_enabled=True,
+            )
+        ])
+        assert model_context.is_local_endpoint(
+            "http://127.0.0.1:8080/v1/chat/completions"
+        ) is False
+        assert model_context._trusted_local_host(
+            "http://127.0.0.1:8080/v1/chat/completions"
+        ) is True
+
+        health_calls = []
+
+        def fake_get(url, *args, **kwargs):
+            health_calls.append(url)
+            if url == "http://127.0.0.1:8080/health":
+                return _FakeResp({
+                    "status": "ok",
+                    "service": "strata",
+                    "loaded": True,
+                    "model": "qwen3.8-flash-next-gyro-gyro-s",
+                    "max_context": 32768,
+                })
+            raise AssertionError(f"unexpected probe: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+        requested = "qwen3.8-flash-next-gyro-gyro-m"
+        assert model_context._lookup_known(requested) == 131072
+        assert model_context.get_context_length(endpoint, requested) == 32768
+        assert health_calls == ["http://127.0.0.1:8080/health"]
+        assert model_context.runtime_served_model(endpoint) == (
+            "qwen3.8-flash-next-gyro-gyro-s"
+        )
+        # Preference string is not rewritten; telemetry exposes the served id.
+        assert requested != model_context.runtime_served_model(endpoint)
+
+    def test_proxy_classified_local_strata_reload_raises_ceiling(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="http://127.0.0.1:8080/v1",
+                endpoint_kind="proxy",
+                api_key="sk-strata-test",
+                is_enabled=True,
+            )
+        ])
+        payloads = [
+            {
+                "service": "strata",
+                "loaded": True,
+                "model": "qwen3.8-flash-next-gyro-gyro-s",
+                "max_context": 32768,
+            },
+            {
+                "service": "strata",
+                "loaded": True,
+                "model": "qwen3.8-flash-next-gyro-gyro-s",
+                "max_context": 65536,
+            },
+        ]
+
+        def fake_get(url, *args, **kwargs):
+            assert url.endswith("/health")
+            return _FakeResp(payloads.pop(0))
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+        model = "qwen3.8-flash-next-gyro-gyro-m"
+        assert model_context.get_context_length(endpoint, model) == 32768
+        assert model_context.get_context_length(endpoint, model) == 65536
+
+    def test_remote_proxy_health_is_never_probed(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="https://openrouter.ai/api/v1",
+                endpoint_kind="proxy",
+                api_key="fake",
+                is_enabled=True,
+            )
+        ])
+
+        def fake_get(url, *args, **kwargs):
+            raise AssertionError(f"remote proxy must not be health-probed: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "https://openrouter.ai/api/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "gpt-4o") == 128000
+        assert model_context.runtime_served_model(endpoint) == ""
 
     def test_configured_proxy_unknown_model_reads_catalog_context(self, monkeypatch):
         # A model missing from the known table (e.g. a new OpenRouter model)
@@ -345,6 +451,8 @@ class TestGetContextLength:
 
         def fake_get(url, *args, **kwargs):
             fetches.append(url)
+            if str(url).endswith("/health"):
+                return _FakeResp({"status": "ok"})
             return _FakeResp({"data": [
                 {"id": "owl-alpha", "context_length": 1048576},
                 {"id": "tiny-proxy-model", "context_length": 8192},
@@ -356,7 +464,8 @@ class TestGetContextLength:
         assert model_context.get_context_length(endpoint, "owl-alpha") == 1048576
         # A second unknown model on the same endpoint reuses the cached catalog.
         assert model_context.get_context_length(endpoint, "tiny-proxy-model") == 8192
-        assert len(fetches) == 1
+        catalog_fetches = [url for url in fetches if not str(url).endswith("/health")]
+        assert len(catalog_fetches) == 1
 
     def test_configured_proxy_unknown_model_falls_back_to_default(self, monkeypatch):
         # If the catalog can be read but doesn't list the model, keep the
@@ -364,6 +473,8 @@ class TestGetContextLength:
         self._proxy_db(monkeypatch)
 
         def fake_get(url, *args, **kwargs):
+            if str(url).endswith("/health"):
+                return _FakeResp({"status": "ok"})
             return _FakeResp({"data": [{"id": "some-other-model", "context_length": 4096}]})
 
         monkeypatch.setattr(model_context.httpx, "get", fake_get)
@@ -376,6 +487,8 @@ class TestGetContextLength:
         self._proxy_db(monkeypatch)
 
         def fake_get(url, *args, **kwargs):
+            if str(url).endswith("/health"):
+                return _FakeResp({"status": "ok"})
             raise RuntimeError("network down")
 
         monkeypatch.setattr(model_context.httpx, "get", fake_get)

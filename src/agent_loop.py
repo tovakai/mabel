@@ -43,6 +43,7 @@ from src.model_context import (
     estimate_tokens,
     is_local_endpoint,
     remember_provider_context_limit,
+    runtime_served_model,
 )
 from src.agent_runtime.chat_research_budget import ChatResearchBudget
 from src.agent_runtime.context_recovery import (
@@ -24818,14 +24819,30 @@ async def _stream_agent_loop_impl(
 
     run_security.observe_messages(_initial_route_request_messages)
     agent_prompt_tokens = estimate_tokens(_initial_route_request_messages)
+    _served_runtime_model = runtime_served_model(endpoint_url)
     logger.info(
-        "[agent-timing] prep_done model=%s prompt_tokens=%s context_length=%s prep=%s",
+        "[agent-timing] prep_done model=%s served_model=%s prompt_tokens=%s context_length=%s prep=%s",
         model,
+        _served_runtime_model or model,
         agent_prompt_tokens,
         context_length,
         {k: round(v, 3) for k, v in prep_timings.items()},
     )
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
+    # Telemetry only: surface Strata's active served id when it differs from the
+    # requested preference. Do not rewrite session.model or endpoint catalogs.
+    if (
+        _served_runtime_model
+        and _served_runtime_model != model
+        and diagnostic_events
+    ):
+        yield 'data: ' + json.dumps({
+            'type': 'model_actual',
+            'requested_model': model,
+            'model': _served_runtime_model,
+            'source': 'strata_health',
+            'context_limit': _initial_route_context_length or context_length,
+        }) + '\n\n'
 
     full_response = ""
     _preemptive_calendar_final_emitted = False

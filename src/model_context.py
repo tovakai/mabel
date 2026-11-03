@@ -87,6 +87,22 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
         return None
 
 
+def _trusted_local_host(url: str) -> bool:
+    """Host-only trust check; ignores configured endpoint_kind.
+
+    Used to allow authoritative local runtime probes (Strata /health) for a
+    localhost/private/Tailscale Strata that an admin marked ``proxy`` because it
+    requires an API key. Never treats public remote hosts as trusted.
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
+
+
 def is_local_endpoint(url: str) -> bool:
     """Check if URL points to a local/private/tailscale address."""
     kind = _configured_endpoint_kind(url)
@@ -94,11 +110,7 @@ def is_local_endpoint(url: str) -> bool:
         return False
     if kind == "local":
         return True
-    try:
-        host = urlparse(url).hostname or ""
-        return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
-    except Exception:
-        return False
+    return _trusted_local_host(url)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -247,6 +259,10 @@ _context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
 # Authoritative local runtime probes (Strata /health, llama.cpp /slots|/props)
 # reconcile the override in either direction after a reload.
 _provider_context_overrides: Dict[Tuple[str, str], int] = {}
+# Served model id last observed on a trusted local Strata /health probe, keyed
+# by endpoint_url. Telemetry/budget may report this without rewriting the
+# caller's requested model preference or cached catalog entries.
+_runtime_served_models: Dict[str, str] = {}
 
 
 def remember_provider_context_limit(endpoint_url: str, model: str, limit: int) -> int:
@@ -285,6 +301,32 @@ def remembered_provider_context_limit(endpoint_url: str, model: str) -> int:
         return 0
 
 
+def runtime_served_model(endpoint_url: str) -> str:
+    """Return the last Strata-reported served model for ``endpoint_url``, or ``\"\"``."""
+    return str(_runtime_served_models.get(endpoint_url) or "")
+
+
+def remember_runtime_served_model(endpoint_url: str, served_model: str) -> str:
+    """Record a served model id from an authoritative local Strata probe.
+
+    Does not rewrite session preferences or endpoint cached_models catalogs.
+    Returns the stored served model (empty when unusable).
+    """
+    name = str(served_model or "").strip()
+    if not name or not endpoint_url:
+        return ""
+    previous = _runtime_served_models.get(endpoint_url)
+    _runtime_served_models[endpoint_url] = name
+    if previous and previous != name:
+        logger.info(
+            "Strata served model for %s changed: %s -> %s",
+            endpoint_url,
+            previous,
+            name,
+        )
+    return name
+
+
 def reconcile_local_runtime_context(endpoint_url: str, model: str, runtime_limit: int) -> int:
     """Adopt an authoritative local serving window after Strata/llama.cpp probe.
 
@@ -320,13 +362,17 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = is_local_endpoint(endpoint_url)
+    # Trusted local hosts (including a localhost Strata marked ``proxy`` for its
+    # API key) must re-probe runtime health so a reload cannot stick to a stale
+    # known-table or rejection ceiling.
+    runtime_reprobe = is_local or _trusted_local_host(endpoint_url)
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
     remembered = _provider_context_overrides.get(cache_key)
-    if not is_local and cache_key in _context_cache:
+    if not runtime_reprobe and cache_key in _context_cache:
         cached_ctx, cached_known = _context_cache[cache_key]
         if remembered and remembered < cached_ctx:
             return remembered, True
@@ -340,9 +386,9 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     if remembered and (not known or remembered < ctx):
         ctx, known = remembered, True
     # Only cache non-default values to allow retry on next request.
-    # Local endpoints can restart with a different --max-model-len while keeping
-    # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    # Local / trusted-local runtimes can restart with a different window while
+    # keeping the same model id, so always re-query them instead of caching.
+    if not runtime_reprobe and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
         _context_cache[cache_key] = (ctx, known)
     logger.info(f"Context length for {model}: {ctx}")
     return ctx, known
@@ -480,12 +526,72 @@ def _proxy_catalog_context(endpoint_url: str, model: str) -> Optional[int]:
     return None
 
 
+def _probe_trusted_strata_runtime(
+    endpoint_url: str,
+) -> Optional[Tuple[int, Optional[str]]]:
+    """Return ``(max_context, served_model)`` from a trusted local Strata /health.
+
+    Requires a localhost/private/Tailscale host and a positively identified,
+    loaded Strata payload (``service=strata``, ``loaded=true``). Does not probe
+    public remote proxies and does not trust unrelated ``/health`` JSON.
+    """
+    if not _trusted_local_host(endpoint_url):
+        return None
+    base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rstrip("/")
+    try:
+        r = httpx.get(f"{base}/health", timeout=REQUEST_TIMEOUT)
+        if not r.is_success:
+            return None
+        health = r.json()
+    except Exception:
+        logger.debug("Strata /health context probe failed for %s", endpoint_url, exc_info=True)
+        return None
+    if not (
+        isinstance(health, dict)
+        and health.get("service") == "strata"
+        and health.get("loaded") is True
+    ):
+        return None
+    active = health.get("max_context")
+    if not (isinstance(active, int) and not isinstance(active, bool) and active > 0):
+        return None
+    served = health.get("model")
+    served_name = str(served).strip() if isinstance(served, str) else None
+    return active, served_name or None
+
+
 def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     """Query the model API for context length. Returns (context_length, known) where
     ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    # Authoritative local Strata /health wins over proxy classification and the
+    # generic Qwen known-table window. Probe only trusted local hosts.
+    strata = _probe_trusted_strata_runtime(endpoint_url)
+    if strata is not None:
+        active, served_model = strata
+        logger.info(
+            "Strata /health reports active max_context=%s served_model=%s (requested=%s)",
+            active,
+            served_model or "(unreported)",
+            model,
+        )
+        reconcile_local_runtime_context(endpoint_url, model, active)
+        if served_model:
+            remember_runtime_served_model(endpoint_url, served_model)
+            if served_model != model:
+                # Keep the served id's ceiling aligned for later lookups without
+                # rewriting the caller's requested preference string.
+                reconcile_local_runtime_context(endpoint_url, served_model, active)
+                logger.info(
+                    "Strata serving %s while request asked for %s; budgeting uses active max_context=%s",
+                    served_model,
+                    model,
+                    active,
+                )
+        return active, True
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
@@ -504,31 +610,8 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
             return api_ctx, True
         return DEFAULT_CONTEXT, False
 
-    # Strata exposes the active slot on /health, not llama.cpp's /slots or
-    # /props. The GGUF/model-card context may be 128K while the loaded server
-    # has been configured for just 32K. Only trust this field for a positively
-    # identified, loaded Strata instance, not an arbitrary health endpoint.
-    if is_local_endpoint(endpoint_url):
-        base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rstrip("/")
-        try:
-            r = httpx.get(f"{base}/health", timeout=REQUEST_TIMEOUT)
-            if r.is_success:
-                health = r.json()
-                if (
-                    isinstance(health, dict)
-                    and health.get("service") == "strata"
-                    and health.get("loaded") is True
-                ):
-                    active = health.get("max_context")
-                    if isinstance(active, int) and not isinstance(active, bool) and active > 0:
-                        logger.info("Strata /health reports active max_context=%s for %s", active, model)
-                        reconcile_local_runtime_context(endpoint_url, model, active)
-                        return active, True
-        except Exception:
-            logger.debug("Strata /health context probe failed for %s", endpoint_url, exc_info=True)
-
     # Try llama.cpp /slots endpoint first — reports actual serving context
-    if is_local_endpoint(endpoint_url):
+    if is_local_endpoint(endpoint_url) or _trusted_local_host(endpoint_url):
         base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
         try:
             r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
