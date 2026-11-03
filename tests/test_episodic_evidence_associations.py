@@ -286,3 +286,34 @@ def test_symlinked_episode_note_and_bucket_are_rejected(graph):
     owner_dir.symlink_to(protected,target_is_directory=True)
     with pytest.raises(CandidateAdmissionError,match="Symlinked"):
         related(seed)
+
+
+def test_edge_budget_does_not_return_orphaned_nodes(graph):
+    engine,state,queue,policy,vault,protected,stage,promote,related,populate = graph
+    seed,lexical,same,second_hop,unrelated=populate()
+    result=related(seed,max_nodes=30,max_edges=1)
+    assert len(result["edges"]) == 1
+    assert len(result["nodes"]) == 2
+    assert result["truncated"]
+    ids=_ids(result)
+    assert ids=={result["edges"][0]["source_id"],result["edges"][0]["target_id"]}
+
+
+def test_conversation_boilerplate_alone_does_not_create_cross_session_edges(graph):
+    engine,state,queue,policy,vault,protected,stage,promote,related,populate = graph
+    seed=stage(
+        "chat-a",
+        "Mabel discussed the conversation and source note with the user today.",
+        "The assistant explained that the source of the note is the conversation.",
+    )
+    other=stage(
+        "chat-b",
+        "The user discussed a different episode and source in another conversation.",
+        "Mabel confirmed that the message and reply are present in the source note.",
+    )
+    promote(seed)
+    promote(other)
+    result=related(seed)
+    assert result["edges"] == []
+    assert len(result["nodes"]) == 1
+    assert result["omitted_unconnected"] == 1
