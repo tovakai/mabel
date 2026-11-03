@@ -252,6 +252,23 @@ def _allow_visual_tool_evidence_for_model(model: str) -> bool:
     return is_odysseus_merged_tools_model(model) or not _is_qwen38_tool_router(model)
 
 
+_MUTATION_TOOL_NAMES = frozenset({"edit_file", "write_file", "apply_patch", "vault_batch_edit"})
+_MAX_MALFORMED_MUTATION_RETRIES = 2
+
+
+def _malformed_mutation_retry_instruction(names: Set[str]) -> str:
+    """Recovery after a file edit call was dropped as incomplete/malformed."""
+    tools = ", ".join(sorted(names))
+    return (
+        f"Your previous {tools} call was incomplete (cut off before its arguments "
+        "were complete), so NOTHING was written. Do not say the change was made. "
+        "Retry with smaller steps: one file per call, a short unique old_string, "
+        "and the new text only for the part you are changing. Split large "
+        "additions into several edit_file calls. Do not re-read sources you "
+        "already have; make the edit now."
+    )
+
+
 def _malformed_native_tool_recovery_instruction(names: Set[str]) -> str:
     """Return targeted, schema-level recovery for dropped native calls."""
 
@@ -25119,6 +25136,7 @@ async def _stream_agent_loop_impl(
     _artifact_followthrough_media_inspections = 0
     _artifact_body_handoff_attempts = 0
     _malformed_write_body_handoff_attempts = 0
+    _malformed_mutation_retry_attempts = 0
     _artifact_observation_rounds = 0
     _artifact_source_recovery_cycles = 0
     _artifact_no_action_rounds = 0
@@ -26762,15 +26780,18 @@ async def _stream_agent_loop_impl(
                 round_num=round_num, pure_web_turn=_pure_web_turn,
                 has_tools=bool(candidate_tools or state.get("relevant_tools")),
             )
-            from src.generation_budget import (fit_output_token_budget,
+            from src.generation_budget import (fit_output_token_budget, agent_output_reserve,
                 estimate_tool_schema_tokens,estimate_multimodal_image_tokens,context_safety_margin)
             if state["context_length"] > 0:
                 from src.context_compactor import trim_for_context
                 request_messages = trim_for_context(request_messages,
                     max(1,state["context_length"]-estimate_tool_schema_tokens(candidate_tools)
                         -estimate_multimodal_image_tokens(request_messages)),
-                    reserve_tokens=min(max(_route_web_max_tokens or 1024,512),2048)
-                        +context_safety_margin(state["context_length"]))
+                    reserve_tokens=agent_output_reserve(
+                        _route_web_max_tokens, state["context_length"],
+                        thinking_mode=_route_web_thinking,
+                        tool_names={(t.get("function") or {}).get("name") for t in (candidate_tools or [])},
+                    ) + context_safety_margin(state["context_length"]))
                 state["request_messages"] = request_messages
                 _last_route_request_messages = request_messages
             # Record the actual post-trim provider-bound messages. These
@@ -28370,6 +28391,29 @@ async def _stream_agent_loop_impl(
             _resolution_audit["requested_not_accepted"]
         )
         yield f'data: {json.dumps(_resolution_audit)}\n\n'
+        _malformed_mutations = _malformed_native_tool_names & _MUTATION_TOOL_NAMES
+        if (
+            _malformed_mutations
+            and not tool_blocks
+            and not _force_answer
+            and _malformed_mutation_retry_attempts < _MAX_MALFORMED_MUTATION_RETRIES
+            and (_round_limit is None or round_num < _round_limit)
+        ):
+            # Every tool call this round was a file edit that could not be
+            # parsed (typically cut off by the context window mid-argument).
+            # Nothing was written: do not let the round's text ("making the
+            # edits now") end the turn as if it had been.
+            _malformed_mutation_retry_attempts += 1
+            logger.warning(
+                "[agent] malformed mutation call(s) %s dropped in round %s; retry %s",
+                sorted(_malformed_mutations), round_num, _malformed_mutation_retry_attempts,
+            )
+            messages.append({
+                "role": "system",
+                "content": _malformed_mutation_retry_instruction(_malformed_mutations),
+            })
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
         if _unoffered_web_search_should_synthesize(
             _resolution_audit["requested_not_accepted"],
             accepted_tools=_accepted_tool_names,

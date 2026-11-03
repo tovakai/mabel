@@ -93,6 +93,6 @@ def test_offline_start_uses_pinned_preset_without_shell(monkeypatch):
     client = _client(monkeypatch)
     assert client.post("/api/strata/start").json()["state"] == "starting"
     argv, options = calls[0]
-    assert argv == ["/fake/strata", "launch", "--preset", "gyro-s-32k", "--no-tui", "--yes"]
+    assert argv == ["/fake/strata", "launch", "--preset", "gyro-s-64k", "--no-tui", "--yes"]
     assert options["start_new_session"] is True
     assert "shell" not in options

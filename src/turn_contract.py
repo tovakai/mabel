@@ -4963,19 +4963,24 @@ VAULT_NOTE_REWRITE_TOOLS = frozenset({
 })
 
 
+# Editing an existing note: rewrite/fix plus correcting and expanding content.
+_NOTE_EDIT_VERB_RE = re.compile(
+    r"\b(?:rewrite|rework|revise|overhaul|redraft|edit|update|fix|correct|"
+    r"pad(?:\s+(?:out|it|them))?|expand|flesh\s+out|extend|enrich|improve|polish|"
+    r"fill\s+(?:in|out)|clean\s+up|tidy(?:\s+up)?)\b",
+    re.I,
+)
+
+
 def looks_like_vault_note_rewrite(message: str) -> bool:
     """Rewrite/edit one vault markdown note (genre page, etc.)."""
     value = str(message or "")
     if not value.strip():
         return False
-    if not re.search(
-        r"\b(?:rewrite|rework|revise|overhaul|redraft|edit|update|fix)\b",
-        value,
-        re.I,
-    ):
+    if not _NOTE_EDIT_VERB_RE.search(value):
         return False
     if not re.search(
-        r"\b(?:note|page|markdown|\.md\b|genre(?:\s+page)?|vault|obsidian|"
+        r"\b(?:notes?|pages?|markdown|\.md\b|genre(?:\s+page)?|vault|obsidian|"
         r"wikilink|frontmatter)\b",
         value,
         re.I,
@@ -5008,7 +5013,8 @@ _VAULT_KNOWLEDGE_RE = re.compile(
 # sealed single-note vault rewrite handled by looks_like_vault_note_rewrite).
 _NOTE_MUTATION_RE = re.compile(
     r"\b(?:add|create|make|write|save|jot|take\s+(?:a\s+)?note|new|append|delete|remove|rename|"
-    r"edit|update|rewrite|move|archive|pin)\b",
+    r"edit|update|rewrite|move|archive|pin|correct|fix|pad|expand|flesh\s+out|extend|enrich|"
+    r"improve|polish|fill\s+(?:in|out)|clean\s+up|tidy)\b",
     re.I,
 )
 _VAULT_WEB_CUE_RE = re.compile(

@@ -2,7 +2,7 @@
 
 The HTTP API stays alive while a model is suspended, so resume can use
 POST /v1/load instead of needlessly restarting the server.  A fully stopped
-server is launched with the user's saved gyro-s-32k Strata preset.
+server is launched with the user's saved Strata preset (``PRESET``).
 """
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 STRATA_URL = "http://127.0.0.1:8080"
 EXPECTED_MODEL = "qwen3.8-flash-next-gyro-gyro-s"
-PRESET = "gyro-s-32k"
+# The saved Strata preset Mabel's start button launches (64k context since
+# 2026-11-03; set MABEL_STRATA_PRESET=gyro-s-32k to go back).
+PRESET = os.getenv("MABEL_STRATA_PRESET", "gyro-s-64k").strip() or "gyro-s-64k"
 STARTUP_GRACE_SECONDS = 120
 _launch_lock = asyncio.Lock()
 _launch_process: subprocess.Popen | None = None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from src.model_context import estimate_tokens
 
@@ -121,6 +121,40 @@ def estimate_request_tokens(messages: List[Dict], tools: Optional[List[Dict]] = 
         + estimate_multimodal_image_tokens(messages)
         + estimate_tool_schema_tokens(tools)
     )
+
+
+_WRITE_TOOL_NAMES = frozenset({
+    "edit_file", "write_file", "apply_patch", "vault_batch_edit",
+    "create_document", "update_document", "edit_document",
+})
+
+
+def agent_output_reserve(
+    requested_max_tokens: Optional[int],
+    context_length: int,
+    *,
+    thinking_mode: Optional[str] = None,
+    tool_names: Optional[Set[str]] = None,
+) -> int:
+    """Output room to keep free when trimming an agent request.
+
+    Answer-sized replies need ~1-2k tokens. A reasoning model that may emit a
+    large file edit needs room for its reasoning plus the whole tool call;
+    otherwise generation hits the context window mid-call and the edit is
+    silently lost. Keep 15% of the window (capped at 8k) in that case.
+    """
+    try:
+        requested = int(requested_max_tokens or 0)
+        context = int(context_length or 0)
+    except (TypeError, ValueError):
+        requested, context = 0, 0
+    base = min(max(requested or 1024, 512), 2048)
+    if context <= 0:
+        return base
+    writes = bool(set(tool_names or ()) & _WRITE_TOOL_NAMES)
+    if str(thinking_mode or "").strip().lower() == "off" and not writes:
+        return base
+    return max(base, min(8192, int(context * 0.15)))
 
 
 def fit_output_token_budget(
