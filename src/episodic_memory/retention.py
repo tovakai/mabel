@@ -44,6 +44,46 @@ def _queue_if_present(storage_dir: str | Path, owner: str) -> CandidateQueue | N
     return CandidateQueue(directory, owner=key)
 
 
+def _scrub_one_candidate(db, queue: CandidateQueue, row, session_id: str) -> None:
+    """Remove a candidate and reviewer evidence while retaining note deletion proof."""
+    if row["state"] in ("promoted", "promoting"):
+        digest = row["decision_reason"]
+        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+            digest = ""
+        db.execute(
+            "INSERT OR IGNORE INTO episode_deletion_queue "
+            "(owner,session_id,candidate_id,expected_digest,queued_at) "
+            "VALUES(?,?,?,?,?)",
+            (queue.owner, session_id, row["id"], digest, _now()),
+        )
+    # A duplicate link to an erased source must not remain usable.
+    dependents = db.execute(
+        "SELECT id FROM candidates WHERE owner=? AND merged_into=?",
+        (queue.owner, row["id"]),
+    ).fetchall()
+    for dependent in dependents:
+        db.execute(
+            "DELETE FROM event_outbox WHERE candidate_id=? AND kind='memory.candidate_merged'",
+            (dependent["id"],),
+        )
+        db.execute(
+            "UPDATE candidates SET merged_into=NULL, state='deferred', "
+            "decision_reason='deleted_merge_target', updated_at=? "
+            "WHERE owner=? AND id=?",
+            (_now(), queue.owner, dependent["id"]),
+        )
+    db.execute("DELETE FROM event_outbox WHERE candidate_id=?", (row["id"],))
+    db.execute(
+        "DELETE FROM candidate_reviews WHERE owner=? AND "
+        "(candidate_id=? OR target_candidate_id=?)",
+        (queue.owner, row["id"], row["id"]),
+    )
+    db.execute(
+        "DELETE FROM candidates WHERE owner=? AND id=?",
+        (queue.owner, row["id"]),
+    )
+
+
 def purge_deleted_session(
     storage_dir: str | Path, *, owner: str, session_id: str,
 ) -> dict:
@@ -73,35 +113,7 @@ def purge_deleted_session(
             (queue.owner, len(prefix), prefix),
         ).fetchall()
         for row in rows:
-            if row["state"] in ("promoted", "promoting"):
-                # A stable digest, not the transcript or full file path.
-                digest = row["decision_reason"]
-                if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
-                    digest = ""
-                db.execute(
-                    "INSERT OR IGNORE INTO episode_deletion_queue "
-                    "(owner,session_id,candidate_id,expected_digest,queued_at) "
-                    "VALUES(?,?,?,?,?)",
-                    (queue.owner, session_id, row["id"], digest, _now()),
-                )
-            # Do not publish stale creation/decision events after user deletion.
-            db.execute("DELETE FROM event_outbox WHERE candidate_id=?", (row["id"],))
-            db.execute(
-                "DELETE FROM candidate_reviews WHERE owner=? AND "
-                "(candidate_id=? OR target_candidate_id=?)",
-                (queue.owner, row["id"], row["id"]),
-            )
-            # A separately retained source may have linked to this candidate.
-            db.execute(
-                "UPDATE candidates SET merged_into=NULL, state='deferred', "
-                "decision_reason='deleted_merge_target', updated_at=? "
-                "WHERE owner=? AND merged_into=?",
-                (_now(), queue.owner, row["id"]),
-            )
-            db.execute(
-                "DELETE FROM candidates WHERE owner=? AND id=?",
-                (queue.owner, row["id"]),
-            )
+            _scrub_one_candidate(db, queue, row, session_id)
         pending = db.execute(
             "SELECT count(*) FROM episode_deletion_queue "
             "WHERE owner=? AND session_id=?",
@@ -111,6 +123,83 @@ def purge_deleted_session(
             "scrubbed": len(rows), "pending_episode_files": pending,
             "queue_present": True,
         }
+
+
+_MESSAGE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def invalidate_session_messages(
+    storage_dir: str | Path, *,
+    owner: str,
+    session_id: str,
+    removed_message_ids: tuple[str, ...] | list[str],
+    invalidate_all_session_candidates: bool = False,
+) -> dict:
+    """Invalidate candidate sources after a committed message edit/removal.
+
+    For a tail truncation or single assistant rewrite, pass exact removed/
+    edited message IDs. For wholesale transcript replacement, also set
+    invalidate_all_session_candidates, since the previous user-to-assistant
+    associations no longer exist. The session stays active and *new* message
+    IDs can create future candidates. Unlike whole-session deletion, no
+    deleted_sessions tombstone is created.
+
+    Call this only after the canonical message update commits. Canonical and
+    episodic databases remain independently durable. Run explicit recovery
+    reconciliation after an interrupted cross-database operation.
+    """
+    if not isinstance(session_id, str) or not _SESSION.fullmatch(session_id):
+        raise CandidateAdmissionError("Session ID must be a bounded token")
+    if type(invalidate_all_session_candidates) is not bool:
+        raise CandidateAdmissionError("Invalid invalidation scope")
+    if not isinstance(removed_message_ids, (list, tuple)) or len(removed_message_ids) > 100000:
+        raise CandidateAdmissionError("Message IDs must be a bounded collection")
+    removed_ids: set[str] = set()
+    for mid in removed_message_ids:
+        if not isinstance(mid, str) or not _MESSAGE.fullmatch(mid):
+            raise CandidateAdmissionError("Invalid removed message ID")
+        removed_ids.add(mid)
+    if not removed_ids and not invalidate_all_session_candidates:
+        return {"scrubbed": 0, "invalidated_message_ids": 0, "queue_present": False}
+    queue = _queue_if_present(storage_dir, owner)
+    if queue is None:
+        return {"scrubbed": 0, "invalidated_message_ids": 0, "queue_present": False}
+    prefix = f"chat:{session_id}:message:"
+    with queue._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        rows = db.execute(
+            "SELECT * FROM candidates WHERE owner=? AND source_kind='conversation' "
+            "AND substr(source_ref,1,?)=?",
+            (queue.owner,len(prefix),prefix),
+        ).fetchall()
+        matched = [
+            row for row in rows if (
+                invalidate_all_session_candidates
+                or row["source_ref"][len(prefix):] in removed_ids
+            )
+        ]
+        # A candidate must be impossible to re-create from an edited source,
+        # even if its old record is already absent. No raw transcript is kept.
+        invalidated_ids = removed_ids | {
+            row["source_ref"][len(prefix):] for row in matched
+        }
+        for mid in invalidated_ids:
+            db.execute(
+                "INSERT OR IGNORE INTO invalidated_messages "
+                "(owner,session_id,message_id,invalidated_at) VALUES(?,?,?,?)",
+                (queue.owner,session_id,mid,_now()),
+            )
+        for row in matched:
+            _scrub_one_candidate(db, queue, row, session_id)
+        pending = db.execute(
+            "SELECT count(*) FROM episode_deletion_queue "
+            "WHERE owner=? AND session_id=?",
+            (queue.owner,session_id),
+        ).fetchone()[0]
+    return {
+        "scrubbed": len(matched), "invalidated_message_ids": len(invalidated_ids),
+        "pending_episode_files": pending, "queue_present": True,
+    }
 
 
 def complete_episode_deletions(
