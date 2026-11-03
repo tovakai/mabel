@@ -3435,6 +3435,12 @@ def setup_chat_routes(
         if _use_turn_contract and _turn_capabilities and "search_browser" not in _turn_capabilities:
             _explicit_web_intent = False
         disabled_tools = set()
+        # The installed browser producer cannot bind page actions safely.
+        # Hide it before constructing the immutable turn contract; execution
+        # still denies page operations independently.
+        from src.browser_identity import PAGE_COMMANDS_ENABLED
+        if not PAGE_COMMANDS_ENABLED:
+            disabled_tools.add("private_browser")
         # Minting is admin-only, so every owner-keyed check below answers
         # "admin" for a token. Cap it at the non-admin policy instead.
         # stream_agent_loop repeats this from delegated_credential.
