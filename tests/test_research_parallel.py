@@ -310,8 +310,12 @@ async def test_citations_survive_output_truncation():
 
 
 def test_tool_discovery_and_native_schema():
+    from src.tool_schemas import function_call_to_tool_block
+    from src.tool_types import TOOL_TAGS
+
     names = {s["function"]["name"] for s in FUNCTION_TOOL_SCHEMAS}
     assert "research_parallel" in names
+    assert "research_parallel" in TOOL_TAGS
     schema = next(s for s in FUNCTION_TOOL_SCHEMAS if s["function"]["name"] == "research_parallel")
     props = schema["function"]["parameters"]["properties"]
     assert props["mode"]["enum"] == ["web", "vault", "both"]
@@ -319,6 +323,13 @@ def test_tool_discovery_and_native_schema():
     assert "research_parallel" in WORKSPACE_READ_TOOLS
     assert "research_parallel" in FAMILY_TOOLS["search_browser"]
     assert "dispatch_dottie" in WORKSPACE_READ_TOOLS
+    block = function_call_to_tool_block(
+        "research_parallel",
+        json.dumps({"mode": "vault", "vault_objective": "Curiosity Drive"}),
+    )
+    assert block is not None
+    assert block.tool_type == "research_parallel"
+    assert json.loads(block.content)["mode"] == "vault"
 
 
 @pytest.mark.asyncio
