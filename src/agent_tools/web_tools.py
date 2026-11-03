@@ -610,6 +610,15 @@ class WebFetchTool:
         )
         if len(parts) < 2:
             return None
+        # A comma-delimited query value can itself contain a domain-looking
+        # string. Unless the next token is an explicit URL, do not turn
+        # it into a new outbound request.
+        if any(
+            ("?" in prior or "#" in prior)
+            and not following.lower().startswith(("http://", "https://"))
+            for prior, following in zip(parts, parts[1:])
+        ):
+            return None
         if any(not part or re.search(r"[\s,]", part) for part in parts):
             return None
         if not all(
