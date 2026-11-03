@@ -196,11 +196,6 @@ def test_tampered_or_deleted_intermediate_is_not_related(graph):
 def test_changed_canonical_source_or_disabled_memory_cannot_link(graph):
     engine,state,queue,policy,vault,protected,stage,promote,related,populate = graph
     seed,lexical,same,second_hop,unrelated=populate()
-    with engine.begin() as db:
-        db.execute(text(
-            "UPDATE chat_messages SET content='Altered saved reply' "
-            "WHERE id=(SELECT substr(source_ref, 1, 0) FROM chat_messages LIMIT 0)"
-        ))
     # Modify the actual assistant receipt, not candidate metadata.
     with engine.begin() as db:
         db.execute(text(
