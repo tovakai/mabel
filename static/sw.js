@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v660-debug-console';
+const CACHE_NAME = 'odysseus-v661-gyro-s-control';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -61,6 +61,7 @@ const PRECACHE = [
   '/static/css/email-calendar-notes-tasks.css?v=20260929csssplit',
   '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
   '/static/app.js?v=20260929csssplit',
+  '/static/js/strataControl.js?v=20261103gyro1',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
@@ -86,6 +87,7 @@ const PRECACHE = [
   '/static/js/contextMetrics.js',
   '/static/js/debugConsole.js?v=1',
   '/static/css/debugConsole.css?v=1',
+  '/static/css/strata-control.css?v=20261103gyro1',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
   '/static/js/chatStream.js?v=20260914pdfstrip1',
   '/static/js/chat.js?v=20261028agentapprovals1',
