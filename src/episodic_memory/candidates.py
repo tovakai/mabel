@@ -230,7 +230,6 @@ class CandidateQueue:
             db.execute("BEGIN IMMEDIATE")
             if draft.source_kind == "conversation":
                 # Source refs are exact opaque chat receipts, not free text.
-                from .capture import _TOKEN
                 match = re.fullmatch(
                     r"chat:([A-Za-z0-9_.:-]{1,128}):message:[A-Za-z0-9_.:-]{1,128}",
                     draft.source_ref,
