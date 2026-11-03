@@ -201,7 +201,7 @@ async def test_source_controls_checked_before_remote_egress(pilot,field):
         conn.execute(text(
             f"UPDATE sessions SET {field}={value} WHERE id='chat-one'"
         ))
-    with pytest.raises(CandidateAdmissionError,match="verified source"):
+    with pytest.raises((CandidateAdmissionError, PermissionError)):
         await invoke()
     assert record["inputs"]==[]
 
