@@ -187,6 +187,8 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
     "/api/model-endpoints", # /probe sub-route also iterates models
+    "/api/strata/start",    # loading Gyro-S can take longer than default timeout
+    "/api/strata/suspend",  # unloading waits for engine acknowledgement
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
@@ -785,6 +787,9 @@ app.include_router(setup_embedding_routes())
 # Models
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
+# Local Strata Gyro-S lifecycle (admin-only, explicitly opt-in)
+from routes.strata_routes import setup_strata_routes
+app.include_router(setup_strata_routes())
 
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
