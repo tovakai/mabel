@@ -26438,13 +26438,6 @@ async def _stream_agent_loop_impl(
                 round_num=round_num, pure_web_turn=_pure_web_turn,
                 has_tools=bool(candidate_tools or state.get("relevant_tools")),
             )
-            logger.info(
-                "[agent-cache-request] round=%s candidate=%s schema_digest=%s "
-                "system_prefix_digest=%s generation_cap=%s thinking=%s",
-                round_num, index, digest_schema_surface(candidate_tools),
-                digest_system_prefix(request_messages),
-                _route_web_max_tokens, _route_web_thinking,
-            )
             from src.generation_budget import (fit_output_token_budget,
                 estimate_tool_schema_tokens,estimate_multimodal_image_tokens,context_safety_margin)
             if state["context_length"] > 0:
@@ -26456,6 +26449,15 @@ async def _stream_agent_loop_impl(
                         +context_safety_margin(state["context_length"]))
                 state["request_messages"] = request_messages
                 _last_route_request_messages = request_messages
+            # Record the actual post-trim provider-bound messages. These
+            # fingerprints can detect prefix churn but do not prove a KV hit.
+            logger.info(
+                "[agent-cache-request] round=%s candidate=%s schema_digest=%s "
+                "system_prefix_digest=%s generation_cap=%s thinking=%s",
+                round_num, index, digest_schema_surface(candidate_tools),
+                digest_system_prefix(request_messages),
+                _route_web_max_tokens, _route_web_thinking,
+            )
 
             candidate_max_tokens = fit_output_token_budget(
                 _route_web_max_tokens,
