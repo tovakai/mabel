@@ -37,6 +37,12 @@ def main() -> int:
     )
     reconcile.add_argument("--confirm-scrub", action="store_true")
     reconcile.add_argument("--after-session-id")
+    sources = sub.add_parser(
+        "reconcile-sources",
+        help="Explicitly scrub missing/edited conversation receipts within live sessions",
+    )
+    sources.add_argument("--confirm-scrub", action="store_true")
+    sources.add_argument("--after-candidate-id")
     cleanup = sub.add_parser(
         "cleanup-deleted-episodes",
         help="Explicitly remove only verified, owner-scoped episode files",
@@ -74,8 +80,11 @@ def main() -> int:
             pending = db.execute(
                 "SELECT count(*) FROM episode_deletion_queue WHERE owner=?", (queue.owner,),
             ).fetchone()[0]
+            invalidated = db.execute(
+                "SELECT count(*) FROM invalidated_messages WHERE owner=?", (queue.owner,),
+            ).fetchone()[0]
         output = {"owner": queue.owner, "deleted_sessions": tombstones,
-                  "pending_episode_files": pending}
+                  "pending_episode_files": pending, "invalidated_messages": invalidated}
     elif args.command == "reconcile-deletions":
         if not args.confirm_scrub:
             parser.error("reconcile-deletions requires --confirm-scrub")
@@ -85,6 +94,16 @@ def main() -> int:
             output = reconcile_missing_sessions(
                 queue, db=db, limit=args.limit,
                 after_session_id=args.after_session_id,
+            )
+    elif args.command == "reconcile-sources":
+        if not args.confirm_scrub:
+            parser.error("reconcile-sources requires --confirm-scrub")
+        from core.database import SessionLocal
+        from .retention import reconcile_invalid_sources
+        with SessionLocal() as db:
+            output = reconcile_invalid_sources(
+                queue, db=db, limit=args.limit,
+                after_candidate_id=args.after_candidate_id,
             )
     elif args.command == "cleanup-deleted-episodes":
         if not args.confirm_remove_files:
