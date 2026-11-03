@@ -21,9 +21,10 @@ call Gemma, spawn a scheduler or inject anything into Mabel's chat context.
 2. Choose the actual Mabel-owned vault root and at least one protected source
    vault. The Core of Truth root is **protected**, not searched.
 3. Use the explicit pilot flag and --send-source-to-embedding for **one**
-   operator-selected seed/page. This sends at most nine verified excerpt
-   strings (one seed plus at most eight by default), with no complete
-   transcript, interpretation, Markdown or arbitrary filename.
+   operator-selected seed/page. By default this sends at most nine verified
+   excerpt strings (one seed plus eight candidates); the hard ceiling is
+   seventeen (one seed plus sixteen candidates), with no complete transcript,
+   interpretation, Markdown or arbitrary filename.
 4. Run only when foreground inference is quiet. The priority gate is
    process-local and a separate CLI does not observe another WebUI process's
    activity; this command must not be installed as a background service.
