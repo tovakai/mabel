@@ -24664,6 +24664,15 @@ async def _stream_agent_loop_impl(
                 _prepend_agent_directive(route_messages, _tui_read_only_inspection_directive())
             if _tui_local_network_turn:
                 _prepend_agent_directive(route_messages, _tui_local_network_directive())
+        if _pure_web_turn and not guide_only:
+            _prepend_agent_directive(
+                route_messages,
+                "For public web lookup, call web_search or web_fetch promptly with "
+                "a known URL. web_fetch extraction_goal is an optional passage "
+                "filter, not a web search query. Omit it for wiki walkthrough "
+                "indexes so navigation links survive. Do not invent subpage URLs "
+                "or spend multiple paragraphs planning a straightforward fetch.",
+            )
         if plan_mode and not guide_only:
             _prepend_agent_directive(route_messages, PLAN_MODE_DIRECTIVE)
         elif approved_plan and approved_plan.strip() and not guide_only:
@@ -25177,6 +25186,16 @@ async def _stream_agent_loop_impl(
     # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
+
+    # Candidate request schemas are otherwise re-materialized each round.
+    # Preserve an unchanged authorized web prefix to assist local KV caches.
+    from src.agent_runtime.round_cache import (
+        StableWebSchemas, digest_schema_surface, digest_system_prefix,
+        fast_web_round_budget,
+    )
+    _web_schema_stabilizer = StableWebSchemas()
+    _prior_schema_digest = None
+    _prior_system_prefix_digest = None
 
     def _filter_route_tool_schemas(schemas):
         from src.agent_runtime.structured_audits import active_audit
@@ -26185,8 +26204,54 @@ async def _stream_agent_loop_impl(
         if _catalog is not None:
             disabled_tools.difference_update(_catalog.selected - _caller_hard_denials)
         all_tool_schemas = _tool_schemas_for_route(_active_route_state)
+        # Only the same immutable turn contract may stabilize an earlier
+        # schema surface. Explicit denials, capability failures, approval
+        # boundaries and artifact recovery always win over cache affinity.
+        _allowed_web_schema_names = set()
+        if turn_contract is not None:
+            _allowed_web_schema_names = {
+                s["function"]["name"] for s in turn_contract.schemas()
+                if s["function"]["name"] not in disabled_tools
+                and s["function"]["name"] not in _caller_hard_denials
+                and s["function"]["name"] not in _capability_recovery.unavailable
+                and not (tool_policy and tool_policy.blocks(s["function"]["name"]))
+            }
+        all_tool_schemas, _web_schema_status = _web_schema_stabilizer.choose(
+            all_tool_schemas,
+            route_key=(
+                endpoint_url, model, _active_route_state.get("tool_surface"),
+                bool(_is_api_model),
+            ),
+            round_num=round_num,
+            pure_web_turn=_pure_web_turn,
+            safe_to_freeze=bool(
+                turn_contract is not None
+                and not _force_answer
+                and not _artifact_mutation_only_mode
+                and not _artifact_acquisition_recovery_active
+                and not _web_fetch_needs_private_browser
+                and not _private_browser_needs_static_fallback
+                and not _capability_recovery.unavailable
+            ),
+            allowed_names=_allowed_web_schema_names,
+        )
         if turn_contract is not None:
             _relevant_tools = {s["function"]["name"] for s in turn_contract.schemas()}
+        _current_schema_digest = digest_schema_surface(all_tool_schemas)
+        _current_system_prefix_digest = digest_system_prefix(
+            _active_route_state.get("request_messages")
+            or _active_route_state.get("messages")
+        )
+        logger.info(
+            "[agent-cache-audit] round=%s web_schema_status=%s schema_digest=%s "
+            "system_prefix_digest=%s prior_schema_same=%s prior_system_prefix_same=%s",
+            round_num, _web_schema_status, _current_schema_digest,
+            _current_system_prefix_digest,
+            _current_schema_digest == _prior_schema_digest,
+            _current_system_prefix_digest == _prior_system_prefix_digest,
+        )
+        _prior_schema_digest = _current_schema_digest
+        _prior_system_prefix_digest = _current_system_prefix_digest
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -27058,13 +27123,23 @@ async def _stream_agent_loop_impl(
                 _finalize_round_usage()
                 logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
                 break
+        _web_round_max_tokens, _web_round_thinking_mode = fast_web_round_budget(
+            model, max_tokens, thinking_mode,
+            round_num=round_num, pure_web_turn=_pure_web_turn,
+            has_tools=bool(all_tool_schemas or _relevant_tools),
+        )
+        if _web_round_max_tokens != max_tokens or _web_round_thinking_mode != thinking_mode:
+            logger.info(
+                "[agent-web-budget] round=%s generation_cap=%s thinking=%s",
+                round_num, _web_round_max_tokens, _web_round_thinking_mode,
+            )
         logger.info(
             "[agent-timing] round_start round=%s model=%s endpoint=%s prompt_tokens=%s output_tokens=%s tools=%s native_tools=%s timeout=%s",
             round_num,
             model,
             endpoint_url,
             estimate_tokens(messages),
-            max_tokens,
+            _web_round_max_tokens,
             len(_tool_names_sent),
             bool(all_tool_schemas),
             agent_stream_timeout,
@@ -27093,7 +27168,7 @@ async def _stream_agent_loop_impl(
                     messages=_snapshot_messages,
                     tools=all_tool_schemas or [],
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=_web_round_max_tokens,
                     prompt_type=prompt_type if round_num == 1 else None,
                     agent_prompt_mode=(
                         "odysseus_doc" if _ody_doc_finetune_mode
@@ -27107,14 +27182,14 @@ async def _stream_agent_loop_impl(
             _candidates,
             messages,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=_web_round_max_tokens,
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             tool_choice_none=_ody_doc_finetune_mode,
             timeout=agent_stream_timeout,
             session_id=session_id,
             workload=workload,
-            thinking_mode=thinking_mode,
+            thinking_mode=_web_round_thinking_mode,
             reasoning_effort=reasoning_effort,
             fallback_statuses=fallback_statuses,
             fallback_on_empty=fallback_on_empty,
