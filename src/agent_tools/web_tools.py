@@ -605,7 +605,7 @@ class WebFetchTool:
             return None
         parts = re.split(
             r"(?:\s*,\s*|\s+)(?=(?:https?://|www\.[A-Za-z0-9.-]+|"
-            r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?:[/?#]|$))",
+            r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+))",
             raw, flags=re.IGNORECASE,
         )
         if len(parts) < 2:
