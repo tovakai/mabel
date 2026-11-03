@@ -3179,12 +3179,18 @@ def setup_chat_routes(
                     workspace=bool(workspace),
                     vault_scope=_configured_vault_in_scope(workspace, directory_scope),
                 )) - {"unknown", "search_browser", "research"}
-                if _chat_tool_families or computation_request(message):
+                # An exact tool seal (e.g. a single-note edit -> read/edit
+                # file tools) is a tool need even without a family. Web-only
+                # seals keep the toggle-respecting rules above.
+                _chat_seal = set(selected_tools_for_request(message) or ()) - {"ask_user", "update_plan"}
+                _chat_local_seal = _chat_seal - set(FAMILY_TOOLS["search_browser"])
+                if _chat_tool_families or _chat_local_seal or computation_request(message):
                     chat_mode = "agent"
                     auto_escalated = True
                     logger.info(
-                        "chat→agent auto-escalation: contract families=%s computation=%s",
-                        sorted(_chat_tool_families), not _chat_tool_families,
+                        "chat→agent auto-escalation: contract families=%s seal=%s computation=%s",
+                        sorted(_chat_tool_families), sorted(_chat_local_seal),
+                        not (_chat_tool_families or _chat_local_seal),
                     )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))

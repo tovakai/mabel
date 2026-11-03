@@ -32,6 +32,11 @@ async def _run_chat(monkeypatch, message, *, vault=True, use_web=False):
     "What is the SHA-256 of the string hello?",
     "how many days are there between 14 March 1987 and 3 November 2026?",
     "Compare my notes on Lessons in Love with public information about the game.",
+    # Live regression: a sealed note edit (no family) stayed plain chat and the
+    # model invented the "edited" note.
+    "Feel free to: correct the Selebus spelling mistake (the creator is written as Selbius) "
+    "and pad out the existing notes regarding Lessons in Love.",
+    "fix the creator typo in my Lessons in Love note",
 ])
 async def test_tool_needing_chat_turns_escalate_silently(monkeypatch, message):
     runtime, turn_mode = await _run_chat(monkeypatch, message)
@@ -64,3 +69,14 @@ async def test_notes_question_without_a_reachable_vault_uses_the_notes_store(mon
     # Without a reachable vault the question maps to the personal Notes store,
     # which is still a tool need.
     assert runtime == "agent"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", [
+    "what is the anime Dandadan about?",          # web-only seal
+    # (A pasted URL to summarize already escalates through the existing
+    # exact-URL rule; Chat mode sends no explicit web-off.)
+])
+async def test_web_only_seals_with_web_off_stay_chat(monkeypatch, message):
+    runtime, _ = await _run_chat(monkeypatch, message, use_web=False)
+    assert runtime == "chat"
