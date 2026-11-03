@@ -7947,7 +7947,7 @@ Or with JSON for fresh news:
 ```web_search
 {"query": "<your query>", "time_filter": "day"}
 ```
-Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.
+Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. When a question needs BOTH personal vault notes and public web evidence together, prefer `research_parallel` with mode=both instead of separate sequential calls. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; research_parallel = concurrent web+vault evidence package; trigger_research = a researched report.
 Choose the `query` yourself from the user's full request and recent conversation context. If the latest user message is only "can you search", "look it up", or similar, search for the prior topic, not the literal follow-up phrase.
 If this `web_search` tool section is visible, search is available. Do NOT tell the user web/search tools are unavailable.
 For products, hardware, software, launches, and releases, distinguish announcement date from release/ship/availability date. Do not call an announced future product "current" or "available" unless the evidence says it is shipping/available now.
@@ -7958,6 +7958,18 @@ Use this instead of `bash`, `curl`, `python`, `requests`, scraping code, or brow
 <url or domain>
 ```
 Fetch and read the text content of a SPECIFIC URL the user names (e.g. "check example.com", "what does this page say <url>"). A bare domain like `example.com` works (defaults to https). Use this when you already have a concrete URL. For open-ended lookups use `web_search`, and for "research X" jobs use `trigger_research`.""",
+
+    "research_parallel": """\
+```research_parallel
+{"mode":"both","web_query":"<public lookup>","vault_objective":"<vault objective>","vault_constraints":{"required_sources":true,"max_hops":1}}
+```
+Concurrent authorized retrieval: public web via `web_search` and/or Obsidian vault via `dispatch_dottie`. Use mode=both when personal notes and public information both matter; mode=web or mode=vault for a single path. Do not invent a missing branch query. Do not use for ordinary casual chat. Returns one compact evidence package (web results + verified vault findings); you synthesize the final answer. Direct `web_search` / `web_fetch` / `dispatch_dottie` remain available for specialized single-path work.""",
+
+    "dispatch_dottie": """\
+```dispatch_dottie
+{"research_objective":"<bounded vault objective>","constraints":{"required_sources":true,"max_hops":1}}
+```
+Bounded read-only Obsidian vault research through the configured Research/Dottie worker. Returns source-validated findings or explicit partial/degraded status. Never writes vault notes. Available in chat and agent modes when workspace/vault scope is authorized. Prefer `research_parallel` when the same question also needs the public web.""",
 
     "get_weather": """\
 ```get_weather
@@ -27313,7 +27325,9 @@ async def _stream_agent_loop_impl(
         if diagnostic_events:
             yield 'data: ' + json.dumps({
                 'type':'diagnostic_event', 'operation':'tool_surface', 'status':'advertised',
-                'round':round_num, 'research_offered':int('dispatch_dottie' in _tool_names_sent),
+                'round':round_num, 'research_offered':int(
+                    'dispatch_dottie' in _tool_names_sent or 'research_parallel' in _tool_names_sent
+                ),
                 'batch_offered':int('vault_retrieve_batch' in _tool_names_sent),
             }) + '\n\n'
         if _model_request_capture_enabled():
@@ -34145,6 +34159,26 @@ async def _stream_agent_loop_impl(
                         evt = await _progress_q.get()
                         if evt is None:
                             break
+                        if (
+                            diagnostic_events
+                            and isinstance(evt, dict)
+                            and evt.get("parallel_research_event")
+                            and evt.get("operation")
+                        ):
+                            _diag = {
+                                key: value for key, value in evt.items()
+                                if key != "parallel_research_event"
+                            }
+                            yield (
+                                'data: '
+                                + json.dumps({
+                                    "type": "diagnostic_event",
+                                    "tool": block.tool_type,
+                                    "round": round_num,
+                                    **_diag,
+                                })
+                                + '\n\n'
+                            )
                         yield (
                             f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                         )

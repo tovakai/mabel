@@ -109,6 +109,13 @@ _register(
     ToolEffect.READ_WORKSPACE,
     result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED,
 )
+# research_parallel is classified dynamically from mode in capabilities_for_action.
+_register(
+    {"research_parallel"},
+    ToolEffect.READ_WORKSPACE,
+    ToolEffect.BROKERED_NETWORK_READ,
+    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
+)
 _register(
     {"get_weather", "private_browser", "web_search", "youtube_tool"},
     ToolEffect.BROKERED_NETWORK_READ,
@@ -509,6 +516,26 @@ def capabilities_for_action(tool_name: Any, content: Any) -> ToolCapabilities:
     base = capabilities_for_tool(tool_name)
     if not isinstance(tool_name, str):
         return base
+
+    if tool_name == "research_parallel":
+        payload = content
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload) if payload.strip() else {}
+            except (TypeError, ValueError):
+                payload = {}
+        mode = str((payload or {}).get("mode") or "both").strip().casefold() if isinstance(payload, Mapping) else "both"
+        effects = set()
+        integrity = ResultIntegrity.EXTERNAL_UNTRUSTED
+        if mode in {"web", "both", ""}:
+            effects.add(ToolEffect.BROKERED_NETWORK_READ)
+        if mode in {"vault", "both", ""}:
+            effects.add(ToolEffect.READ_WORKSPACE)
+            if mode == "vault":
+                integrity = ResultIntegrity.WORKSPACE_UNTRUSTED
+        if not effects:
+            effects.update(base.effects)
+        return ToolCapabilities(frozenset(effects), integrity, known=base.known)
 
     if tool_name in {"web_fetch", "pdf_extract"}:
         payload = content

@@ -17,3 +17,5 @@ Converge ordinary chat web research without a hard four-round ceiling. Deep rese
 | `agent_web_research_hard_rounds` | 24 | Absolute research-tool round ceiling (hard stop) |
 
 Soft synthesis appends a prefer-to-answer instruction once and emits a `research_budget`/`soft_nudge` diagnostic when enabled. Hard reasons force a tool-free synthesis round and emit `research_budget`/`exhausted`.
+
+`research_parallel` with `mode=web|both` increments `search_count` and tracks `web_query` uniqueness like `web_search`. Vault-only parallel calls do not consume the web search budget.

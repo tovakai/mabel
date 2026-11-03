@@ -3704,7 +3704,10 @@ def setup_chat_routes(
                                  for a in (ctx.preprocessed.attachment_meta or [])),
             capabilities=({'search_browser'} if (
                 _explicit_browser_intent or _external_discovery_intent or "web_search" not in disabled_tools
-            ) else set()) | ({'workspace_read'} if _has_fs_scope and chat_mode == 'agent' else set()),
+            ) else set()) | ({'workspace_read'} if _has_fs_scope and (
+                chat_mode == 'agent'
+                or (_tool_intent and _tool_intent.needs_tools and _tool_intent.category in {'workspace', 'research'})
+            ) else set()),
         )
         if directory_scope is not None:
             from src.fs_devices.seal import attach_scope_roots

@@ -170,7 +170,7 @@ def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="
                     break
         execution_input = json.dumps({"patch_text": "\n".join(lines)}, sort_keys=True)
     else:
-        from src.knowledge_engine.tools import TOOLS as knowledge_reads
+        from src.knowledge_engine.tools import VAULT_BOUND as knowledge_reads
         search = tool in {"ls", "glob", "grep", "vault_audit"} | knowledge_reads
         if args is None:
             if tool == "write_file":

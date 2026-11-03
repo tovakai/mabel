@@ -4,12 +4,16 @@ import json
 import sqlite3
 from .index import VaultIndex
 
-TOOLS = frozenset({'vault_knowledge_search','vault_traverse_graph','vault_read_range','vault_index_status','vault_retrieve_batch','dispatch_dottie'})
+TOOLS = frozenset({'vault_knowledge_search','vault_traverse_graph','vault_read_range','vault_index_status','vault_retrieve_batch','dispatch_dottie','research_parallel'})
+VAULT_BOUND = frozenset({'vault_knowledge_search','vault_traverse_graph','vault_read_range','vault_index_status','vault_retrieve_batch','dispatch_dottie'})
 
 
 async def execute(name, content, ctx):
     from src.agent_runtime.resource_binding import active_resource_operation
     try:
+        if name == 'research_parallel':
+            from src.agent_runtime.parallel_research import execute as parallel_execute
+            return await parallel_execute(content, ctx)
         bound = active_resource_operation()
         if bound is None or bound.operation.tool != name or len(bound.bindings) != 1:
             raise ValueError('Knowledge retrieval requires an admitted sealed workspace')
@@ -106,9 +110,11 @@ def schemas():
                 'type':'object','additionalProperties':False,'required':['tool','arguments'],
                 'properties':{'tool':{'type':'string','enum':['vault_knowledge_search','vault_traverse_graph','vault_read_range']},
                               'arguments':{'type':'object'}}}}},['operations']),
-        make('dispatch_dottie','Delegate bounded, read-only Obsidian research to the optional configured Research model. Returns current-source-validated findings or explicit partial/offline status. Never grants child permissions or writes vault notes.',
+        make('dispatch_dottie','Delegate bounded, read-only Obsidian research to the optional configured Research model. Returns current-source-validated findings or explicit partial/offline status. Never grants child permissions or writes vault notes. Available in chat and agent modes when workspace/vault scope is authorized.',
             {'research_objective':{'type':'string','minLength':1,'maxLength':2000},
              'constraints':{'type':'object','additionalProperties':False,'properties':{
                  'path_prefix':{'type':['string','null']},'required_sources':{'type':'boolean'},
                  'max_hops':{'type':'integer','minimum':0,'maximum':3}}}},['research_objective'])])
+    from src.agent_runtime.parallel_research import schema as parallel_schema
+    result.append(parallel_schema())
     return result

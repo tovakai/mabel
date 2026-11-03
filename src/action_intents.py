@@ -126,9 +126,16 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),
         ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
 
+        # Authorized vault / Dottie research before generic "search …" web routing
+        # so chat→agent escalation keeps workspace_read / dispatch_dottie.
+        ("workspace", "vault knowledge research request", rf"{_PLEASE}(?:search|check|look\s+(?:in|through|up)|find|research|ask)\b.{{0,100}}\b(?:vault|obsidian|dottie|core\s+of\s+truth)\b"),
+        ("workspace", "assistant vault knowledge research request", rf"{_ACTION_QUESTION}(?:search|check|look\s+(?:in|through|up)|find|research|ask)\b.{{0,100}}\b(?:vault|obsidian|dottie|core\s+of\s+truth)\b"),
+        ("workspace", "parallel web and vault research request", rf"{_PLEASE}(?:research|check|compare|cross[- ]?check)\b.{{0,120}}\b(?:vault|obsidian|notes?).{{0,60}}\b(?:web|online|internet|public)\b"),
+        ("workspace", "parallel vault and web research request", rf"{_PLEASE}(?:research|check|compare|cross[- ]?check)\b.{{0,120}}\b(?:web|online|internet|public).{{0,60}}\b(?:vault|obsidian|notes?)\b"),
+
         # Deep research jobs, not quick conceptual mentions of research.
         ("web", "explicit web search request", rf"{_PLEASE}(?:do|run|use|perform|make)\s+(?:a\s+)?(?:web\s+search|search\s+the\s+web)\b.+"),
-        ("web", "generic search request", rf"{_PLEASE}search\s+(?!(?:my\s+)?(?:chats?|history|sessions?|notes?|todos?|emails?|mail|inbox|documents?|docs|gallery|images?|files?)\b).+"),
+        ("web", "generic search request", rf"{_PLEASE}search\s+(?!(?:my\s+)?(?:chats?|history|sessions?|notes?|todos?|emails?|mail|inbox|documents?|docs|gallery|images?|files?|vault|obsidian)\b).+"),
         ("web", "web lookup imperative request", rf"{_PLEASE}(?:web\s+search|search\s+the\s+web|search\s+online|look\s+(?:this|that|it|them|these|those)?\s*up|google(?:\s+it)?)\b.*"),
         ("web", "short web lookup follow-up", rf"{_PLEASE}(?:just\s+)?(?:look\s+it\s+up|look\s+up|search\s+(?:online|web|now)|search\s+it)\b\s*$"),
         ("web", "assistant short web lookup request", rf"{_ACTION_QUESTION}(?:search|look\s+(?:this|that|it|them|these|those)?\s*up|google)(?:\s+(?:online|web|now|it))?\b.*"),

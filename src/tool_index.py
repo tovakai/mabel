@@ -437,6 +437,11 @@ class ToolIndex:
             {"host_shell"},
         frozenset({"youtube", "youtu.be", "yt", "video comments", "youtube comments", "transcript"}):
             {"youtube_tool", "web_search", "web_fetch", "private_browser"},
+        frozenset({"vault", "obsidian", "dottie", "core of truth", "wikilink", "frontmatter"}):
+            {"dispatch_dottie", "vault_knowledge_search", "research_parallel", "vault_audit"},
+        frozenset({"parallel research", "web and vault", "vault and web", "notes and web",
+                   "personal notes and", "cross-check vault"}):
+            {"research_parallel", "dispatch_dottie", "web_search"},
         frozenset({"local video", "video file", "watch this video", "movie clip", "video.mp4", "video.webm", "inspect image"}):
             {"inspect_media"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):

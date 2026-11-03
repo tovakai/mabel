@@ -113,7 +113,9 @@ class ChatResearchBudget:
         records = [record for record in (tool_records or ()) if isinstance(record, dict)]
         web_records = [
             record for record in records
-            if record.get("tool_name") in {"web_search", "web_fetch", "private_browser"}
+            if record.get("tool_name") in {
+                "web_search", "web_fetch", "private_browser", "research_parallel",
+            }
         ]
         if not web_records:
             return ResearchBudgetDecision()
@@ -134,6 +136,7 @@ class ChatResearchBudget:
                 exit_code == 0
                 and not result.get("error")
                 and not result.get("blocked")
+                and not result.get("approval_required")
             )
             if name == "web_search":
                 self.search_count += 1
@@ -141,6 +144,17 @@ class ChatResearchBudget:
                 if ok and query and query not in self.unique_queries:
                     self.unique_queries.add(query)
                     made_progress = True
+            elif name == "research_parallel":
+                # Compound coordinator: count the web branch only when enabled.
+                mode = _parallel_mode(content)
+                if mode in {"web", "both"}:
+                    self.search_count += 1
+                    query = _parallel_web_query(content).casefold()
+                    if ok and query and query not in self.unique_queries:
+                        self.unique_queries.add(query)
+                        made_progress = True
+                    elif ok and not query:
+                        made_progress = True
             elif name == "web_fetch":
                 self.fetch_count += 1
                 for url in _fetch_urls(content, result):
@@ -194,6 +208,28 @@ def _search_query(content: str) -> str:
     if match:
         return match.group(1).strip().strip('"')
     return raw.splitlines()[0].strip() if raw else ""
+
+
+def _parallel_payload(content: str) -> dict:
+    import json
+
+    raw = str(content or "").strip()
+    if not raw.startswith("{"):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parallel_mode(content: str) -> str:
+    mode = str(_parallel_payload(content).get("mode") or "both").strip().casefold()
+    return mode if mode in {"web", "vault", "both"} else "both"
+
+
+def _parallel_web_query(content: str) -> str:
+    return str(_parallel_payload(content).get("web_query") or "").strip()
 
 
 def _fetch_urls(content: str, result: Mapping[str, Any]) -> list[str]:
