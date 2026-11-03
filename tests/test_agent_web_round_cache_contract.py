@@ -131,3 +131,10 @@ def test_empty_schema_baseline_does_not_invent_a_tool():
         allowed_names=set(),
     )
     assert status=="baseline" and result==[]
+
+
+def test_invalid_budget_is_left_to_existing_agent_budget_recovery():
+    assert fast_web_round_budget(
+        "qwen3.8-flash-next","not-a-number","auto",
+        round_num=2,pure_web_turn=True,has_tools=True,
+    )==("not-a-number","auto")
