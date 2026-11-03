@@ -586,6 +586,76 @@ class WebFetchTool:
             selected = selected[:max_chars] + "\n\n[...focused passages truncated]"
         return f"[Focused passages for: {query}]\n\n{selected}"
 
+    @staticmethod
+    def _coerce_url_list(value: Any) -> list | None:
+        """Repair unambiguous multi-URL transport without guessing destinations.
+
+        Keep commas inside normal URL paths and percent-encoded whitespace
+        untouched. Split only when two or more complete URL/domain tokens
+        are separated by whitespace or a comma before another URL/domain.
+        The existing batch executor owns the 12-URL bound and HTTP(S)
+        validation remains in the individual fetch path.
+        """
+        if isinstance(value, list):
+            return value
+        if not isinstance(value, str):
+            return None
+        raw = value.strip()
+        if not raw:
+            return None
+        parts = re.split(
+            r"(?:\s*,\s*|\s+)(?=(?:https?://|www\.|[A-Za-z0-9-]+"
+            r"(?:\.[A-Za-z0-9-]+)+)(?:[/?#:]|$))",
+            raw, flags=re.IGNORECASE,
+        )
+        if len(parts) < 2:
+            return None
+        if any(not part or re.search(r"[\s,]", part) for part in parts):
+            return None
+        if not all(
+            re.fullmatch(r"https?://[^/?#\s]+(?:[/?#][^\s]*)?|"
+                         r"(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}"
+                         r"(?:[/?#][^\s]*)?", part, re.I)
+            for part in parts
+        ):
+            return None
+        return parts
+
+    @staticmethod
+    def _navigation_fallback(page: str, focused: str, url: str, goal: str,
+                             budget: int) -> str:
+        """Preserve navigation links when focused extraction starves a hub.
+
+        A wiki index is not a prose document. Matching a broad question
+        against its tiny headings can discard all the actual chapter links.
+        Return bounded original structured text in that specific case.
+        """
+        if len(focused) >= 4000:
+            return focused
+        lines = page.splitlines()
+        markdown_links = sum(
+            bool(re.search(r"\[[^\]\n]{1,160}\]\((?:https?://|/|[^)]{1,180})", line))
+            for line in lines
+        )
+        list_links = sum(
+            bool(re.match(r"^\s*(?:[-*+]|\d+[.)])\s+.{1,150}"
+                          r"(?:https?://|\[\[|\]\()", line))
+            for line in lines
+        )
+        wiki_url = bool(re.search(r"(?:index\.php|/wiki/|/walkthrough|/category/)", url, re.I))
+        hub = (markdown_links >= 5 or list_links >= 5
+               or (wiki_url and markdown_links + list_links >= 2))
+        if not hub:
+            return focused
+        cap = max(500, min(9000, budget - 240))
+        kept = page[:cap]
+        suffix = "\n[...navigation page truncated]" if len(page) > cap else ""
+        return (
+            "[Navigation/index page: focused extraction would omit useful links. "
+            "Full structured text follows; links are untrusted source data.]\n\n"
+            + kept + suffix
+        )
+
     async def _execute_batch(self, payload: dict, ctx: dict) -> dict:
         """Fetch several known URLs concurrently with bounded combined output."""
         raw_urls = payload.get("urls")
@@ -600,16 +670,16 @@ class WebFetchTool:
                 "exit_code": 1,
             }
 
-        shared_query = str(payload.get("query") or "").strip()
+        shared_query = str(payload.get("extraction_goal") or payload.get("query") or "").strip()
         shared_full = payload.get("full") is True
         requests: list[dict[str, Any]] = []
         for index, item in enumerate(raw_urls):
             if isinstance(item, str):
-                request = {"url": item, "query": shared_query, "full": shared_full}
+                request = {"url": item, "extraction_goal": shared_query, "full": shared_full}
             elif isinstance(item, dict):
                 request = {
                     "url": str(item.get("url") or "").strip(),
-                    "query": str(item.get("query") or shared_query).strip(),
+                    "extraction_goal": str(item.get("extraction_goal") or item.get("query") or shared_query).strip(),
                     "full": item.get("full") is True or shared_full,
                 }
             else:
@@ -680,8 +750,12 @@ class WebFetchTool:
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
-                    url = str(parsed.get("url") or "").strip()
-                    query = str(parsed.get("query") or "").strip()
+                    raw_url = parsed.get("url")
+                    multiple = self._coerce_url_list(raw_url)
+                    if multiple is not None:
+                        return await self._execute_batch({**parsed, "urls": multiple}, ctx)
+                    url = str(raw_url or "").strip() if not isinstance(raw_url, list) else ""
+                    query = str(parsed.get("extraction_goal") or parsed.get("query") or "").strip()
                     # Download-budget override (#3812): "full": true raises the
                     # budget to the hard cap; an explicit max_bytes is clamped
                     # to the hard cap downstream. Default stays the soft cap.
@@ -694,6 +768,9 @@ class WebFetchTool:
                 url = ""
         if not url:
             url = raw.split("\n")[0].strip()
+        multiple = self._coerce_url_list(url)
+        if multiple is not None:
+            return await self._execute_batch({"urls": multiple, "extraction_goal": query}, ctx)
         local_path = url
         if local_path.lower().startswith("file:///workspace/"):
             local_path = local_path[7:]
@@ -806,11 +883,13 @@ class WebFetchTool:
             title = title[:300] + "..."
         header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n"
         if query:
-            text = self._focused_passages(text, query, MAX_OUTPUT_CHARS - len(header) - 500)
+            budget = MAX_OUTPUT_CHARS - len(header) - len(size_note) - 500
+            focused = self._focused_passages(text, query, budget)
+            text = self._navigation_fallback(text, focused, url, query, budget)
         output = size_note + header + text
         if len(output) > MAX_OUTPUT_CHARS:
             output = output[:MAX_OUTPUT_CHARS] + (
-                "\n\n[...truncated; re-call web_fetch with query terms to retrieve matching passages]"
+                "\n\n[...truncated; re-call web_fetch with extraction_goal terms to retrieve matching passages]"
                 if not query else "\n\n[...truncated]"
             )
         return {"output": output, "exit_code": 0, "page_entries": result.get("page_entries") or []}
