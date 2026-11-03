@@ -186,6 +186,7 @@ def complete_episode_deletions(
 
 def reconcile_missing_sessions(
     queue: CandidateQueue, *, db, limit: int = 100,
+    after_session_id: str | None = None,
 ) -> dict:
     """Manually replay privacy scrubs missed by a crash after canonical delete.
 
@@ -197,6 +198,10 @@ def reconcile_missing_sessions(
         raise TypeError("Expected owner-scoped CandidateQueue")
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise CandidateAdmissionError("Reconciliation limit must be 1..1000")
+    if after_session_id is not None and (
+        not isinstance(after_session_id, str) or not _SESSION.fullmatch(after_session_id)
+    ):
+        raise CandidateAdmissionError("Invalid reconciliation cursor")
     from sqlalchemy import text
 
     with queue._connect() as local:
@@ -205,16 +210,17 @@ def reconcile_missing_sessions(
             "AND source_kind='conversation' ORDER BY created_at,id",
             (queue.owner,),
         )]
-    ids = []
+    discovered = set()
     for ref in refs:
         match = re.fullmatch(
             r"chat:([A-Za-z0-9_.:-]{1,128}):message:[A-Za-z0-9_.:-]{1,128}",
             ref,
         )
-        if match and match.group(1) not in ids:
-            ids.append(match.group(1))
-            if len(ids) >= limit:
-                break
+        if match and (after_session_id is None or match.group(1) > after_session_id):
+            discovered.add(match.group(1))
+    ordered = sorted(discovered)
+    ids = ordered[:limit]
+    next_after = ids[-1] if len(ordered) > len(ids) and ids else None
     scrubbed = 0
     deleted_sessions = 0
     for session_id in ids:
@@ -230,5 +236,5 @@ def reconcile_missing_sessions(
             deleted_sessions += 1
     return {
         "checked_sessions": len(ids), "deleted_sessions": deleted_sessions,
-        "scrubbed": scrubbed,
+        "scrubbed": scrubbed, "next_after_session_id": next_after,
     }
