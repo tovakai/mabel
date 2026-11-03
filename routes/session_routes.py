@@ -944,7 +944,8 @@ def setup_session_routes(
         db = SessionLocal()
         try:
             from core.database import ChatMessage as DbChatMessage
-            session_ids = [row[0] for row in db.query(DbSession.id).all()]
+            session_rows = db.query(DbSession.id, DbSession.owner).all()
+            session_ids = [row[0] for row in session_rows]
             count = db.query(DbSession).count()
             image_ids: set[str] = set()
             filenames: set[str] = set()
@@ -981,6 +982,21 @@ def setup_session_routes(
             db.query(DbChatMessage).delete()
             db.query(DbSession).delete()
             db.commit()
+            from pathlib import Path
+            from src.constants import DATA_DIR
+            from src.episodic_memory.retention import purge_deleted_session
+            for deleted_id, deleted_owner in session_rows:
+                if not deleted_owner:
+                    continue
+                try:
+                    purge_deleted_session(
+                        Path(DATA_DIR) / "episodic_candidates",
+                        owner=deleted_owner, session_id=deleted_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Episodic scrub failed after admin deletion of %s", deleted_id
+                    )
             session_manager.sessions.clear()
             logger.info(f"Admin deleted all {count} sessions and {removed_images} linked images")
             return {"status": "deleted", "count": count, "images_deleted": removed_images}
