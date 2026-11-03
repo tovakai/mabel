@@ -423,6 +423,28 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
             return api_ctx, True
         return DEFAULT_CONTEXT, False
 
+    # Strata exposes the active slot on /health, not llama.cpp's /slots or
+    # /props. The GGUF/model-card context may be 128K while the loaded server
+    # has been configured for just 32K. Only trust this field for a positively
+    # identified, loaded Strata instance, not an arbitrary health endpoint.
+    if is_local_endpoint(endpoint_url):
+        base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rstrip("/")
+        try:
+            r = httpx.get(f"{base}/health", timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                health = r.json()
+                if (
+                    isinstance(health, dict)
+                    and health.get("service") == "strata"
+                    and health.get("loaded") is True
+                ):
+                    active = health.get("max_context")
+                    if isinstance(active, int) and not isinstance(active, bool) and active > 0:
+                        logger.info("Strata /health reports active max_context=%s for %s", active, model)
+                        return active, True
+        except Exception:
+            logger.debug("Strata /health context probe failed for %s", endpoint_url, exc_info=True)
+
     # Try llama.cpp /slots endpoint first — reports actual serving context
     if is_local_endpoint(endpoint_url):
         base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
