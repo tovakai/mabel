@@ -9,6 +9,7 @@ import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
 import chatRenderer, { renderToolIcon, refreshAgentThreadFold } from './chatRenderer.js?v=20261103actionfold1';
+import { classifyChatStreamError } from './chatErrors.js?v=20261103chaterrors1';
 import chatStream from './chatStream.js?v=20260914pdfstrip1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -2357,6 +2358,8 @@ import { invalidateSettings } from './appConfig.js';
         }
       }
       let _userMsgEl = null;
+      // Chat turns the server ran with tools stay chat-styled (no agent labels).
+      let _turnSeamless = false;
       if (!skipBubble) {
         const _toggleStateForBubble = Storage.loadToggleState();
         const _bubbleMode = (_toggleStateForBubble.mode || 'chat') === 'agent' ? 'agent' : 'chat';
@@ -2871,17 +2874,14 @@ import { invalidateSettings } from './appConfig.js';
           if (sessionModule) await sessionModule.loadSessions();
           return;
         }
-        let errText = `Error ${res.status}`;
-        try {
-          const errBody = await res.text();
-          // Parse nested JSON error if present
-          const m = errBody.match(/"message"\s*:\s*"([^"]+)"/);
-          if (m) errText = m[1].replace(/\\"/g, '"');
-          else if (errBody.length < 200) errText = errBody;
-        } catch {}
-        // Auto-switch to chat mode for tool-related errors
-        if (errText.includes('tool') || errText.includes('auto')) {
-          errText = 'This model doesn\'t support agent tools — switched to Chat mode. Try again.';
+        let errBody = '';
+        try { errBody = await res.text(); } catch {}
+        // Classify by the backend's explicit error code, never by wording: an
+        // expired approval or an authorization failure keeps the mode, the
+        // user's message and the conversation exactly as they are.
+        const _errInfo = classifyChatStreamError(res.status, errBody);
+        let errText = _errInfo.text;
+        if (_errInfo.switchToChat) {
           const _ab = document.getElementById('mode-agent-btn');
           const _cb = document.getElementById('mode-chat-btn');
           if (_ab && _cb) {
@@ -4037,6 +4037,7 @@ import { invalidateSettings } from './appConfig.js';
                 continue;
               }
               if (json.type === 'turn_mode') {
+                _turnSeamless = !!json.auto_escalated;
                 if (!_isBg && _userMsgEl && chatRenderer.setUserModePill) {
                   chatRenderer.setUserModePill(_userMsgEl, json.mode || 'chat', !!json.auto_escalated);
                 }
@@ -4047,7 +4048,7 @@ import { invalidateSettings } from './appConfig.js';
                   _cancelThinkingTimer();
                   // The existing processing row already owns this wait. Do
                   // not create a second status bubble beside it.
-                  if (!spinner?.element) _replaceThinkingSpinner('Preparing agent');
+                  if (!spinner?.element) _replaceThinkingSpinner(_turnSeamless ? 'Thinking' : 'Preparing agent');
                 }
                 continue;
               }

@@ -576,7 +576,8 @@ def is_internal_tool_request(request):
 def require_user_approval_request(request):
     if is_internal_tool_request(request):
         from fastapi import HTTPException
-        raise HTTPException(403, "Tool requests cannot submit user approval decisions.")
+        raise HTTPException(403, {"error": "TOOL_APPROVAL_NOT_ALLOWED",
+                                  "message": "Tool requests cannot submit user approval decisions."})
 
 
 def request_authority_for_http(request, request_text, **context):

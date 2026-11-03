@@ -1317,6 +1317,22 @@ def _stream_failure_status(chunk: str) -> Optional[int]:
     return None
 
 
+# Stable error codes for /api/chat_stream failures that happen before the
+# stream starts. The UI classifies by code, never by message wording.
+CHAT_ERROR_TOOL_APPROVAL_EXPIRED = "TOOL_APPROVAL_EXPIRED"
+CHAT_ERROR_TOOL_APPROVAL_UNAVAILABLE = "TOOL_APPROVAL_UNAVAILABLE"
+CHAT_ERROR_TOOL_APPROVAL_INVALID_DECISION = "TOOL_APPROVAL_INVALID_DECISION"
+CHAT_ERROR_TOOL_APPROVAL_PLAN_MODE = "TOOL_APPROVAL_PLAN_MODE"
+CHAT_ERROR_TOOL_APPROVAL_NOT_ALLOWED = "TOOL_APPROVAL_NOT_ALLOWED"
+# Reserved for a genuine, explicitly detected model tool-capability failure.
+# Only this code may make the UI suggest that the model cannot use tools.
+CHAT_ERROR_MODEL_TOOLS_UNSUPPORTED = "MODEL_TOOLS_UNSUPPORTED"
+
+
+def _chat_error(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status, {"error": code, "message": message})
+
+
 def _reject_delegated_tool_approval(request: Request) -> None:
     """Refuse an approval answered by a bearer API token.
 
@@ -1327,8 +1343,8 @@ def _reject_delegated_tool_approval(request: Request) -> None:
     is answering on behalf of the account that minted it.
     """
     if is_delegated_credential(request):
-        raise HTTPException(
-            403,
+        raise _chat_error(
+            403, CHAT_ERROR_TOOL_APPROVAL_NOT_ALLOWED,
             "Tool approvals require an interactive session. "
             "API tokens cannot authorize a gated action.",
         )
@@ -2970,8 +2986,8 @@ def setup_chat_routes(
                     or pending_tool_approval.owner != normalized_owner
                     or pending_tool_approval.session_id != str(session)
                 ):
-                    raise HTTPException(
-                        409,
+                    raise _chat_error(
+                        409, CHAT_ERROR_TOOL_APPROVAL_EXPIRED,
                         "This tool approval is invalid, expired, or belongs to another thread.",
                     )
                 pending_taint = bool(
@@ -2982,10 +2998,11 @@ def setup_chat_routes(
                 )
                 decision = str(tool_approval_decision or "").strip().lower()
                 if decision not in {"approve", "approve_task", "approve_once", "deny"}:
-                    raise HTTPException(400, "Invalid tool approval decision.")
+                    raise _chat_error(400, CHAT_ERROR_TOOL_APPROVAL_INVALID_DECISION,
+                                      "Invalid tool approval decision.")
                 if plan_mode:
-                    raise HTTPException(
-                        409,
+                    raise _chat_error(
+                        409, CHAT_ERROR_TOOL_APPROVAL_PLAN_MODE,
                         "Tool approvals cannot be consumed while plan mode is active.",
                     )
                 exact_tool_approval = tool_approval_store.consume(
@@ -2999,8 +3016,8 @@ def setup_chat_routes(
                     decision in {"approve", "approve_task", "approve_once"}
                     and exact_tool_approval is None
                 ):
-                    raise HTTPException(
-                        409,
+                    raise _chat_error(
+                        409, CHAT_ERROR_TOOL_APPROVAL_UNAVAILABLE,
                         "This tool approval could not be consumed.",
                     )
                 if not _mark_tool_approval_resolved(
@@ -3147,6 +3164,28 @@ def setup_chat_routes(
                     _workspace_agent_intent = True
                     allow_bash = "true"
                     logger.info("chat→agent auto-escalation: explicit path workspace=%s", workspace)
+            if chat_mode == "chat" and isinstance(message, str) and message.strip():
+                # Seamless chat: the same capability decision the agent uses
+                # (vault reachable, web, personal stores, computation) decides
+                # whether this chat turn needs tools. Casual turns select
+                # nothing and stay plain chat. Permissions, toggles and
+                # approvals are unchanged; only the runtime differs.
+                from src.turn_contract import computation_request
+                # Web-only and Deep Research needs keep their existing,
+                # toggle-respecting escalation rules above; a combined
+                # vault+web question still escalates through its vault part.
+                _chat_tool_families = set(requested_capabilities(
+                    message, getattr(sess, "history", []) or [],
+                    workspace=bool(workspace),
+                    vault_scope=_configured_vault_in_scope(workspace, directory_scope),
+                )) - {"unknown", "search_browser", "research"}
+                if _chat_tool_families or computation_request(message):
+                    chat_mode = "agent"
+                    auto_escalated = True
+                    logger.info(
+                        "chat→agent auto-escalation: contract families=%s computation=%s",
+                        sorted(_chat_tool_families), not _chat_tool_families,
+                    )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):

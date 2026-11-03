@@ -70,6 +70,27 @@ The Agent web toggle is sent as `allow_web_search=true|false` on every UI turn.
   (web search/fetch, weather, read-only browser actions, Deep Research, vault and
   workspace reads). Approvals remain for writes, shell and other effects.
 
+## Seamless chat
+
+Chat mode asks the same capability classifier the contract uses. When it
+selects a real family (vault notes reachable through an authorized root,
+personal stores, ...) or the message is a computation, the turn runs on the
+agent runtime; casual turns stay plain chat. Web-only and Deep Research needs
+keep their existing toggle-respecting escalation rules. The UI presents an
+escalated turn as a chat turn (chat pill, neutral status text, mode toggle
+untouched). Permissions, toggles and approval prompts are unchanged.
+
+## Pre-stream chat errors
+
+`/api/chat_stream` failures before streaming carry a code in
+`detail.error` (`TOOL_APPROVAL_EXPIRED`, `TOOL_APPROVAL_UNAVAILABLE`,
+`TOOL_APPROVAL_INVALID_DECISION`, `TOOL_APPROVAL_PLAN_MODE`,
+`TOOL_APPROVAL_NOT_ALLOWED`). `static/js/chatErrors.js` classifies by code,
+never by wording; only `MODEL_TOOLS_UNSUPPORTED` (reserved for an explicitly
+detected capability failure) may say the model cannot use tools or switch the
+user's mode. Pending approvals live in memory for 10 minutes and do not
+survive a restart; an expired one asks the user to resend.
+
 ## Routing diagnostics
 
 Every chat turn writes one `tool_routing` event to the debug console

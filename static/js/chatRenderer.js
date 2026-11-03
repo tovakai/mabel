@@ -1563,7 +1563,11 @@ export function roleTimestamp(when) {
 }
 
 function userModePill(metadata) {
-  const mode = String(metadata?.interaction_mode || metadata?.mode || '').toLowerCase();
+  // A chat turn the server quietly ran with tools is still a chat turn to the
+  // user: show the chat pill, with no "promoted" marker.
+  const mode = metadata?.auto_escalated
+    ? 'chat'
+    : String(metadata?.interaction_mode || metadata?.mode || '').toLowerCase();
   if (mode !== 'agent' && mode !== 'chat' && mode !== 'research') return null;
   const pill = document.createElement('span');
   pill.className = 'user-mode-pill user-mode-pill-' + mode;
@@ -1573,10 +1577,7 @@ function userModePill(metadata) {
   } else {
     pill.textContent = 'research';
   }
-  pill.title = metadata?.auto_escalated
-    ? 'Auto-promoted from chat for this tool request'
-    : `Sent in ${mode} mode`;
-  if (metadata?.auto_escalated) pill.dataset.auto = 'true';
+  pill.title = `Sent in ${mode} mode`;
   return pill;
 }
 

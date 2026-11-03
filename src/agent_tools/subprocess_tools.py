@@ -500,6 +500,32 @@ def _wrap_workspace_namespace(
     return shlex.join(args)
 
 
+def _interpreter_link_dirs(executable: str) -> list[str]:
+    """Symlinked directories along the interpreter's symlink chain.
+
+    A venv's ``bin/python`` can point through a symlinked directory (uv links
+    ``cpython-3.12-linux-...`` to ``cpython-3.12.16-linux-...``). Mounting only
+    the resolved prefixes leaves that hop missing inside the namespace, so the
+    interpreter cannot be executed. These are read-only views of the same
+    already-mounted Python install.
+    """
+    found: list[str] = []
+    path = str(executable or "")
+    seen: set[str] = set()
+    for _ in range(16):
+        if not path or path in seen or not os.path.islink(path):
+            break
+        seen.add(path)
+        target = os.path.normpath(os.path.join(os.path.dirname(path), os.readlink(path)))
+        parts = target.split(os.sep)
+        for index in range(2, len(parts)):
+            prefix = os.sep.join(parts[:index])
+            if prefix and os.path.islink(prefix) and prefix not in found:
+                found.append(prefix)
+        path = target
+    return found
+
+
 def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tuple = ()) -> containment.ContainmentSpec:
     """Server-defined boundary shared by the native execution tools."""
     readonly = []
@@ -508,6 +534,11 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
         visible = any(prefix == root or prefix.startswith(root + os.sep) for root in ("/usr", "/etc"))
         if not visible and prefix not in _NAMESPACE_RESERVED_DESTS:
             readonly.append(prefix)
+    # Symlinked hops must be mounted at their own (unresolved) path.
+    for link_dir in _interpreter_link_dirs(sys.executable):
+        visible = any(link_dir == root or link_dir.startswith(root + os.sep) for root in ("/usr", "/etc"))
+        if not visible and link_dir not in _NAMESPACE_RESERVED_DESTS:
+            readonly.append(link_dir)
     from src.tool_execution import _agent_subprocess_env
     clean_env = _agent_subprocess_env() if env is None else dict(env)
     return containment.agent_spec(

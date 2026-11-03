@@ -69,7 +69,11 @@ def validate_launch_spec(launch, spec):
     scope.validate()
     if (spec.workspace != scope.root.path or spec.required != scope.required or spec.network != scope.network
             or spec.wall_clock_s > scope.max_runtime_s or spec.writable_extra
-            or tuple(spec.readonly_extra) != tuple(r.path for r in scope.runtime_roots)):
+            # Sealed roots are stored resolved; compare the launch spec the same
+            # way so a symlinked interpreter hop matches its sealed object, while
+            # a re-pointed link (different resolved target) is still refused.
+            or tuple(str(Path(p).resolve()) for p in spec.readonly_extra)
+            != tuple(r.path for r in scope.runtime_roots)):
         raise ResourceIdentityError("Producer launch boundary exceeds the sealed reservation")
 
 
