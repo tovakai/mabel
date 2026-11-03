@@ -19,7 +19,9 @@ Once the canonical session delete commits, owner-scoped deletion cleanup:
 
 This is called from SessionManager.delete_session, auto-sort cleanup and
 administrative delete-all. It is a no-op when the owner never had an episodic
-candidate database. Existing Phase 00 ledger events already published are
+candidate database **and the capture pilot is disabled**. When capture is
+enabled, deletion creates a tombstone even before the first candidate
+database exists, blocking delayed post-response capture. Existing Phase 00 ledger events already published are
 metadata-only and are not rewritten.
 
 ## Important boundary: promoted Markdown notes
