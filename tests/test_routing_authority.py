@@ -21,6 +21,10 @@ from tests.test_agent_turn_contract_boundaries import contract, route, schema_fu
      {"workspace_read", "search_browser"}),
     ("compare what my notes say about Chainsaw Man part 2 with what people online think of it",
      {"workspace_read", "search_browser"}),
+    # Live smoke regression: "public information" was missed by the web cue.
+    ("Compare my notes on Lessons in Love with public information about the game.",
+     {"workspace_read", "search_browser"}),
+    ("check my vault notes against publicly available reviews", {"workspace_read", "search_browser"}),
 ])
 def test_vault_knowledge_questions_route_to_vault_retrieval(message, expected):
     assert vault_knowledge_families(message) == expected

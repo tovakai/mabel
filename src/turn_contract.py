@@ -5012,7 +5012,7 @@ _NOTE_MUTATION_RE = re.compile(
     re.I,
 )
 _VAULT_WEB_CUE_RE = re.compile(
-    r"\b(?:online|on\s+the\s+web|the\s+web|internet|publicly|public\s+(?:info|sources?|benchmarks?)|"
+    r"\b(?:online|on\s+the\s+web|the\s+web|internet|public(?:ly)?|"
     r"wiki(?:pedia)?|reddit|people\s+(?:say|think)|reviews?|newer|newest|latest\s+(?:release|version|news)|"
     r"official\s+(?:site|docs?|release)|news)\b",
     re.I,
