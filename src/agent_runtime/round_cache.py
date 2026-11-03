@@ -38,7 +38,12 @@ def fast_web_round_budget(
     Explicit thinking=on always wins. We never set a global reasoning budget
     or impose this on coding, artifact generation, research, or final synthesis.
     """
-    requested = int(max_tokens or 0)
+    try:
+        requested = int(max_tokens or 0)
+    except (TypeError, ValueError, OverflowError):
+        # Do not let an invalid caller budget crash an otherwise recoverable
+        # agent turn. The existing output-budget path owns validation.
+        return max_tokens, thinking_mode
     normalized = str(thinking_mode or "").strip().lower()
     eligible = (
         pure_web_turn and has_tools and round_num > 1
