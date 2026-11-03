@@ -36,6 +36,7 @@ def main() -> int:
         help="Explicitly scrub candidates whose canonical sessions are missing",
     )
     reconcile.add_argument("--confirm-scrub", action="store_true")
+    reconcile.add_argument("--after-session-id")
     cleanup = sub.add_parser(
         "cleanup-deleted-episodes",
         help="Explicitly remove only verified, owner-scoped episode files",
@@ -81,7 +82,10 @@ def main() -> int:
         from core.database import SessionLocal
         from .retention import reconcile_missing_sessions
         with SessionLocal() as db:
-            output = reconcile_missing_sessions(queue, db=db, limit=args.limit)
+            output = reconcile_missing_sessions(
+                queue, db=db, limit=args.limit,
+                after_session_id=args.after_session_id,
+            )
     elif args.command == "cleanup-deleted-episodes":
         if not args.confirm_remove_files:
             parser.error("cleanup-deleted-episodes requires --confirm-remove-files")
