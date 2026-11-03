@@ -166,7 +166,8 @@ async def suggest_semantic_episode_links(
 
     scored = []
     for previous, vector in zip(valid, normalized[1:]):
-        current = _verified_node(queue, queue.get(previous["candidate_id"]) or {}, db, root) if queue.get(previous["candidate_id"]) else None
+        current_row = queue.get(previous["candidate_id"])
+        current = _verified_node(queue, current_row, db, root) if current_row is not None else None
         if current is None or _snapshot(current) != _snapshot(previous):
             skipped += 1
             continue
