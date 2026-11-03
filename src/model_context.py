@@ -242,6 +242,77 @@ KNOWN_CONTEXT_WINDOWS = {
 # Cache
 # ---------------------------------------------------------------------------
 _context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
+# Provider-stated ceilings learned from a real rejection, keyed by
+# (endpoint_url, model). Catalog/table evidence may only tighten against these.
+# Authoritative local runtime probes (Strata /health, llama.cpp /slots|/props)
+# reconcile the override in either direction after a reload.
+_provider_context_overrides: Dict[Tuple[str, str], int] = {}
+
+
+def remember_provider_context_limit(endpoint_url: str, model: str, limit: int) -> int:
+    """Record a provider-proven context ceiling for future budgeting.
+
+    Returns the effective remembered limit (0 when the value is unusable).
+    Rejections may only tighten an existing override; local runtime reconciliation
+    can later raise or lower it when Strata/llama.cpp reports a live window.
+    """
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        return 0
+    if value <= 0:
+        return 0
+    cache_key = (endpoint_url, model)
+    previous = _provider_context_overrides.get(cache_key)
+    if previous is not None and previous <= value:
+        return previous
+    _provider_context_overrides[cache_key] = value
+    _context_cache[cache_key] = (value, True)
+    logger.info(
+        "Remembered provider context ceiling for %s at %s: %s",
+        model,
+        endpoint_url,
+        value,
+    )
+    return value
+
+
+def remembered_provider_context_limit(endpoint_url: str, model: str) -> int:
+    """Return a previously learned provider ceiling, or 0 when none exists."""
+    try:
+        return int(_provider_context_overrides.get((endpoint_url, model)) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def reconcile_local_runtime_context(endpoint_url: str, model: str, runtime_limit: int) -> int:
+    """Adopt an authoritative local serving window after Strata/llama.cpp probe.
+
+    Unlike rejection remembering, a live runtime window may increase or decrease
+    the stored ceiling so a reload cannot permanently pin capacity to an older
+    overflow. Returns the runtime limit (0 when unusable).
+    """
+    try:
+        value = int(runtime_limit)
+    except (TypeError, ValueError):
+        return 0
+    if value <= 0:
+        return 0
+    cache_key = (endpoint_url, model)
+    previous = _provider_context_overrides.get(cache_key)
+    if previous == value:
+        return value
+    _provider_context_overrides[cache_key] = value
+    _context_cache[cache_key] = (value, True)
+    if previous is not None and previous != value:
+        logger.info(
+            "Reconciled local runtime context for %s at %s: %s -> %s",
+            model,
+            endpoint_url,
+            previous,
+            value,
+        )
+    return value
 
 
 def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
@@ -254,10 +325,20 @@ def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
+    remembered = _provider_context_overrides.get(cache_key)
     if not is_local and cache_key in _context_cache:
-        return _context_cache[cache_key]
+        cached_ctx, cached_known = _context_cache[cache_key]
+        if remembered and remembered < cached_ctx:
+            return remembered, True
+        return cached_ctx, cached_known
 
     ctx, known = _query_context_length(endpoint_url, model)
+    # Refresh after query: local runtime probes may have reconciled the override.
+    remembered = _provider_context_overrides.get(cache_key)
+    # Non-authoritative evidence (catalog / known table) may still be tightened
+    # by a provider rejection. Authoritative local probes already reconciled.
+    if remembered and (not known or remembered < ctx):
+        ctx, known = remembered, True
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
@@ -441,6 +522,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                     active = health.get("max_context")
                     if isinstance(active, int) and not isinstance(active, bool) and active > 0:
                         logger.info("Strata /health reports active max_context=%s for %s", active, model)
+                        reconcile_local_runtime_context(endpoint_url, model, active)
                         return active, True
         except Exception:
             logger.debug("Strata /health context probe failed for %s", endpoint_url, exc_info=True)
@@ -456,6 +538,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                     n_ctx = slots[0].get("n_ctx")
                     if n_ctx and isinstance(n_ctx, int) and n_ctx > 0:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
+                        reconcile_local_runtime_context(endpoint_url, model, n_ctx)
                         return n_ctx, True
         except Exception:
             pass
@@ -470,6 +553,7 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
                 n_ctx = generation.get("n_ctx") if isinstance(generation, dict) else None
                 if n_ctx and isinstance(n_ctx, (int, float)) and n_ctx > 0:
                     logger.info(f"llama.cpp /props reports n_ctx={int(n_ctx)} for {model}")
+                    reconcile_local_runtime_context(endpoint_url, model, int(n_ctx))
                     return int(n_ctx), True
         except Exception:
             pass

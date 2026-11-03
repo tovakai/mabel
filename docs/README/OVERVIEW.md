@@ -18,3 +18,9 @@ See `docs/maintainers/multi-device-filesystem.md` for architecture, migration, a
 Tool failures return structured, distinct error codes and stay recoverable when the operation was not denied. A long draft followed by a recoverable tool error does not end the turn. An empty completed reply is replaced with the tool failure. Vault and index tools use an explicit or configured vault path and do not substitute an authorization root. Shell cwd prefers an optional primary, otherwise the documented data-directory workspace; remote-only conversations do not inherit a local cwd. Model traces label provider timings separately from wall-clock time and mark queue, cache, and model-load timing unavailable when they were not measured.
 
 See `docs/README/TOOL_RECOVERY.md` and `docs/README/VAULT_TARGET.md`.
+
+## Chat web research convergence (2026-11-03)
+
+Provider context-limit recovery is committed after the answering stream settles (diagnostics optional, including incognito): canonical history is compacted with the learned ceiling while `_protected` markers and tool pairs are preserved. Strata `/health` (and llama.cpp `/slots`/`/props`) can raise or lower a remembered rejection after reload. A turn-local visit ledger tracks partial/focused/complete fetches per URL, including mixed batches. Soft synthesis is advisory; stall and absolute search/fetch/hard-round caps force convergence.
+
+See `docs/README/WEB_VISIT_LEDGER.md`, `docs/README/CHAT_RESEARCH_BUDGET.md`, `docs/README/CONTEXT_RECOVERY.md`, `docs/README/LLM_CORE.md`, and `docs/README/MODEL_CONTEXT.md`.

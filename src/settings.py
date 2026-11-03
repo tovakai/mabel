@@ -114,6 +114,14 @@ DEFAULT_SETTINGS = {
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
+    # Ordinary chat web-research convergence (not deep research). Soft synthesis
+    # is advisory after N tool rounds; stall/search/fetch/hard-round caps force
+    # a tool-free answer. Soft never hard-stops productive research by itself.
+    "agent_web_research_max_searches": 8,
+    "agent_web_research_max_fetches": 12,
+    "agent_web_research_stall_rounds": 3,
+    "agent_web_research_soft_synthesis_rounds": 10,
+    "agent_web_research_hard_rounds": 24,
     # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the
     # "auto" sentinel: it means "scale the budget to the model's context window"
     # (#1230) — so long-context models aren't capped at 6000. Set ANY OTHER value

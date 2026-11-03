@@ -4075,8 +4075,17 @@ async def _stream_candidate_with_context_recovery(
     retry_degenerate_stream_once: bool = False,
     retry_transient_precontent: bool = False,
     diagnostic_events: bool = False,
+    recovery_out: Optional[Dict] = None,
 ):
-    """Retry recoverable pre-content request-shape rejections once per kind."""
+    """Retry recoverable pre-content request-shape rejections once per kind.
+
+    Successful context recovery is recorded into ``recovery_out`` only after the
+    trimmed request emits substantive output. Callers own canonical history and
+    must copy that snapshot forward themselves; this helper never mutates the
+    original ``messages`` list in place.
+    """
+
+    from copy import deepcopy
 
     from src.generation_budget import (
         context_safety_margin,
@@ -4090,9 +4099,22 @@ async def _stream_candidate_with_context_recovery(
     candidate_kwargs = dict(kwargs)
     context_recovery_attempts = 0
     recovery_context_limit: Optional[int] = None
+    pending_recovery: Optional[Dict] = None
     capability_recovery_attempted = False
     degenerate_recovery_attempted = False
     availability_recovery_attempted = False
+
+    def _snapshot_pending_recovery(*, reason: str) -> Dict:
+        nonlocal pending_recovery
+        pending_recovery = {
+            "messages": deepcopy(candidate_messages),
+            "context_limit": recovery_context_limit,
+            "max_tokens": candidate_kwargs.get("max_tokens"),
+            "attempts": context_recovery_attempts,
+            "reason": reason,
+            "applied": False,
+        }
+        return pending_recovery
 
     while True:
         emitted = False
@@ -4213,6 +4235,7 @@ async def _stream_candidate_with_context_recovery(
                             + context_safety_margin(recovery_context_limit)
                         ),
                     )
+                    snapshot = _snapshot_pending_recovery(reason="context_transport")
                     logger.warning(
                         "[context-recovery] retrying model=%s after post-overflow transport "
                         "error with no inline images attempt=%s",
@@ -4222,6 +4245,15 @@ async def _stream_candidate_with_context_recovery(
                     if diagnostic_events:
                         yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
                             'status':'retrying','model':model,'retry_reason':'context_transport'}) + '\n\n'
+                        yield 'data: ' + json.dumps({
+                            'type': 'diagnostic_event',
+                            'operation': 'context_recovery_prepared',
+                            'status': 'prepared',
+                            'model': model,
+                            'context_limit': snapshot.get('context_limit'),
+                            'message_count': len(snapshot.get('messages') or []),
+                            'retry_reason': 'context_transport',
+                        }) + '\n\n'
                     retry = True
                     break
 
@@ -4309,6 +4341,7 @@ async def _stream_candidate_with_context_recovery(
                                     + context_safety_margin(plan.context_limit)
                                 ),
                             )
+                        snapshot = _snapshot_pending_recovery(reason="context_limit")
                         logger.warning(
                             "[context-recovery] retrying model=%s max_tokens=%s -> %s "
                             "context=%s observed_input=%s attempt=%s",
@@ -4322,6 +4355,15 @@ async def _stream_candidate_with_context_recovery(
                         if diagnostic_events:
                             yield 'data: ' + json.dumps({'type':'diagnostic_event','operation':'model_retry',
                                 'status':'retrying','model':model,'retry_reason':'context_limit'}) + '\n\n'
+                            yield 'data: ' + json.dumps({
+                                'type': 'diagnostic_event',
+                                'operation': 'context_recovery_prepared',
+                                'status': 'prepared',
+                                'model': model,
+                                'context_limit': snapshot.get('context_limit'),
+                                'message_count': len(snapshot.get('messages') or []),
+                                'retry_reason': 'context_limit',
+                            }) + '\n\n'
                         retry = True
                         break
 
@@ -4392,6 +4434,40 @@ async def _stream_candidate_with_context_recovery(
         else:
             for buffered in pending:
                 yield buffered
+        if emitted and pending_recovery is not None:
+            committed = {
+                **pending_recovery,
+                "applied": True,
+                "messages": deepcopy(pending_recovery.get("messages") or []),
+            }
+            if recovery_out is not None:
+                recovery_out.clear()
+                recovery_out.update(committed)
+            if diagnostic_events:
+                # Stream-level success only. Canonical commit is
+                # context_recovery_committed in the agent loop and does not
+                # require diagnostics.
+                yield 'data: ' + json.dumps({
+                    'type': 'diagnostic_event',
+                    'operation': 'context_recovery_applied',
+                    'status': 'applied',
+                    'model': model,
+                    'context_limit': committed.get('context_limit'),
+                    'message_count': len(committed.get('messages') or []),
+                    'retry_reason': committed.get('reason'),
+                }) + '\n\n'
+            if committed.get("context_limit"):
+                try:
+                    from src.model_context import remember_provider_context_limit
+
+                    remember_provider_context_limit(
+                        url, model, committed["context_limit"]
+                    )
+                except Exception:
+                    logger.debug(
+                        "[context-recovery] failed to remember provider ceiling",
+                        exc_info=True,
+                    )
         return
 
 
@@ -4517,6 +4593,10 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         None,
     )
     candidate_route_descriptors = kwargs.pop("candidate_route_descriptors", None)
+    # Optional mutable mapping filled only after a candidate's recovered
+    # request emits real output. Keys are candidate indexes. Speculative
+    # fallbacks that never emit leave no entry.
+    context_recovery_out = kwargs.pop("context_recovery_out", None)
     retry_degenerate_stream_once = bool(
         kwargs.pop("retry_degenerate_stream_once", False)
     )
@@ -4609,6 +4689,14 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     "max_tokens": bounded_max_tokens,
                 }
 
+        # Share one mutable bag with the caller so an ``applied`` diagnostic can
+        # commit recovered history immediately without waiting for the generator
+        # to unwind. Speculative candidates that never emit leave this empty.
+        if isinstance(context_recovery_out, dict):
+            candidate_recovery = context_recovery_out.setdefault(i, {})
+            candidate_recovery.clear()
+        else:
+            candidate_recovery = {}
         candidate_stream = _stream_candidate_with_context_recovery(
             url,
             model,
@@ -4632,6 +4720,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
             retry_degenerate_stream_once=retry_degenerate_stream_once,
             retry_transient_precontent=len(cands) == 1 and role_retry_precontent,
             diagnostic_events=diagnostic_events,
+            recovery_out=candidate_recovery,
         )
         try:
             async for chunk in candidate_stream:

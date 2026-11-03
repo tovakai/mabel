@@ -729,6 +729,10 @@ class WebFetchTool:
             summaries.append({
                 "url": request["url"],
                 "exit_code": int(result.get("exit_code", 1)),
+                "fetch_kind": result.get("fetch_kind"),
+                "extraction_goal": request.get("extraction_goal") or "",
+                "truncated": bool(result.get("truncated")),
+                "full": bool(request.get("full")),
             })
         output = "\n\n".join(sections)
         if len(output) > MAX_OUTPUT_CHARS:
@@ -874,7 +878,8 @@ class WebFetchTool:
         # to get the rest, instead of silently presenting a partial page as
         # the whole thing.
         size_note = ""
-        if result.get("truncated"):
+        truncated = bool(result.get("truncated"))
+        if truncated:
             fetched = result.get("fetched_bytes") or 0
             total = result.get("total_bytes")
             total_txt = f" of {total:,} bytes" if total else ""
@@ -891,17 +896,41 @@ class WebFetchTool:
         if len(title) > 300:
             title = title[:300] + "..."
         header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n"
+        used_focused = bool(query)
         if query:
             budget = MAX_OUTPUT_CHARS - len(header) - len(size_note) - 500
             focused = self._focused_passages(text, query, budget)
             text = self._navigation_fallback(text, focused, url, query, budget)
         output = size_note + header + text
+        output_truncated = False
         if len(output) > MAX_OUTPUT_CHARS:
+            output_truncated = True
             output = output[:MAX_OUTPUT_CHARS] + (
                 "\n\n[...truncated; re-call web_fetch with extraction_goal terms to retrieve matching passages]"
                 if not query else "\n\n[...truncated]"
             )
-        return {"output": output, "exit_code": 0, "page_entries": result.get("page_entries") or []}
+        from src.agent_runtime.web_visit_ledger import classify_fetch_kind
+
+        # Download truncation is a partial page. An output-cap on an otherwise
+        # complete/focused body stays in that evidence class so the model can
+        # still request a different extraction_goal without being forced through
+        # a full re-download first.
+        fetch_kind = classify_fetch_kind(
+            extraction_goal=query,
+            full=max_bytes == WEB_FETCH_HARD_MAX_BYTES,
+            truncated=truncated,
+            output=output,
+        )
+        return {
+            "output": output,
+            "exit_code": 0,
+            "page_entries": result.get("page_entries") or [],
+            "fetch_kind": fetch_kind.value,
+            "url": url,
+            "extraction_goal": query,
+            "truncated": truncated or output_truncated,
+            "focused": used_focused,
+        }
 
 
 class PdfExtractTool:

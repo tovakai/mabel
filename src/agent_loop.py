@@ -39,7 +39,22 @@ from src.llm_core import (
     _normalize_http_status,
     _normalize_usage_counts,
 )
-from src.model_context import estimate_tokens, is_local_endpoint
+from src.model_context import (
+    estimate_tokens,
+    is_local_endpoint,
+    remember_provider_context_limit,
+)
+from src.agent_runtime.chat_research_budget import ChatResearchBudget
+from src.agent_runtime.context_recovery import (
+    answering_recovery_bag,
+    compact_canonical_messages_for_limit,
+)
+from src.agent_runtime.web_visit_ledger import (
+    WebVisitLedger,
+    classify_fetch_kind,
+    fetch_request_from_tool_content,
+    request_urls,
+)
 from src.model_profiles import (
     ODYSSEUS_COMPACT_TOOL_SCHEMA_PROFILE,
     is_odysseus_merged_tools_model,
@@ -24089,6 +24104,17 @@ async def _stream_agent_loop_impl(
             if context_resolution is not None and context_resolution.applies_to(candidate_url,candidate_model):
                 if context_resolution.budget_limit:
                     candidate_context = context_resolution.budget_limit
+            from src.model_context import remembered_provider_context_limit
+
+            _remembered_ceiling = remembered_provider_context_limit(
+                candidate_url, candidate_model
+            )
+            if _remembered_ceiling > 0:
+                candidate_context = (
+                    min(candidate_context, _remembered_ceiling)
+                    if candidate_context > 0
+                    else _remembered_ceiling
+                )
             # A proxy can serve a model under a familiar family name while
             # enforcing a smaller context window than the family default.
             # Native clients that know that transport limit may pass it in the
@@ -24999,6 +25025,10 @@ async def _stream_agent_loop_impl(
     _empty_search_browser_fallback_done = False
     _last_web_retry_round_response = ""
     _web_fetch_pagination_counts: collections.Counter = collections.Counter()
+    # Survives prompt compaction: URL visit classes and chat-research progress
+    # are request-local state, not reconstructed from trimmed tool messages.
+    _web_visit_ledger = WebVisitLedger()
+    _chat_research_budget = ChatResearchBudget.from_settings()
     _compact_memory_list_turn = False
     _memory_listing_summary = ""
     _compact_document_list_turn = False
@@ -26069,6 +26099,10 @@ async def _stream_agent_loop_impl(
                 owner=owner,
                 persist=False,
                 compaction_state=_round_compaction_state,
+                context_length=_route_context_lengths.get(
+                    (endpoint_url, model),
+                    context_length,
+                ),
                 **_round_compaction_options,
             )
             if _round_was_compacted:
@@ -26077,6 +26111,15 @@ async def _stream_agent_loop_impl(
                     "[agent] deferred compaction prepared for round %s",
                     round_num,
                 )
+                if diagnostic_events:
+                    yield 'data: ' + json.dumps({
+                        'type': 'diagnostic_event',
+                        'operation': 'compaction_prepared',
+                        'status': 'prepared',
+                        'round': round_num,
+                        'context_limit': _round_context_length,
+                        'message_count': len(messages),
+                    }) + '\n\n'
 
         # A host bridge transport failure is terminal for this turn.  The
         # tool event has already been emitted and appended below; avoid a
@@ -27159,6 +27202,76 @@ async def _stream_agent_loop_impl(
                 _finalize_round_usage()
                 logger.info("[agent] completed preemptive explicit %s", _preemptive_tool)
                 break
+        _context_recovery_bags: Dict[int, Dict[str, Any]] = {}
+
+        def _commit_successful_context_recovery(
+            index: int,
+            candidate_url: str,
+            candidate_model: str,
+        ) -> Optional[Dict[str, Any]]:
+            """Compact canonical history with a learned limit after the answering stream.
+
+            Never adopts provider-wire snapshots (those drop ``_protected`` and
+            other agent metadata). Speculative candidates that never emitted leave
+            ``applied`` unset and are ignored.
+            """
+            nonlocal messages, context_resolution, _last_route_context_length
+            bag = answering_recovery_bag(_context_recovery_bags, index)
+            if bag is None:
+                return None
+            limit = bag.get("context_limit")
+            try:
+                limit_value = int(limit) if limit is not None else 0
+            except (TypeError, ValueError):
+                limit_value = 0
+            if limit_value > 0:
+                remember_provider_context_limit(candidate_url, candidate_model, limit_value)
+                _route_context_lengths[(candidate_url, candidate_model)] = limit_value
+                _last_route_context_length = limit_value
+                if context_resolution is not None:
+                    context_resolution = context_resolution.observe_runtime_limit(limit_value)
+                state = _candidate_request_states.get(index) or _active_route_state
+                route_tools = None
+                if isinstance(state, dict):
+                    route_tools = state.get("tools")
+                if route_tools is None:
+                    route_tools = all_tool_schemas
+                try:
+                    recovery_max = int(bag.get("max_tokens") or max_tokens or 1024)
+                except (TypeError, ValueError):
+                    recovery_max = 1024
+                messages = compact_canonical_messages_for_limit(
+                    messages,
+                    limit_value,
+                    tools=route_tools,
+                    max_tokens=recovery_max,
+                )
+                if isinstance(state, dict):
+                    state["messages"] = messages
+                    state.pop("request_messages", None)
+                    state["context_length"] = limit_value
+                if index == 0 or _pinned_fallback_candidate is not None:
+                    _active_route_state["messages"] = messages
+                    _active_route_state.pop("request_messages", None)
+                    _active_route_state["context_length"] = limit_value
+            bag["committed"] = True
+            logger.info(
+                "[agent] committed context recovery candidate=%s context_limit=%s messages=%s",
+                index,
+                limit_value or None,
+                len(messages),
+            )
+            return {
+                "type": "diagnostic_event",
+                "operation": "context_recovery_committed",
+                "status": "applied",
+                "round": round_num,
+                "model": candidate_model,
+                "context_limit": limit_value or None,
+                "message_count": len(messages),
+                "candidate_index": index,
+            }
+
         _web_round_max_tokens, _web_round_thinking_mode = fast_web_round_budget(
             model, max_tokens, _active_route_state.get("thinking_mode") or thinking_mode,
             round_num=round_num, pure_web_turn=_pure_web_turn,
@@ -27234,6 +27347,7 @@ async def _stream_agent_loop_impl(
             candidate_route_descriptors=_candidate_route_descriptors,
             retry_degenerate_stream_once=_terminal_completion_contract,
             diagnostic_events=diagnostic_events,
+            context_recovery_out=_context_recovery_bags,
         ):
             if not _round_first_event_logged:
                 _round_first_event_logged = True
@@ -27870,6 +27984,23 @@ async def _stream_agent_loop_impl(
                 # Forward error events to frontend as visible text
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
+
+        # Commit successful recovery after the answering stream settles so
+        # diagnostic_events=False (incognito) still persists the learned ceiling
+        # into canonical history. Mid-stream handlers must not race the bag.
+        _recovery_index = candidate_index if isinstance(candidate_index, int) else 0
+        _recovery_url, _recovery_model, _ = (
+            _candidates[_recovery_index]
+            if 0 <= _recovery_index < len(_candidates)
+            else (endpoint_url, model, headers)
+        )
+        _persist_event = _commit_successful_context_recovery(
+            _recovery_index,
+            _recovery_url,
+            _recovery_model,
+        )
+        if _persist_event is not None and diagnostic_events:
+            yield 'data: ' + json.dumps(_persist_event) + '\n\n'
 
         logger.info(
             "[agent-timing] round_stream_done round=%s elapsed=%.3fs text_chars=%s tool_calls=%s first_event=%s first_token=%s",
@@ -33901,9 +34032,76 @@ async def _stream_agent_loop_impl(
                                 "error": "Web recovery action is repeated or exceeds the execution budget.",
                                 "output": _web_execution_budget.instruction(),
                             }
+                        _exec_block = block
+                        if block.tool_type == "web_fetch":
+                            _fetch_req = fetch_request_from_tool_content(block.content or "")
+                            _fetch_urls = request_urls(_fetch_req)
+                            _fetch_goal = str(_fetch_req.get("extraction_goal") or "")
+                            _fetch_full = bool(_fetch_req.get("full"))
+                            _fetch_kind = classify_fetch_kind(
+                                extraction_goal=_fetch_goal,
+                                full=_fetch_full,
+                                truncated=False,
+                            )
+                            _allowed_urls = [
+                                url for url in _fetch_urls
+                                if not _web_visit_ledger.should_suppress(
+                                    url, _fetch_kind, extraction_goal=_fetch_goal
+                                )
+                            ]
+                            _suppressed_urls = [
+                                url for url in _fetch_urls if url not in _allowed_urls
+                            ]
+                            if _fetch_urls and not _allowed_urls:
+                                _prior = _web_visit_ledger.lookup(_fetch_urls[0])
+                                _prior_kind = (
+                                    _prior.kind.value if _prior is not None else "complete"
+                                )
+                                logger.info(
+                                    "[agent] suppressed duplicate web_fetch url=%s kind=%s prior=%s",
+                                    _fetch_urls[0],
+                                    _fetch_kind.value,
+                                    _prior_kind,
+                                )
+                                return block.tool_type, {
+                                    "exit_code": 1,
+                                    "error": "Duplicate web_fetch suppressed",
+                                    "blocked": True,
+                                    "failure_kind": "duplicate_web_fetch",
+                                    "output": (
+                                        f"Already fetched {_fetch_urls[0]} "
+                                        f"({_prior_kind}). Use a new extraction_goal, "
+                                        "full=true after a partial read, or a different "
+                                        "URL. Otherwise answer from evidence already gathered."
+                                    ),
+                                    "fetch_kind": _fetch_kind.value,
+                                    "url": _fetch_urls[0],
+                                    "duplicate_suppressed": True,
+                                    "prior_kind": _prior_kind,
+                                    "suppressed_urls": list(_suppressed_urls),
+                                }
+                            if _suppressed_urls and _allowed_urls:
+                                # Mixed batch: fetch only URLs that still add evidence.
+                                _filtered = {
+                                    "extraction_goal": _fetch_goal,
+                                    "full": _fetch_full,
+                                }
+                                if len(_allowed_urls) == 1:
+                                    _filtered["url"] = _allowed_urls[0]
+                                else:
+                                    _filtered["urls"] = _allowed_urls
+                                _exec_block = ToolBlock(
+                                    block.tool_type,
+                                    json.dumps(_filtered, ensure_ascii=False),
+                                )
+                                logger.info(
+                                    "[agent] filtered web_fetch batch kept=%s suppressed=%s",
+                                    _allowed_urls,
+                                    _suppressed_urls,
+                                )
                         return await execute_action(
                             execute_tool_block, _runtime_action,
-                            block,
+                            _exec_block,
                             session_id=session_id,
                             disabled_tools=set(disabled_tools) | _caller_hard_denials,
                             tool_policy=tool_policy,
@@ -34026,6 +34224,74 @@ async def _stream_agent_loop_impl(
                 and tool_result_is_successful(result)
             ):
                 _has_local_media_evidence = True
+            if block.tool_type == "web_fetch":
+                if result.get("duplicate_suppressed"):
+                    if diagnostic_events:
+                        yield 'data: ' + json.dumps({
+                            'type': 'diagnostic_event',
+                            'operation': 'duplicate_suppression',
+                            'status': 'suppressed',
+                            'round': round_num,
+                            'tool': 'web_fetch',
+                            'url': result.get('url'),
+                            'fetch_kind': result.get('fetch_kind'),
+                            'prior_kind': result.get('prior_kind'),
+                            'suppressed_urls': result.get('suppressed_urls') or [],
+                        }) + '\n\n'
+                elif tool_result_is_successful(result):
+                    _fetch_req = fetch_request_from_tool_content(block.content or "")
+                    _batch_entries = [
+                        entry for entry in (result.get("batch_results") or [])
+                        if isinstance(entry, dict) and entry.get("url")
+                    ]
+                    if _batch_entries:
+                        for _entry in _batch_entries:
+                            if int(_entry.get("exit_code") or 1) != 0:
+                                continue
+                            _recorded_goal = str(
+                                _entry.get("extraction_goal")
+                                or _fetch_req.get("extraction_goal")
+                                or ""
+                            )
+                            _recorded_kind = _entry.get("fetch_kind") or classify_fetch_kind(
+                                extraction_goal=_recorded_goal,
+                                full=bool(_entry.get("full") or _fetch_req.get("full")),
+                                truncated=bool(_entry.get("truncated")),
+                            ).value
+                            try:
+                                _web_visit_ledger.record(
+                                    str(_entry.get("url") or ""),
+                                    _recorded_kind,
+                                    extraction_goal=_recorded_goal,
+                                )
+                            except ValueError:
+                                pass
+                    else:
+                        _recorded_url = str(
+                            result.get("url") or _fetch_req.get("url") or ""
+                        ).strip()
+                        _recorded_goal = str(
+                            result.get("extraction_goal")
+                            or _fetch_req.get("extraction_goal")
+                            or ""
+                        )
+                        _recorded_kind = result.get("fetch_kind")
+                        if not _recorded_kind:
+                            _recorded_kind = classify_fetch_kind(
+                                extraction_goal=_recorded_goal,
+                                full=bool(_fetch_req.get("full")),
+                                truncated=bool(result.get("truncated")),
+                                output=str(result.get("output") or ""),
+                            ).value
+                        if _recorded_url:
+                            try:
+                                _web_visit_ledger.record(
+                                    _recorded_url,
+                                    _recorded_kind,
+                                    extraction_goal=_recorded_goal,
+                                )
+                            except ValueError:
+                                pass
             if block.tool_type == "web_fetch" and _web_fetch_failure_needs_private_browser(result):
                 _web_fetch_needs_private_browser = True
                 messages.append({
@@ -37374,6 +37640,87 @@ async def _stream_agent_loop_impl(
             ),
             "",
         )
+        if (
+            _pure_web_turn
+            and not _artifact_creation_requested
+            and not _force_answer
+            and not _chat_research_budget.exhausted_reason
+        ):
+            _research_decision = _chat_research_budget.observe_round(
+                tool_result_records
+            )
+            if _research_decision.soft_nudge and not _research_decision.hard_reason:
+                messages.append({
+                    "role": "system",
+                    "content": _chat_research_budget.synthesis_instruction(
+                        _research_decision.soft_nudge
+                    ),
+                })
+                if diagnostic_events:
+                    yield 'data: ' + json.dumps({
+                        'type': 'diagnostic_event',
+                        'operation': 'research_budget',
+                        'status': 'soft_nudge',
+                        'round': round_num,
+                        'reason': _research_decision.soft_nudge,
+                        'searches': _chat_research_budget.search_count,
+                        'fetches': _chat_research_budget.fetch_count,
+                        'unique_urls': len(_chat_research_budget.unique_urls),
+                        'research_rounds': _chat_research_budget.research_rounds,
+                    }) + '\n\n'
+            if _research_decision.hard_reason:
+                logger.warning(
+                    "[agent] chat research budget exhausted reason=%s searches=%s fetches=%s stall=%s rounds=%s",
+                    _research_decision.hard_reason,
+                    _chat_research_budget.search_count,
+                    _chat_research_budget.fetch_count,
+                    _chat_research_budget.stall_streak,
+                    _chat_research_budget.research_rounds,
+                )
+                if diagnostic_events:
+                    yield 'data: ' + json.dumps({
+                        'type': 'diagnostic_event',
+                        'operation': 'research_budget',
+                        'status': 'exhausted',
+                        'round': round_num,
+                        'reason': _research_decision.hard_reason,
+                        'searches': _chat_research_budget.search_count,
+                        'fetches': _chat_research_budget.fetch_count,
+                        'unique_urls': len(_chat_research_budget.unique_urls),
+                        'stall_streak': _chat_research_budget.stall_streak,
+                    }) + '\n\n'
+                yield (
+                    "data: "
+                    + json.dumps({
+                        "type": "loop_breaker_triggered",
+                        "reason": "research_budget_exhausted",
+                        "message": (
+                            "Chat web research reached its configured convergence "
+                            "budget, so the agent is synthesizing from gathered evidence."
+                        ),
+                        "round": round_num,
+                        "detail": _research_decision.hard_reason,
+                    })
+                    + "\n\n"
+                )
+                _force_answer = True
+                messages.append({
+                    "role": "system",
+                    "content": _chat_research_budget.synthesis_instruction(
+                        _research_decision.hard_reason
+                    ),
+                })
+                visited = _web_visit_ledger.summary_lines()
+                if visited:
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "Visited URLs this turn (survives compaction):\n"
+                            + "\n".join(visited)
+                        ),
+                    })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
         _all_tool_results_failed = bool(tool_result_records) and all(
             not tool_result_is_successful(record.get("result") or {})
             for record in tool_result_records
