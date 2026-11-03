@@ -221,18 +221,18 @@ def related_verified_episodes(
                 -pair[0]["association_score"], pair[1],
             ))
             for edge, other_id in candidates:
-                if other_id not in distances:
-                    if len(ids) >= max_nodes:
-                        truncated = True
-                        continue
-                    ids.append(other_id)
-                    distances[other_id] = depth + 1
                 pair = tuple(sorted((node_id, other_id)))
                 if pair in seen_edges:
                     continue
                 if len(edges) >= max_edges:
                     truncated = True
                     continue
+                if other_id not in distances:
+                    if len(ids) >= max_nodes:
+                        truncated = True
+                        continue
+                    ids.append(other_id)
+                    distances[other_id] = depth + 1
                 seen_edges.add(pair)
                 edges.append(edge)
 
