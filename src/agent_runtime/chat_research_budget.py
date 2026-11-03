@@ -5,6 +5,13 @@ interactive agent from circling: progress is new unique queries/URLs, stall is
 repeated work without new evidence, and absolute search/fetch/hard-round caps
 force synthesis. Soft synthesis is advisory only — productive research may
 continue past that threshold until a hard limit or stall is hit.
+
+Read-only local retrieval (vault/workspace reads) participates in stall
+detection and the advisory soft nudge, with progress meaning new evidence: a
+file not yet read, result paths not yet seen, or a new URL. Empty results,
+failures and repeats are not progress. Local rounds never count toward the
+web search/fetch budgets or the hard round limit, so a long, productive vault
+audit is never cut off by them.
 """
 from __future__ import annotations
 
@@ -50,6 +57,9 @@ class ChatResearchBudget:
     unique_urls: set[str] = field(default_factory=set)
     exhausted_reason: Optional[str] = None
     soft_nudge_emitted: bool = False
+    # Web + local retrieval rounds (advisory soft nudge only).
+    retrieval_rounds: int = 0
+    evidence_keys: set[str] = field(default_factory=set)
 
     @classmethod
     def from_settings(cls) -> "ChatResearchBudget":
@@ -72,8 +82,8 @@ class ChatResearchBudget:
     def synthesis_instruction(self, reason: str) -> str:
         if reason == "stall":
             detail = (
-                "Recent web tools repeated prior queries or URLs without adding "
-                "new evidence."
+                "Recent retrieval tools repeated earlier queries, URLs or results, "
+                "or returned nothing new."
             )
         elif reason == "search_budget":
             detail = f"The configured search budget ({self.max_searches}) is exhausted."
@@ -91,13 +101,13 @@ class ChatResearchBudget:
             )
         if reason == "soft_synthesis":
             return (
-                "You have gathered substantial web evidence. Prefer synthesizing "
-                "an answer from sources already collected. You may still fetch a "
-                "new URL or run a materially different search if a concrete gap "
-                f"remains. {detail}"
+                "You have gathered substantial evidence. Prefer synthesizing "
+                "an answer from sources already collected. You may still read a "
+                "specific source or run a materially different search if a concrete "
+                f"gap remains. {detail}"
             )
         return (
-            "Stop calling web tools and synthesize the best answer from evidence "
+            "Stop calling retrieval tools and synthesize the best answer from evidence "
             "already gathered. Cite sources you have. State remaining gaps briefly "
             f"instead of searching again. {detail}"
         )
@@ -117,11 +127,19 @@ class ChatResearchBudget:
                 "web_search", "web_fetch", "private_browser", "research_parallel",
             }
         ]
-        if not web_records:
+        local_records = [record for record in records if record.get("tool_name") in LOCAL_RETRIEVAL_TOOLS]
+        if not web_records and not local_records:
             return ResearchBudgetDecision()
 
-        self.research_rounds += 1
+        self.retrieval_rounds += 1
+        if web_records:
+            self.research_rounds += 1
         made_progress = False
+        for record in local_records:
+            keys = _local_evidence_keys(record)
+            if keys - self.evidence_keys:
+                made_progress = True
+            self.evidence_keys |= keys
         for record in web_records:
             name = record.get("tool_name")
             content = str(record.get("content") or "")
@@ -184,12 +202,71 @@ class ChatResearchBudget:
 
         soft_nudge = None
         if (
-            self.research_rounds >= self.soft_synthesis_rounds
+            self.retrieval_rounds >= self.soft_synthesis_rounds
             and not self.soft_nudge_emitted
         ):
             self.soft_nudge_emitted = True
             soft_nudge = "soft_synthesis"
         return ResearchBudgetDecision(soft_nudge=soft_nudge)
+
+
+# Read-only local retrieval that participates in stall detection.
+LOCAL_RETRIEVAL_TOOLS = frozenset({
+    "read_file", "grep", "glob", "ls", "get_workspace",
+    "vault_knowledge_search", "vault_read_range", "vault_retrieve_batch",
+    "vault_traverse_graph", "vault_index_status", "vault_audit", "dispatch_dottie",
+})
+_READ_TOOLS = frozenset({"read_file", "vault_read_range"})
+_EMPTY_RESULT_PREFIXES = ("no files matching", "no matches", "no results", "0 matches", "(empty", "empty directory")
+
+
+def _local_evidence_keys(record: Mapping[str, Any]) -> set[str]:
+    """Deterministic evidence identities for one local retrieval result.
+
+    A file read is keyed by its path (so reading a file a search only listed is
+    new evidence); search/listing results by the paths or lines they surface.
+    Failures and empty results yield no evidence.
+    """
+    import json
+
+    name = str(record.get("tool_name") or "")
+    result = record.get("result") if isinstance(record.get("result"), dict) else {}
+    if result.get("exit_code") not in (0, None) or result.get("error") or result.get("blocked"):
+        return set()
+    output = str(result.get("output") or "").strip()
+    if not output or output.casefold().startswith(_EMPTY_RESULT_PREFIXES):
+        return set()
+    try:
+        args = json.loads(str(record.get("content") or "{}"))
+    except (TypeError, ValueError):
+        args = {}
+    args = args if isinstance(args, dict) else {}
+    if name in _READ_TOOLS:
+        target = str(args.get("path") or args.get("note_id") or args.get("file") or "").strip()
+        span = f":{args.get('start_line') or args.get('offset') or ''}-{args.get('end_line') or args.get('limit') or ''}"
+        return {f"read:{target}{span}" if target else f"read-output:{hash(output)}"}
+    keys = set()
+    if output.startswith("{"):
+        try:
+            parsed = json.loads(output)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            for bucket in ("matches", "results", "findings", "notes"):
+                for item in parsed.get(bucket) or ():
+                    if isinstance(item, dict):
+                        path = item.get("rel_path") or item.get("path") or item.get("note_id")
+                        if path:
+                            keys.add(f"path:{path}:{item.get('start_line') or ''}")
+            if keys:
+                return keys
+    for line in output.splitlines():
+        line = line.strip()
+        if not line or line.endswith(":") and "/" in line:
+            continue  # listing header
+        head = line.split(":", 1)[0] if "/" in line.split(":", 1)[0] else ""
+        keys.add(f"path:{head}" if head else f"line:{name}:{line[:200]}")
+    return keys
 
 
 def _search_query(content: str) -> str:

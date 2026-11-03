@@ -116,7 +116,7 @@ def test_research_budget_forces_synthesis_on_stall_not_four_round_cap():
         }
     ])
     assert third.hard_reason == "stall"
-    assert "Stop calling web tools" in budget.synthesis_instruction(third.hard_reason)
+    assert "Stop calling retrieval tools" in budget.synthesis_instruction(third.hard_reason)
 
 
 def test_soft_synthesis_is_advisory_while_productive_research_continues():
@@ -150,7 +150,7 @@ def test_soft_synthesis_is_advisory_while_productive_research_continues():
     assert budget.research_rounds == 6
     assert budget.exhausted_reason is None
     assert "Prefer synthesizing" in budget.synthesis_instruction("soft_synthesis")
-    assert "Stop calling web tools" not in budget.synthesis_instruction("soft_synthesis")
+    assert "Stop calling retrieval tools" not in budget.synthesis_instruction("soft_synthesis")
 
 
 def test_hard_rounds_eventually_converge_after_soft_nudge():

@@ -7849,7 +7849,9 @@ _WEB_UNAVAILABLE_PARTIAL_NOTE = (
     "your available tools can cover (for example the user's vault notes; use "
     "research_parallel only with mode=vault). Then state plainly that the "
     "web/online part could not be checked because web search is off, and do not "
-    "guess at current public information."
+    "guess at current public information. No web page or URL was fetched this "
+    "turn: do not claim or imply that you read any linked page, and do not treat "
+    "content the user did not paste as if it had been supplied."
 )
 
 # Tools a contract may contain while still being a pure web turn.
@@ -37943,7 +37945,15 @@ async def _stream_agent_loop_impl(
             "",
         )
         if (
-            _pure_web_turn
+            (
+                _pure_web_turn
+                # Contract retrieval turns (vault and/or web) use the same
+                # convergence budget; previously only pure web turns had one.
+                or (
+                    turn_contract is not None
+                    and bool(set(turn_contract.capabilities) & {"search_browser", "workspace_read"})
+                )
+            )
             and not _artifact_creation_requested
             and not _force_answer
             and not _chat_research_budget.exhausted_reason

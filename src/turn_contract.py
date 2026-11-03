@@ -6684,6 +6684,21 @@ def resolve_full_inventory_contract(*, schemas: Iterable[dict], policy: ToolPoli
                         catalog_json=tuple(json.dumps(inventory[n], sort_keys=True) for n in sorted(executable)))
 
 
+def web_seal_with_local_families(selected_tools, families) -> bool:
+    """A web-only exact seal (e.g. a pasted URL -> web_fetch) on a request that
+    also selected an independently answerable non-web family (vault, notes...).
+
+    Such a seal must not erase the local families, and its web tools are
+    optional rather than required: the URL may only be context, and with web
+    off the local part must still run.
+    """
+    if not selected_tools:
+        return False
+    requested = {canonical_tool(n) for n in selected_tools} - {"ask_user", "update_plan"}
+    local = set(families or ()) - {"search_browser", "unknown"}
+    return bool(requested) and requested <= FAMILY_TOOLS["search_browser"] and bool(local)
+
+
 def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict], policy: ToolPolicy,
                           required_tools: Iterable[str] = (),
                           required_capabilities: Iterable[str] | None = None,
@@ -6763,6 +6778,11 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
             # a sufficient capability declaration. Do not erase it merely
             # because the broader lexical family classifier was conservative.
             selected = requested
+        elif web_seal_with_local_families(selected_tools, families):
+            # Keep the local families; the web seal only adds its exact tool.
+            selected = set().union(*(
+                FAMILY_TOOLS.get(f, frozenset()) for f in families if f != "search_browser"
+            )) | requested
         else:
             selected.intersection_update(requested)
             # Read-only families (e.g. default-vault workspace_read) must not

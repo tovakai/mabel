@@ -3978,6 +3978,15 @@ def setup_chat_routes(
                 # Restore relevance from the server's interrupted turn, while
                 # current policy and the exact approval still govern execution.
                 _task_result_tools.update(pending_tool_approval.selected_tools)
+            from src.turn_contract import web_seal_with_local_families
+            if web_seal_with_local_families(_selected_tools, _turn_capabilities):
+                # A URL next to an independently answerable local task: fetching
+                # it is optional, never a requirement that can erase the local
+                # part. With web explicitly off the web part cannot be satisfied
+                # at all; the agent reports it as unavailable instead.
+                _required_tools.difference_update(FAMILY_TOOLS["search_browser"])
+                if _web_explicitly_off:
+                    _active_turn_capabilities = frozenset(_active_turn_capabilities) - {"search_browser"}
             _turn_contract = resolve_turn_contract(
                 capabilities=_turn_capabilities, schemas=_contract_schemas,
                 policy=_contract_policy, required_tools=_required_tools,
