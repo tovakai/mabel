@@ -779,8 +779,8 @@ class WebFetchTool:
             if suffix in {".html", ".htm"}:
                 return {
                     "error": (
-                        "web_fetch: local HTML requires private_browser so rendered DOM and "
-                        "page errors are inspected"
+                        "web_fetch: local HTML is not a public web resource. "
+                        "Use read_file for its source; browser page rendering is unavailable."
                     ),
                     "exit_code": 1,
                 }
