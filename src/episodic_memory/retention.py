@@ -327,3 +327,68 @@ def reconcile_missing_sessions(
         "checked_sessions": len(ids), "deleted_sessions": deleted_sessions,
         "scrubbed": scrubbed, "next_after_session_id": next_after,
     }
+
+
+def reconcile_invalid_sources(
+    queue: CandidateQueue, *, db, limit: int = 100,
+    after_candidate_id: str | None = None,
+) -> dict:
+    """Manually scrub candidates after missed message deletions or edits.
+
+    Unlike deleted-session reconciliation, this checks the exact assistant
+    receipt *and* the prior user excerpt. It preserves unrelated sessions
+    and makes no network request or vault write. The cursor uses stable
+    candidate IDs, so deletion during the sweep does not skip later records.
+    """
+    if not isinstance(queue, CandidateQueue):
+        raise TypeError("Expected owner-scoped CandidateQueue")
+    if type(limit) is not int or not 1 <= limit <= 1000:
+        raise CandidateAdmissionError("Source reconciliation limit must be 1..1000")
+    if after_candidate_id is not None and (
+        not isinstance(after_candidate_id, str)
+        or not re.fullmatch(r"[0-9a-f]{32}", after_candidate_id)
+    ):
+        raise CandidateAdmissionError("Invalid source reconciliation cursor")
+    from sqlalchemy import text
+    from .promotion import _SOURCE, _verified_transcript
+
+    with queue._connect() as local:
+        rows = [dict(row) for row in local.execute(
+            "SELECT * FROM candidates WHERE owner=? AND source_kind='conversation' "
+            "AND kind='experience' AND id>? "
+            "ORDER BY id LIMIT ?",
+            (queue.owner,after_candidate_id or "",limit+1),
+        )]
+    page = rows[:limit]
+    next_after = page[-1]["id"] if len(rows) > limit and page else None
+    scrubbed = 0
+    deleted_sessions = 0
+    for candidate in page:
+        match = _SOURCE.fullmatch(candidate["source_ref"])
+        if match is None:
+            continue
+        session_id, message_id = match.group("session"), match.group("message")
+        session_owner = db.execute(
+            text("SELECT owner FROM sessions WHERE id=:sid"),
+            {"sid":session_id},
+        ).scalar_one_or_none()
+        if owner_key(session_owner) != queue.owner:
+            result = purge_deleted_session(
+                queue.path.parent, owner=queue.owner, session_id=session_id,
+            )
+            scrubbed += result["scrubbed"]
+            deleted_sessions += 1
+            continue
+        try:
+            _verified_transcript(queue, candidate, db)
+        except (CandidateAdmissionError, PermissionError):
+            result = invalidate_session_messages(
+                queue.path.parent, owner=queue.owner, session_id=session_id,
+                removed_message_ids=[message_id],
+            )
+            scrubbed += result["scrubbed"]
+    return {
+        "checked_candidates": len(page), "scrubbed": scrubbed,
+        "deleted_sessions": deleted_sessions,
+        "next_after_candidate_id": next_after,
+    }
