@@ -318,3 +318,45 @@ async def test_missing_or_modified_promoted_note_never_exposed(pilot):
     assert result["skipped_invalid"]>=1
     assert all(x["target_id"]!=related["id"] for x in result["suggestions"])
     assert all("untrusted, modified" not in text for batch in record["inputs"] for text in batch)
+
+
+@pytest.mark.asyncio
+async def test_session_memory_disabled_while_embedding_aborts_seed(pilot):
+    (engine,state,queue,policy,vault,protected,private,seed,
+     related,unrelated,route_calls,record,invoke,embed,quiet)=pilot
+    async def revoke_during_inference(route,texts):
+        vectors=await embed(route,texts)
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE sessions SET memory_injection_enabled=0 WHERE id='chat-one'"
+            ))
+        return vectors
+    with pytest.raises(CandidateAdmissionError,match="Seed source was modified"):
+        await invoke(embed_call=revoke_during_inference)
+
+
+@pytest.mark.asyncio
+async def test_no_valid_comparison_candidate_skips_gpu_entirely(pilot):
+    (engine,state,queue,policy,vault,protected,private,seed,
+     related,unrelated,route_calls,record,invoke,embed,quiet)=pilot
+    purge_deleted_session(state,owner="alice",session_id="chat-two")
+    purge_deleted_session(state,owner="alice",session_id="chat-three")
+    result=await invoke()
+    assert result["embedding_invoked"] is False
+    assert result["suggestions"]==[]
+    assert route_calls==[] and record["inputs"]==[]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [
+    [float("nan"),0.0,1.0],
+    [0.0,0.0,0.0],
+    [1.0,0.0],
+])
+async def test_invalid_embedding_values_fail_closed(pilot,bad):
+    (engine,state,queue,policy,vault,protected,private,seed,
+     related,unrelated,route_calls,record,invoke,embed,quiet)=pilot
+    async def malformed(route,texts):
+        return [list(bad) for _ in texts]
+    with pytest.raises(model_roles.CapabilityUnavailable):
+        await invoke(embed_call=malformed)
