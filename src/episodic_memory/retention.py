@@ -165,3 +165,53 @@ def complete_episode_deletions(
             (queue.owner,),
         ).fetchone()[0]
         return {"cleaned_episode_files": cleaned, "pending_episode_files": remaining}
+
+
+def reconcile_missing_sessions(
+    queue: CandidateQueue, *, db, limit: int = 100,
+) -> dict:
+    """Manually replay privacy scrubs missed by a crash after canonical delete.
+
+    Checks the current owner-scoped session table, not model advice. Does not
+    touch Markdown; verified episode files remain in the deletion queue for
+    a separately approved target-vault cleanup.
+    """
+    if not isinstance(queue, CandidateQueue):
+        raise TypeError("Expected owner-scoped CandidateQueue")
+    if type(limit) is not int or not 1 <= limit <= 1000:
+        raise CandidateAdmissionError("Reconciliation limit must be 1..1000")
+    from sqlalchemy import text
+
+    with queue._connect() as local:
+        refs = [row[0] for row in local.execute(
+            "SELECT source_ref FROM candidates WHERE owner=? "
+            "AND source_kind='conversation' ORDER BY created_at,id",
+            (queue.owner,),
+        )]
+    ids = []
+    for ref in refs:
+        match = re.fullmatch(
+            r"chat:([A-Za-z0-9_.:-]{1,128}):message:[A-Za-z0-9_.:-]{1,128}",
+            ref,
+        )
+        if match and match.group(1) not in ids:
+            ids.append(match.group(1))
+            if len(ids) >= limit:
+                break
+    scrubbed = 0
+    deleted_sessions = 0
+    for session_id in ids:
+        owner = db.execute(
+            text("SELECT owner FROM sessions WHERE id=:sid"),
+            {"sid": session_id},
+        ).scalar_one_or_none()
+        if owner_key(owner) != queue.owner:
+            result = purge_deleted_session(
+                queue.path.parent, owner=queue.owner, session_id=session_id,
+            )
+            scrubbed += result["scrubbed"]
+            deleted_sessions += 1
+    return {
+        "checked_sessions": len(ids), "deleted_sessions": deleted_sessions,
+        "scrubbed": scrubbed,
+    }
