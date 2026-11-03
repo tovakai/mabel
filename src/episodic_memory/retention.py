@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+import os
 import re
 
 from src.owner_identity import owner_key, is_request_sentinel_owner
@@ -25,10 +26,20 @@ def _queue_if_present(storage_dir: str | Path, owner: str) -> CandidateQueue | N
     if not key or is_request_sentinel_owner(key):
         return None
     directory = Path(storage_dir).expanduser()
-    if not directory.is_absolute() or not directory.is_dir():
-        return None
+    if not directory.is_absolute():
+        raise CandidateAdmissionError("Episodic retention directory must be absolute")
     path = directory / (sha256(key.encode("utf-8")).hexdigest()[:24] + ".sqlite")
-    if not path.is_file() or path.is_symlink():
+    if path.is_symlink():
+        raise CandidateAdmissionError("Refusing symlinked retention database")
+    if path.is_file():
+        return CandidateQueue(directory, owner=key)
+    # A late chat response can race with a deletion before its first capture.
+    # The experimental capture pilot must leave a tombstone even when a queue
+    # has not been created yet. Disabled production installs create nothing.
+    pilot = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+        "1", "true", "yes",
+    }
+    if not pilot:
         return None
     return CandidateQueue(directory, owner=key)
 
