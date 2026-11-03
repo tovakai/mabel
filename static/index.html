@@ -279,6 +279,7 @@
   <link rel="stylesheet" href="/static/css/documents-gallery-editor.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/email-calendar-notes-tasks.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/cookbook-research-memory-settings.css?v=20260929csssplit">
+  <link rel="stylesheet" href="/static/css/strata-control.css?v=20261103gyro1">
   <link rel="modulepreload" href="/static/app.js?v=20260929csssplit">
 <link rel="modulepreload" href="/static/js/chat.js?v=20260917toolttft1">
   <link rel="modulepreload" href="/static/js/ui.js?v=20260916largetoolscroll1">
@@ -1173,6 +1174,12 @@
               </button>
             </div>
           </div>
+          <!-- Local Strata / Gyro-S service control (visible only when enabled) -->
+          <button type="button" id="strata-toggle-btn" class="input-icon-btn strata-toggle" aria-label="Strata Gyro-S" aria-pressed="false" title="Strata Gyro-S" hidden>
+            <span class="strata-toggle-dot" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M6.2 5.8a9 9 0 1 0 11.6 0"/></svg>
+            <span class="strata-toggle-label" id="strata-toggle-label">Gyro-S</span>
+          </button>
           <!-- Web search (magnifying glass) -->
           <button type="button" class="input-icon-btn" title="Web search" id="web-toggle-btn" data-mode-tool="true" aria-label="Web search" aria-pressed="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2695,6 +2702,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js?v=20260912writingstyle3"></script>
 <script type="module" src="/static/js/assistant.js?v=20260912firefoxjscleanup1"></script>
+<script type="module" src="/static/js/strataControl.js?v=20261103gyro1"></script>
 <script type="module" src="/static/app.js?v=20260929csssplit"></script>  <!-- app.js must be LAST -->
   <script type="module" src="/static/js/init.js?v=20260829chatstyle12"></script>
 <script type="module" src="/static/js/a11y.js"></script>
