@@ -187,12 +187,11 @@ async def test_edited_source_fails_before_egress(pilot):
 @pytest.mark.asyncio
 async def test_deleted_source_during_inference_cannot_be_reviewed(pilot):
     engine, queue, captured, record, invoke, policy, model_call, quiet = pilot
-    async def deleted(**kwargs):
-        record["calls"] += 1
-        with engine.begin() as conn:
-            conn.execute(text("DELETE FROM chat_messages WHERE id='msg-two'"))
-        return '{"recommendation":"promote","confidence":99,"rationale_code":"meaningful_discovery"}'
     with Session(engine) as db:
+        async def deleted(**kwargs):
+            record["calls"] += 1
+            db.execute(text("DELETE FROM chat_messages WHERE id='msg-two'"))
+            return '{"recommendation":"promote","confidence":99,"rationale_code":"meaningful_discovery"}'
         with pytest.raises(CandidateAdmissionError, match="receipt is missing"):
             await dottie_review.review_candidate_with_dottie(
                 queue,captured["id"],db=db,policy=policy,
