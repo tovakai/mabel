@@ -87,11 +87,14 @@ def _check_source_memory_controls(db, candidate: dict) -> None:
     match = _SOURCE.fullmatch(candidate["source_ref"])
     if not match:
         raise CandidateAdmissionError("Candidate has no valid persisted source")
-    setting = db.execute(
-        text("SELECT memory_injection_enabled FROM sessions WHERE id=:id"),
+    settings = db.execute(
+        text("SELECT memory_extraction_enabled, memory_injection_enabled "
+             "FROM sessions WHERE id=:id"),
         {"id": match["session"]},
-    ).scalar_one_or_none()
-    if setting is False or setting == 0:
+    ).mappings().first()
+    if not settings or settings["memory_extraction_enabled"] not in (True, 1):
+        raise PermissionError("Source session has memory extraction disabled")
+    if settings["memory_injection_enabled"] not in (True, 1):
         raise PermissionError("Source session has memory injection disabled")
 
 
@@ -169,6 +172,9 @@ async def review_candidate_with_dottie(
             "interpretation_unverified": row["interpretation"][:500],
         }, ensure_ascii=False)},
     ]
+    # The quiet gate is process-local. When called from a separate operator
+    # CLI it cannot observe an already-running WebUI server's activity.
+    # Do not use this one-shot pilot as an unattended scheduler.
     if wait_for_quiet is None:
         from src.interactive_gate import wait_for_interactive_quiet
         wait_for_quiet = wait_for_interactive_quiet
