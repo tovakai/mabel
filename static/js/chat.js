@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon } from './chatRenderer.js?v=20261028agentapprovals1';
+import chatRenderer, { renderToolIcon, refreshAgentThreadFold } from './chatRenderer.js?v=20261103actionfold1';
 import chatStream from './chatStream.js?v=20260914pdfstrip1';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
@@ -1134,6 +1134,7 @@ import { invalidateSettings } from './appConfig.js';
       node.className = 'agent-thread-node running';
       node.innerHTML = '<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">▶</span><span class="agent-thread-tool">Writing</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content"></div>';
       thread.appendChild(node);
+      refreshAgentThreadFold(thread);
       chatBox.insertBefore(thread, msg);
       msg._docWritingThread = thread;
 
@@ -1186,6 +1187,7 @@ import { invalidateSettings } from './appConfig.js';
       const header = node.querySelector('.agent-thread-header');
       if (header) header.appendChild(status);
     }
+    refreshAgentThreadFold(thread);
   }
 
   let currentAccumulated = ''; // Track accumulated text across function scope
@@ -2670,6 +2672,9 @@ import { invalidateSettings } from './appConfig.js';
       const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
       if (_ws) {
         fd.append('workspace', _ws);
+      } else if (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE_OPTED_OUT, '') === '1') {
+        // User cleared the workspace pill; do not re-bind Core of Truth.
+        fd.append('workspace_opt_out', 'true');
       }
       try {
         const activeDirs = await import('./activeDirectories.js');
@@ -4797,6 +4802,7 @@ import { invalidateSettings } from './appConfig.js';
                 node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header">${toolIcon}<span class="agent-thread-tool">${esc(toolLabel)}</span>${toolHeaderAction}<span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
+                refreshAgentThreadFold(threadWrap);
                 currentToolBubble = node;
                 if (_isPrivateBrowserTool(json.tool)) {
                   _showPrivateBrowserPreview(json.command || '', node.querySelector('.agent-thread-content'));
@@ -4953,6 +4959,7 @@ import { invalidateSettings } from './appConfig.js';
 	                  const _wasOpen = currentToolBubble.classList.contains('open') || browserTool;
                   currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '') + (browserTool ? ' browser-preview-node' : '');
                   currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span>${toolIcon2}<span class="agent-thread-tool">${esc(toolInfo2.label || json.tool)}</span>${toolHeaderAction2}<span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron" aria-hidden="true"></span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  refreshAgentThreadFold(currentToolBubble.closest('.agent-thread'));
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
@@ -6450,6 +6457,7 @@ import { invalidateSettings } from './appConfig.js';
         '<span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">' +
         (command ? '<pre class="agent-thread-cmd">' + uiModule.esc(command) + '</pre>' : '') + '</div>';
       thread.appendChild(node);
+      refreshAgentThreadFold(thread);
       box.appendChild(thread);
       replayNodes.push(thread);
       currentToolThread = thread;
@@ -6474,7 +6482,10 @@ import { invalidateSettings } from './appConfig.js';
         (command ? '<pre class="agent-thread-cmd">' + uiModule.esc(command) + '</pre>' : '') +
         (output ? '<details class="agent-tool-output"><summary>Output</summary><pre>' + uiModule.esc(output) + '</pre></details>' : '') +
         '</div>';
-      if (currentToolThread) currentToolThread.classList.remove('streaming');
+      if (currentToolThread) {
+        currentToolThread.classList.remove('streaming');
+        refreshAgentThreadFold(currentToolThread);
+      }
     };
 
     try {
@@ -8213,17 +8224,38 @@ import { invalidateSettings } from './appConfig.js';
         }
         return;
       }
+      const threadFold = e.target.closest('.agent-thread-fold');
+      if (threadFold) {
+        e.preventDefault();
+        e.stopPropagation();
+        const thread = threadFold.closest('.agent-thread');
+        if (!thread) return;
+        const opened = thread.classList.toggle('expanded');
+        refreshAgentThreadFold(thread);
+        if (opened) {
+          const pendingCard = thread.nextElementSibling;
+          if (pendingCard?.classList.contains('ask-user-card')) {
+            requestAnimationFrame(() => pendingCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+          }
+        }
+        return;
+      }
       const header = e.target.closest('.agent-thread-header');
       if (!header) return;
       if (e.target.closest('.agent-thread-header-link')) return;
       const node = header.closest('.agent-thread-node');
       if (!node) return;
       if (node.classList.contains('browser-preview-node')) return;
+      // Expanding a single action implies opening the thread summary first.
+      const thread = node.closest('.agent-thread');
+      if (thread && !thread.classList.contains('expanded')) {
+        thread.classList.add('expanded');
+        refreshAgentThreadFold(thread);
+      }
       const opened = node.classList.toggle('open');
       if (opened) {
         // Expanding the final tool trace can push a pending ask_user card below
         // the viewport.  Keep that immediately-adjacent prompt visible.
-        const thread = node.closest('.agent-thread');
         const pendingCard = thread?.nextElementSibling;
         if (pendingCard?.classList.contains('ask-user-card')) {
           requestAnimationFrame(() => pendingCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));

@@ -565,7 +565,14 @@ def test_browse_marks_root_unselectable_and_vet_endpoint(monkeypatch):
     assert default(request=object()) == {"ok": True, "path": home}
 
     monkeypatch.setenv("ODYSSEUS_WORKSPACE_DEFAULT", "/")
+    # Env default rejected; vault target may still provide a usable path.
+    from src.agent_runtime import vault_target as vt
+    monkeypatch.setattr(vt, "persisted_vault_path", lambda: None)
     assert default(request=object()) == {"ok": False, "path": None}
+
+    monkeypatch.delenv("ODYSSEUS_WORKSPACE_DEFAULT", raising=False)
+    monkeypatch.setattr(vt, "persisted_vault_path", lambda: home)
+    assert default(request=object()) == {"ok": True, "path": home}
 
 
 # ── send-time privilege gate (no path oracle for non-admins) ────────────

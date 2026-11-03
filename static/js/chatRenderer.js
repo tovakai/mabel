@@ -326,6 +326,44 @@ export function getToolActionTarget(tool, command, data = null) {
   return null;
 }
 
+/** Keep the agent-thread action list behind a single click-to-expand summary. */
+export function refreshAgentThreadFold(thread) {
+  if (!thread || !thread.classList || !thread.classList.contains('agent-thread')) return null;
+  const nodes = Array.from(thread.children).filter((el) => el.classList?.contains('agent-thread-node'));
+  let fold = thread.querySelector(':scope > .agent-thread-fold');
+  if (!nodes.length) {
+    if (fold) fold.remove();
+    thread.classList.remove('expanded');
+    return null;
+  }
+  if (!fold) {
+    fold = document.createElement('button');
+    fold.type = 'button';
+    fold.className = 'agent-thread-fold';
+    fold.setAttribute('aria-expanded', 'false');
+    thread.insertBefore(fold, thread.firstChild);
+  }
+  const labels = nodes
+    .map((node) => String(node.querySelector('.agent-thread-tool')?.textContent || '').trim())
+    .filter(Boolean);
+  const unique = [];
+  for (const label of labels) {
+    if (!unique.includes(label)) unique.push(label);
+  }
+  const count = nodes.length;
+  const preview = unique.slice(0, 3).join(', ') + (unique.length > 3 ? '…' : '');
+  const expanded = thread.classList.contains('expanded');
+  const noun = count === 1 ? 'action' : 'actions';
+  fold.innerHTML =
+    `<span class="agent-thread-fold-chevron" aria-hidden="true"></span>` +
+    `<span class="agent-thread-fold-count">${count} ${noun}</span>` +
+    (preview ? `<span class="agent-thread-fold-preview">${uiModule.esc(preview)}</span>` : '');
+  fold.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  fold.title = expanded ? 'Hide actions' : 'Show actions';
+  fold.setAttribute('aria-label', expanded ? `Hide ${count} ${noun}` : `Show ${count} ${noun}`);
+  return fold;
+}
+
 export function renderToolIcon(tool, command, data = null) {
   const icon = getToolIcon(tool);
   if (!icon) return '';
@@ -3438,6 +3476,7 @@ export function addMessage(role, content, modelName, metadata) {
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
+          refreshAgentThreadFold(threadWrap);
           // Check if next round has text — extend line down to connect
           const nextTxt = (roundTexts[r + 1] || '').trim();
           if (nextTxt) threadWrap.classList.add('has-bottom');

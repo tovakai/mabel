@@ -12,7 +12,15 @@ import json
 
 import pytest
 
-from src.agent_loop import TOOL_SECTIONS, _API_AGENT_RULES, _DOMAIN_RULES, _compact_native_route_tools
+from src.agent_loop import (
+    TOOL_SECTIONS,
+    _API_AGENT_RULES,
+    _DOMAIN_RULES,
+    _apply_notes_only_tool_clamp,
+    _compact_native_route_tools,
+    _looks_like_explicit_notes_only_turn,
+    _notes_only_clamp_allowed,
+)
 from src.agent_runtime.conversational_catalog import conversational_catalog_contract
 from src.agent_runtime.tool_catalog import active_catalog, bind_catalog, discover_tools
 from src.tool_policy import WEB_TOOL_NAMES, ToolPolicy
@@ -84,7 +92,10 @@ def test_b_factual_chapter_question_is_factual_public_with_web_surface():
     assert conversational_retrieval_intent(_FACTUAL, workspace=True) == "factual_public"
     offered = _offered_names(_contract(_FACTUAL))
     assert "web_search" in offered
-    assert "research_parallel" in offered
+    assert "web_fetch" in offered
+    # Lean public lookup: no vault/parallel fan-out for a simple chapter/plot ask.
+    assert "research_parallel" not in offered
+    assert "vault_knowledge_search" not in offered
     assert "Do not invent plot" in TOOL_SECTIONS["web_search"]
 
 
@@ -113,9 +124,18 @@ def test_d_vault_notes_question_is_vault_only_not_web_family():
 
 def test_e_public_what_is_offers_web_lookup():
     assert conversational_retrieval_intent(_PUBLIC, workspace=True) == "factual_public"
+    assert conversational_retrieval_intent(
+        "What is Fruit of Grisaia about?", workspace=True,
+    ) == "factual_public"
     offered = _offered_names(_contract(_PUBLIC))
     assert "web_search" in offered
-    assert "research_parallel" in offered
+    assert "web_fetch" in offered
+    assert "research_parallel" not in offered
+    assert "vault_knowledge_search" not in offered
+    assert selected_tools_for_request(_PUBLIC) == frozenset({
+        "web_search", "web_fetch", "ask_user", "update_plan",
+    })
+    assert "single `web_search`" in _API_AGENT_RULES
 
 
 def test_f_disabled_web_or_missing_compound_blocks_unauthorized_surface():
@@ -201,3 +221,30 @@ def test_empty_web_notice_is_not_substantive_source():
     assert pr._substantive_web_results([{
         "title": "Wiki", "url": "https://example.test/x", "snippet": "ok", "engine": "ddg",
     }])
+
+
+def test_compare_and_vault_notes_are_not_personal_notes_only_clamp():
+    """Regression: 'my notes' + public/compare must not collapse to manage_notes."""
+    assert not _looks_like_explicit_notes_only_turn(_PARALLEL)
+    assert not _notes_only_clamp_allowed(_PARALLEL, workspace=True)
+    assert not _notes_only_clamp_allowed(_PARALLEL, workspace=False)
+    assert not _notes_only_clamp_allowed(_VAULT, workspace=True)
+    # Pure personal-notes create still clamps.
+    assert _looks_like_explicit_notes_only_turn("Add a note to buy milk tomorrow")
+    assert _notes_only_clamp_allowed("Add a note to buy milk tomorrow", workspace=False)
+
+
+def test_notes_clamp_preserves_sealed_retrieval_tools_on_resume():
+    sealed = {
+        "ask_user", "manage_notes", "research_parallel",
+        "vault_knowledge_search", "web_fetch", "web_search",
+    }
+    assert _apply_notes_only_tool_clamp(sealed) == sealed
+    personal = {"manage_notes", "manage_calendar", "web_search"}  # web present → keep
+    assert _apply_notes_only_tool_clamp(personal) == personal
+    notes_only = {"manage_notes", "discover_tools", "ui_control"}
+    clamped = _apply_notes_only_tool_clamp(notes_only)
+    assert clamped == {
+        "manage_notes", "manage_calendar", "manage_tasks",
+        "ask_user", "update_plan",
+    }

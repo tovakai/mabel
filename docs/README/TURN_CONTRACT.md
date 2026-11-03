@@ -10,6 +10,10 @@ schemas) vs merely **executable** (inventory). Selection is not authorization;
 
 ## Conversational grounding (2026-11-03)
 
+- Exact `selected_tools` seals with empty families (e.g. vault note rewrite →
+  `VAULT_NOTE_REWRITE_TOOLS`) do not re-expand via prior-turn `warm_tools`, and
+  read-only families such as `workspace_read` cannot intersect away
+  `write_file`/`edit_file` from that seal.
 - `CONTRACT_CORE_TOOLS` includes `research_parallel` with core web tools so
   empty-capability agent turns expose combined web+vault retrieval to Gyro-S.
 - `conversational_retrieval_intent(message, workspace=...)` returns
@@ -21,10 +25,16 @@ schemas) vs merely **executable** (inventory). Selection is not authorization;
 - Bound-workspace note-content questions (`what do my notes say…`) resolve to
   `workspace_read`. Notes+online compares resolve to
   `workspace_read` + `search_browser`.
+- `workspace_read` maps to the legacy `files` prompt domain so Odysseus
+  notes-finetune clamps cannot treat vault reads as personal `manage_notes`.
+- Agent-loop personal-notes clamps (`_notes_only_clamp_allowed`,
+  `_apply_notes_only_tool_clamp`) skip vault/parallel/public compares and
+  preserve sealed vault/web tools across approval resume.
 
 ## Related
 
 - Compact Gyro-S surface: `src/agent_loop.py`
 - Chat→agent vault/compare intents: `src/action_intents.py`
+- Approval resume re-classifies sealed continuation intent: `routes/chat_routes.py`
 - Coordinator: `docs/README/PARALLEL_RESEARCH.md`
 - Tests: `docs/README/TEST_CONVERSATIONAL_RESEARCH_ROUTING.md`

@@ -171,8 +171,20 @@ def test_interactive_review_automatic_grants_come_from_ui_scopes_not_language(tm
     assert profiles[0].grants == profiles[1].grants
     assert profiles[1].permits(ExactOperation.normalize('ls','{"path":"."}'))
     assert profiles[1].permits(ExactOperation.normalize('web_search','news'))
-    for name in ('manage_calendar','write_file','bash','python'):
-        assert not profiles[1].permits(ExactOperation.normalize(name,'{}'))
+    # Named owners always receive personal pure-read grants (calendar list,
+    # notes search, …) independent of request language. UI scopes still do
+    # not mint writes, shell, or python.
+    assert profiles[1].permits(ExactOperation.normalize(
+        'manage_calendar', '{"action":"list_events"}'))
+    assert profiles[1].permits(ExactOperation.normalize(
+        'manage_notes', '{"action":"search","query":"x"}'))
+    for name, content in (
+        ('manage_calendar', '{"action":"create_event","title":"x"}'),
+        ('write_file', '{"path":"a","content":"b"}'),
+        ('bash', 'pwd'),
+        ('python', 'print(1)'),
+    ):
+        assert not profiles[1].permits(ExactOperation.normalize(name, content))
 
 
 @pytest.mark.asyncio

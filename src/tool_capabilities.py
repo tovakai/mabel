@@ -117,14 +117,8 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"get_weather", "private_browser", "web_search", "youtube_tool"},
+    {"get_weather", "private_browser", "web_search", "web_fetch", "youtube_tool"},
     ToolEffect.BROKERED_NETWORK_READ,
-    result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
-)
-_register(
-    {"web_fetch"},
-    ToolEffect.BROKERED_NETWORK_READ,
-    ToolEffect.NETWORK_EGRESS,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
@@ -699,9 +693,20 @@ def tool_result_should_arm_gate(
     )
 
 
+# Pure reads never require a post-taint approval card. Mutations, code
+# execution, open egress, and side effects still do.
+READ_ONLY_EFFECTS = frozenset(
+    {
+        ToolEffect.READ_PUBLIC,
+        ToolEffect.READ_WORKSPACE,
+        ToolEffect.READ_PRIVATE,
+        ToolEffect.BROKERED_NETWORK_READ,
+        ToolEffect.USER_INTERACTION,
+    }
+)
+
 POST_EXTERNAL_BLOCKED_EFFECTS = frozenset(
     {
-        ToolEffect.READ_PRIVATE,
         ToolEffect.WRITE_WORKSPACE,
         ToolEffect.WRITE_PRIVATE,
         ToolEffect.EXECUTE_CODE,
@@ -712,6 +717,16 @@ POST_EXTERNAL_BLOCKED_EFFECTS = frozenset(
         ToolEffect.DESTRUCTIVE,
     }
 )
+
+
+def action_is_read_only(tool_name: Any, content: Any = None) -> bool:
+    """Whether this concrete call is a known pure-read operation."""
+    capabilities = capabilities_for_action(tool_name, content)
+    return bool(
+        capabilities.known
+        and capabilities.effects
+        and not (capabilities.effects - READ_ONLY_EFFECTS)
+    )
 
 
 # On by default: until agent processes run without network and side-effecting
@@ -879,30 +894,27 @@ class ToolRunSecurityContext:
             _CONTROL_PLANE_CONTEXT_SOURCES
         )
         capabilities = capabilities_for_action(tool_name, content)
-        # A trusted, owner-bound request grant already authorizes the private
-        # read. Untrusted discovery results must not force a second approval
-        # for that same read. Never relax writes, execution, egress, mixed
-        # effects, unknown actions, or operations without a sealed grant.
-        if capabilities.known and capabilities.effects == frozenset({ToolEffect.READ_PRIVATE}):
+        # Known pure reads (notes search, vault/web lookup, memory list, …)
+        # never need a post-taint approval card. Explicit request-authority
+        # denials still win. Writes, shell, egress, and mixed/unknown effects
+        # still stop for review.
+        if (
+            capabilities.known
+            and capabilities.effects
+            and not (capabilities.effects - READ_ONLY_EFFECTS)
+        ):
             from src.agent_runtime.authority import ExactOperation, active_request_authority
             authority = active_request_authority()
-            if authority is not None and authority.owner:
+            if authority is not None:
                 try:
                     operation = ExactOperation.normalize(tool_name, content)
                 except (TypeError, ValueError):
                     operation = None
-                if operation is not None and authority.permits(operation):
-                    return ToolGateDecision(True)
-        read_only_effects = frozenset(
-            {
-                ToolEffect.READ_PUBLIC,
-                ToolEffect.READ_WORKSPACE,
-                ToolEffect.READ_PRIVATE,
-                ToolEffect.BROKERED_NETWORK_READ,
-                ToolEffect.USER_INTERACTION,
-            }
-        )
-        if control_plane_only and capabilities.known and not (capabilities.effects - read_only_effects):
+                if operation is not None and authority.restricted(operation):
+                    return ToolGateDecision(
+                        False,
+                        f"request authority denies {operation.tool}",
+                    )
             return ToolGateDecision(True)
         if control_plane_only and tool_name == "manage_skills":
             try:

@@ -429,7 +429,8 @@ def _contract_prompt_domains(contract) -> Set[str]:
     aliases = {
         "notes": "notes_calendar_tasks", "calendar": "notes_calendar_tasks",
         "tasks": "notes_calendar_tasks", "search_browser": "web",
-        "shell_files": "files", "cookbook_admin": "cookbook",
+        "shell_files": "files", "workspace_read": "files",
+        "cookbook_admin": "cookbook",
     }
     return {aliases.get(family, family) for family in contract.capabilities}
 
@@ -6932,6 +6933,7 @@ _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- Rewriting a vault/Obsidian note or genre page: read that one file with `read_file`, then `write_file` or `edit_file`. Use `ls`/`glob`/`grep` for inventory — never `bash`/`find`/`wc`, and never `vault_batch_edit`. Do not open Documents-panel tools for vault markdown.
 - If `web_search` is listed in this prompt, web search is available. Do NOT tell the user search/web tools are unavailable.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
@@ -7072,7 +7074,8 @@ _API_AGENT_RULES = """\
 - Be concise unless the user asks for depth.
 - With no active workspace, do not guess a folder for "this/current workspace"; ask the user to set one with `/workspace <path>` or `/workspace pick`.
 - Store facts or preferences about the user with `manage_memory`, not contacts.
-- Named works: engage emotional reactions without inventing plot, genre, cast, or chapter events. Ask a natural follow-up when unsure. Prefer a short conversational reply over a research essay for casual reactions; do not force `research_parallel` on every named-media mention. Ground factual claims about an unfamiliar work with the offered retrieval tools (`web_search`, vault tools, or `research_parallel` when both sides matter) before stating details. If the user says they finished/reached a numbered chapter, episode, act, or part, stay at or behind that progress unless they ask to go further — no unsolicited later-unit spoilers. When a search/tool returns status empty or only "No search results found", that is not evidence; say you lack sources rather than inventing details.
+- Rewriting a vault/Obsidian note or genre page: read that one file with `read_file`, then `write_file` or `edit_file`. Use `ls`/`glob`/`grep` for inventory — never `bash`/`find`/`wc`, and never `vault_batch_edit` (that is bulk multi-note work). Do not open Documents-panel tools for vault markdown.
+- Named works: engage emotional reactions without inventing plot, genre, cast, or chapter events. Ask a natural follow-up when unsure. Prefer a short conversational reply over a research essay for casual reactions; do not force `research_parallel` on every named-media mention. For a simple public "what is / about / plot / synopsis" question, prefer a single `web_search` (then answer); do not open vault search, `research_parallel`, or a long `web_fetch` chain unless the first search is empty or the user asked about their notes. Ground factual claims about an unfamiliar work with the offered retrieval tools before stating details. If the user says they finished/reached a numbered chapter, episode, act, or part, stay at or behind that progress unless they ask to go further — no unsolicited later-unit spoilers. When a search/tool returns status empty or only "No search results found", that is not evidence; say you lack sources rather than inventing details.
 """
 
 _LINK_RULES = """\
@@ -7145,7 +7148,8 @@ _DOMAIN_RULES = {
 ## File rules
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
-- Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+- Use `edit_file`/`write_file` for single-file writes; `vault_batch_edit` only for intentional multi-note bulk changes after preview.
+- Vault/genre note rewrites: inventory with `ls`/`glob`/`grep`, then `write_file`/`edit_file` that one markdown path — never `bash`/`find`/`wc`/`vault_batch_edit`.""",
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -7954,7 +7958,7 @@ Or with JSON for fresh news:
 ```web_search
 {"query": "<your query>", "time_filter": "day"}
 ```
-Search the web for a SINGLE quick fact/lookup mid-task. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. When a question needs BOTH personal vault notes and public web evidence together, prefer `research_parallel` with mode=both and vault_strategy=fast instead of separate sequential calls. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; research_parallel = concurrent web+vault evidence package; trigger_research = a researched report. Do not invent plot, genre, cast, or chapter events for a named work you have not grounded; a quick public lookup is appropriate when the user asks what something is or what happens in it.
+Search the web for a SINGLE quick fact/lookup mid-task. Prefer this alone for public "what is X about" / plot / synopsis questions — one query, then answer from the snippets when enough. For recently published news/articles, pass `time_filter` ("day", "week", "month", or "year"); do not use a publication filter for current weather, prices, or other current facts. For weather, prefer `get_weather`. When a question needs BOTH personal vault notes and public web evidence together, prefer `research_parallel` with mode=both and vault_strategy=fast instead of separate sequential calls. NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; research_parallel = concurrent web+vault evidence package; trigger_research = a researched report. Do not invent plot, genre, cast, or chapter events for a named work you have not grounded; a quick public lookup is appropriate when the user asks what something is or what happens in it.
 Choose the `query` yourself from the user's full request and recent conversation context. If the latest user message is only "can you search", "look it up", or similar, search for the prior topic, not the literal follow-up phrase.
 If this `web_search` tool section is visible, search is available. Do NOT tell the user web/search tools are unavailable.
 For products, hardware, software, launches, and releases, distinguish announcement date from release/ship/availability date. Do not call an announced future product "current" or "available" unless the evidence says it is shipping/available now.
@@ -8843,6 +8847,12 @@ _ACTIONABLE_USER_TARGET_RE = re.compile(
     r"bash|shell|command|terminal|local|host|network|ip|route)\b",
     re.IGNORECASE,
 )
+
+
+def _looks_like_vault_note_rewrite(text: str) -> bool:
+    """Rewrite/edit an Obsidian vault note (not Documents panel, not shell)."""
+    from src.turn_contract import looks_like_vault_note_rewrite
+    return looks_like_vault_note_rewrite(text)
 
 
 def _looks_like_workspace_coding_request(text: str) -> bool:
@@ -10958,6 +10968,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         # A source/config filename is a coding target even when the generic
         # verb matcher also sees "write" or "edit" as document language.
         domains.discard("documents")
+    # "Rewrite that note/page" is a markdown file edit, not the Documents
+    # product — routing to documents+bash caused inventory shell detours and
+    # then a degenerate-stream abort. Workspace binding still gates writes.
+    if _looks_like_vault_note_rewrite(retrieval_query):
+        domains.add("files")
+        domains.discard("documents")
+        domains.discard("notes_calendar_tasks")
     _personal_domain_turn = _looks_like_explicit_tui_personal_domain_request(retrieval_query)
     _strong_web_target = bool(re.search(
         r"\b(?:web|internet|online|google|news|weather|website|url|browse|browser)\b|"
@@ -11086,17 +11103,60 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
 
 
 def _looks_like_explicit_notes_only_turn(text: str) -> bool:
-    """Whether a request is exclusively about the user's notes domain."""
+    """Whether a request is exclusively about the user's personal Notes product.
+
+    Vault retrieval and notes+public compares mention "notes" but are not the
+    manage_notes app surface. Keep those turns on workspace/web tools.
+    """
     value = str(text or "").lower()
     if not re.search(r"\b(?:note|notes|notebook|written down|wrote down|jotted down|saved item)\b", value):
         return False
     if re.search(
         r"\b(?:calendar|event|meeting|appointment|schedule|email|mail|documents?|"
-        r"file|repo|repository|code|\.py\b|\.js\b|test(?:s)?|memory|chat|session)\b",
+        r"file|repo|repository|code|\.py\b|\.js\b|test(?:s)?|memory|chat|session|"
+        r"vault|obsidian|public|online|web|internet|compare|cross[- ]?check|"
+        r"versus|vs\.?)\b",
         value,
     ):
         return False
     return True
+
+
+_NOTES_CLAMP_RETRIEVAL_TOOLS = frozenset({
+    "research_parallel", "dispatch_dottie", "web_search", "web_fetch",
+    "get_weather", "private_browser", "youtube_tool", "search_hf_models",
+    "pdf_extract", "get_workspace", "ls", "glob", "grep", "read_file",
+    "vault_audit", "vault_knowledge_search", "vault_traverse_graph",
+    "vault_read_range", "vault_index_status", "vault_retrieve_batch",
+    "vault_batch_edit",
+})
+
+
+def _notes_only_clamp_allowed(text: str, *, workspace: bool = False) -> bool:
+    """Personal-notes schema clamp is unsafe for vault/web retrieval turns."""
+    if not _looks_like_explicit_notes_only_turn(text):
+        return False
+    try:
+        from src.turn_contract import conversational_retrieval_intent
+        kind = conversational_retrieval_intent(text, workspace=bool(workspace))
+    except Exception:
+        kind = "none"
+    return kind not in {"vault", "parallel", "factual_public"}
+
+
+def _apply_notes_only_tool_clamp(route_tools: Optional[Set[str]]) -> Optional[Set[str]]:
+    """Collapse to personal notes tools unless retrieval tools are already sealed."""
+    if route_tools is None:
+        return None
+    retained = set(route_tools) & _NOTES_CLAMP_RETRIEVAL_TOOLS
+    if retained:
+        # Approval resume / sealed selection already named vault/web tools.
+        # Do not replace that surface with manage_notes.
+        return set(route_tools)
+    return {
+        "manage_notes", "manage_calendar", "manage_tasks",
+        "ask_user", "update_plan",
+    }
 
 
 def _looks_like_implicit_notes_turn(text: str) -> bool:
@@ -21985,7 +22045,7 @@ async def _stream_agent_loop_impl(
         ).strip()
         logger.info("[agent-intent] contextual email follow-up inherited email tool surface")
     _minimal_explicit_notes_mode = (
-        _looks_like_explicit_notes_only_turn(_last_user)
+        _notes_only_clamp_allowed(_last_user, workspace=bool(workspace))
         and not (_explicit_email_action_turn or _contextual_email_followup)
     )
     if _minimal_explicit_notes_mode:
@@ -23197,6 +23257,9 @@ async def _stream_agent_loop_impl(
                 )
             )
             and "files" not in _intent_domains
+            and "web" not in _intent_domains
+            and "workspace_read" not in _intent_domains
+            and _notes_only_clamp_allowed(_last_user, workspace=bool(workspace))
             and not guide_only
         )
         general_no_tool_mode = (
@@ -23315,10 +23378,7 @@ async def _stream_agent_loop_impl(
             general_no_tool_mode,
         ) = _route_finetune_modes(candidate_model)
         if _minimal_explicit_notes_mode and route_tools is not None:
-            route_tools = {
-                "manage_notes", "manage_calendar", "manage_tasks",
-                "ask_user", "update_plan",
-            }
+            route_tools = _apply_notes_only_tool_clamp(route_tools)
         elif (_ody_doc_finetune_mode or doc_mode) and route_tools is not None:
             if _prompt_active_document is not None:
                 route_tools = {
@@ -23328,10 +23388,7 @@ async def _stream_agent_loop_impl(
             else:
                 route_tools = {"create_document", "ask_user", "update_plan"}
         elif (_ody_notes_finetune_mode or notes_mode) and route_tools is not None:
-            route_tools = {
-                "manage_notes", "manage_calendar", "manage_tasks",
-                "ask_user", "update_plan",
-            }
+            route_tools = _apply_notes_only_tool_clamp(route_tools)
         elif _ody_general_no_tool_mode or general_no_tool_mode:
             route_tools = set()
         else:
@@ -23840,11 +23897,34 @@ async def _stream_agent_loop_impl(
             for schema in FUNCTION_TOOL_SCHEMAS
         }
         _core_agent_tools.difference_update(_hard_blocked_tools)
+        # Vault markdown rewrite: keep file editors, drop shell/web floor so the
+        # model does not invent bash inventory detours before writing the note.
+        if workspace and _looks_like_vault_note_rewrite(_last_user):
+            from src.turn_contract import VAULT_NOTE_REWRITE_TOOLS
+            _core_agent_tools = set(VAULT_NOTE_REWRITE_TOOLS) - _hard_blocked_tools
         _relevant_tools.update(_core_agent_tools)
         if _base_relevant_tools is None:
             _base_relevant_tools = set(_core_agent_tools)
         else:
             _base_relevant_tools.update(_core_agent_tools)
+        if workspace and _looks_like_vault_note_rewrite(_last_user):
+            from src.turn_contract import VAULT_NOTE_REWRITE_TOOLS
+            _rewrite_drop = (
+                set(_relevant_tools) - set(VAULT_NOTE_REWRITE_TOOLS)
+            ) | {
+                "bash", "python", "web_search", "web_fetch", "research_parallel",
+                "vault_batch_edit", "vault_knowledge_search", "dispatch_dottie",
+                "create_document", "edit_document", "update_document",
+                "suggest_document", "manage_documents", "manage_notes",
+                "manage_calendar", "manage_tasks", "apply_patch",
+            }
+            _relevant_tools.difference_update(_rewrite_drop)
+            _relevant_tools.update(set(VAULT_NOTE_REWRITE_TOOLS) - _hard_blocked_tools)
+            if _base_relevant_tools is not None:
+                _base_relevant_tools.difference_update(_rewrite_drop)
+                _base_relevant_tools.update(
+                    set(VAULT_NOTE_REWRITE_TOOLS) - _hard_blocked_tools
+                )
 
         # A concrete workspace deliverable is an execution contract, not just
         # a semantic topic. ToolIndex may correctly retrieve web/document
@@ -24412,6 +24492,14 @@ async def _stream_agent_loop_impl(
                     route_tools.difference_update(_irrelevant_local_media_web_tools)
         if turn_contract is not None and tool_surface != "full":
             route_tools = {s["function"]["name"] for s in turn_contract.schemas()}
+            # Contract schemas are authoritative for compact surfaces, but a
+            # vault note rewrite must still drop bulk/shell leftovers if the
+            # sealed contract was widened by warm tools before the exact-seal fix.
+            if workspace and _looks_like_vault_note_rewrite(_last_user):
+                from src.turn_contract import VAULT_NOTE_REWRITE_TOOLS
+                route_tools = (
+                    set(route_tools) & set(VAULT_NOTE_REWRITE_TOOLS)
+                ) | (set(VAULT_NOTE_REWRITE_TOOLS) - _hard_blocked_tools)
         if prompt_compact:
             route_tools.update(
                 _blocked_network_recovery_tools(tool_events)
@@ -25341,6 +25429,29 @@ async def _stream_agent_loop_impl(
                 if (schema.get("function", {}).get("name") or schema.get("name"))
                 not in disabled_tools
             ]
+            # Request-scoped selection (e.g. single-note rewrite) must win over
+            # CONTRACT_CORE leftovers on the sealed turn contract, otherwise
+            # bash/vault_batch_edit stay offered while write_file is missing.
+            if route_relevant_tools is not None:
+                allowed = set(route_relevant_tools)
+                contract_schemas = [
+                    schema for schema in contract_schemas
+                    if (schema.get("function", {}).get("name") or schema.get("name"))
+                    in allowed
+                ]
+                # If the contract omitted an admitted writer/reader, pull it
+                # from the inventory so the model can actually edit the note.
+                present = {
+                    (schema.get("function", {}).get("name") or schema.get("name"))
+                    for schema in contract_schemas
+                }
+                missing = allowed - present - set(disabled_tools)
+                if missing:
+                    contract_schemas.extend(
+                        schema for schema in FUNCTION_TOOL_SCHEMAS
+                        if (schema.get("function", {}).get("name") or schema.get("name"))
+                        in missing
+                    )
             return _filter_route_tool_schemas(_apply_tool_surface_to_schemas(contract_schemas, tool_surface))
         if route_state["is_api_model"]:
             if tool_surface == "full":
@@ -26323,6 +26434,11 @@ async def _stream_agent_loop_impl(
         )
         if turn_contract is not None:
             _relevant_tools = {s["function"]["name"] for s in turn_contract.schemas()}
+            if workspace and _looks_like_vault_note_rewrite(_last_user):
+                from src.turn_contract import VAULT_NOTE_REWRITE_TOOLS
+                _relevant_tools = (
+                    set(_relevant_tools) & set(VAULT_NOTE_REWRITE_TOOLS)
+                ) | (set(VAULT_NOTE_REWRITE_TOOLS) - _hard_blocked_tools)
         _current_schema_digest = digest_schema_surface(all_tool_schemas)
         _current_system_prefix_digest = digest_system_prefix(
             _active_route_state.get("request_messages")
@@ -27383,7 +27499,10 @@ async def _stream_agent_loop_impl(
             candidate_request_factory=_candidate_request,
             candidate_capability_recovery_factory=_candidate_capability_recovery,
             candidate_route_descriptors=_candidate_route_descriptors,
-            retry_degenerate_stream_once=_terminal_completion_contract,
+            # WebUI agent turns used to skip this (terminal_agent only), so a
+            # post-tool repetition loop became a hard 502 with no second try.
+            # One bounded retry is cheap and recovers the rewrite/edit case.
+            retry_degenerate_stream_once=True,
             diagnostic_events=diagnostic_events,
             context_recovery_out=_context_recovery_bags,
         ):

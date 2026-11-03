@@ -25,7 +25,9 @@ export const KEYS = {
   ADMIN_LAST_TAB: 'admin-last-tab',
   DENSITY: 'odysseus-density',
   UI_SCALE: 'odysseus-ui-scale',
-  WORKSPACE: 'odysseus-workspace'
+  WORKSPACE: 'odysseus-workspace',
+  // Present when the user cleared the workspace pill; blocks vault-target auto-bind.
+  WORKSPACE_OPTED_OUT: 'odysseus-workspace-opted-out',
 };
 
 /**

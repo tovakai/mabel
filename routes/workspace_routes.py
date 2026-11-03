@@ -84,24 +84,40 @@ def setup_workspace_routes():
 
     @router.get("/default")
     def default_workspace(request: Request):
-        """Return the explicitly configured backend workspace, if usable.
+        """Return the default active workspace, if usable.
 
-        WebUI has no local launch directory: it runs against this backend's
-        filesystem. An explicit default gives it the same zero-setup behavior
-        as TUI while keeping workspace access opt-in and server-vetted.
+        Preference order:
+        1. ``ODYSSEUS_WORKSPACE_DEFAULT``
+        2. Configured vault target (``MABEL_VAULT_ROOT`` / ``data/vault_target.json``),
+           typically Core of Truth
+
+        WebUI has no local launch directory. Binding the vault by default makes
+        workspace reads work without an explicit opt-in; clearing the workspace
+        in the UI is the opt-out.
         """
         owner = get_current_user(request)
         if not owner_is_admin_or_single_user(owner):
             raise HTTPException(status_code=403, detail="Workspace default is admin-only")
 
-        configured = os.environ.get("ODYSSEUS_WORKSPACE_DEFAULT", "").strip()
-        if not configured:
-            return {"ok": False, "path": None}
-
         from src.tool_execution import vet_workspace
         from src.workspace_paths import backend_workspace_path
 
-        resolved = vet_workspace(backend_workspace_path(configured))
-        return {"ok": resolved is not None, "path": resolved}
+        candidates = []
+        env_default = os.environ.get("ODYSSEUS_WORKSPACE_DEFAULT", "").strip()
+        if env_default:
+            candidates.append(env_default)
+        try:
+            from src.agent_runtime.vault_target import persisted_vault_path
+            vault = persisted_vault_path()
+            if vault:
+                candidates.append(vault)
+        except Exception:
+            pass
+
+        for configured in candidates:
+            resolved = vet_workspace(backend_workspace_path(configured) or configured)
+            if resolved:
+                return {"ok": True, "path": resolved}
+        return {"ok": False, "path": None}
 
     return router

@@ -3312,7 +3312,7 @@ def test_preview_policy_decisions_have_stable_sanitized_reasons():
     assert allowed.audit() == {
         'allowed': True, 'reason': 'allowed', 'tool': 'web_fetch',
         'family': 'search_browser',
-        'effects': ['brokered_network_read', 'network_egress'],
+        'effects': ['brokered_network_read'],
     }
     denied = evaluate_preview_call('manage_notes', {'action': 'delete', 'id': 'x'}, 'delete it')
     assert not denied.allowed and denied.reason == 'write_family_not_authorized'

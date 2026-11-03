@@ -59,9 +59,17 @@ export function applyMode(_mode) {
 }
 
 export function setWorkspace(path) {
-  if (path) Storage.set(KEYS.WORKSPACE, path);
-  else Storage.remove(KEYS.WORKSPACE);
+  if (path) {
+    Storage.set(KEYS.WORKSPACE, path);
+    Storage.remove(KEYS.WORKSPACE_OPTED_OUT);
+  } else {
+    Storage.remove(KEYS.WORKSPACE);
+  }
   syncWorkspaceIndicator(path || '');
+}
+
+export function workspaceOptedOut() {
+  return Storage.get(KEYS.WORKSPACE_OPTED_OUT, '') === '1';
 }
 
 /**
@@ -91,7 +99,9 @@ export async function loadDefaultWorkspace() {
     .then(async (res) => {
       if (!res.ok) return { ok: false, path: null };
       const data = await res.json();
-      if (data.ok && data.path && !getWorkspace()) {
+      // Vault/Core of Truth is the default active workspace. Respect an
+      // explicit clear (opt-out) so reload does not silently re-bind it.
+      if (data.ok && data.path && !getWorkspace() && !workspaceOptedOut()) {
         setWorkspace(data.path);
         return { ok: true, path: data.path };
       }
@@ -102,8 +112,9 @@ export async function loadDefaultWorkspace() {
 }
 
 export function clearWorkspace() {
+  Storage.set(KEYS.WORKSPACE_OPTED_OUT, '1');
   setWorkspace('');
-  if (uiModule && uiModule.showToast) uiModule.showToast('Workspace cleared');
+  if (uiModule && uiModule.showToast) uiModule.showToast('Workspace cleared (vault default off)');
 }
 
 async function _load(path) {
@@ -241,4 +252,4 @@ export function initWorkspace() {
   }
 }
 
-export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, loadDefaultWorkspace, clearWorkspace, syncWorkspaceIndicator, applyMode };
+export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, loadDefaultWorkspace, clearWorkspace, workspaceOptedOut, syncWorkspaceIndicator, applyMode };

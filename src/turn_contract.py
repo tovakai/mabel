@@ -1073,6 +1073,12 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
     raw_text = str(message or "").strip()
     if inline_text_transformation(raw_text):
         return frozenset()
+    # Public synopsis / "what is X about" → web_search(+fetch) only.
+    if conversational_retrieval_intent(raw_text, workspace=False) == "factual_public":
+        return frozenset(FACTUAL_PUBLIC_LOOKUP_TOOLS)
+    # Single vault/genre note rewrite → file editors only (no bulk/shell/web).
+    if looks_like_vault_note_rewrite(raw_text):
+        return frozenset(VAULT_NOTE_REWRITE_TOOLS)
     text = _normalize_request_lead(message)
     if re.search(
         r"\bfirst\s+tool\s+call\s+(?:must|should|needs?\s+to)\s+be\s+inspect_media\b",
@@ -4867,7 +4873,8 @@ def conversational_retrieval_intent(message: str, *, workspace: bool = False) ->
         return "vault"
     if re.search(
         r"\b(?:what\s+(?:happens?|is|are|was|were)|who\s+(?:is|are|was)|"
-        r"how\s+does|end\s+of\s+chapter|plot|synopsis|summary\s+of)\b",
+        r"how\s+does|end\s+of\s+chapter|plot|synopsis|summary\s+of|"
+        r"what\s+is\s+.+\s+about)\b",
         text,
         re.I,
     ):
@@ -4881,6 +4888,47 @@ def conversational_retrieval_intent(message: str, *, workspace: bool = False) ->
     ) and not re.search(r"\?\s*$", text):
         return "casual"
     return "none"
+
+
+# Lean public-lookup surface: one search (optional fetch), no vault fan-out.
+FACTUAL_PUBLIC_LOOKUP_TOOLS = frozenset({
+    "web_search", "web_fetch", "ask_user", "update_plan",
+})
+
+# Single vault/Obsidian note rewrite — never bulk vault_batch_edit or shell.
+VAULT_NOTE_REWRITE_TOOLS = frozenset({
+    "read_file", "write_file", "edit_file", "ls", "glob", "grep",
+    "ask_user", "update_plan",
+})
+
+
+def looks_like_vault_note_rewrite(message: str) -> bool:
+    """Rewrite/edit one vault markdown note (genre page, etc.)."""
+    value = str(message or "")
+    if not value.strip():
+        return False
+    if not re.search(
+        r"\b(?:rewrite|rework|revise|overhaul|redraft|edit|update|fix)\b",
+        value,
+        re.I,
+    ):
+        return False
+    if not re.search(
+        r"\b(?:note|page|markdown|\.md\b|genre(?:\s+page)?|vault|obsidian|"
+        r"wikilink|frontmatter)\b",
+        value,
+        re.I,
+    ):
+        return False
+    if re.search(
+        r"\b(?:bash|shell|python|\.py\b|pull request|\bpr\b|document editor|"
+        r"manage_notes|calendar|email|all\s+notes|every\s+note|bulk|"
+        r"batch\s+edit|across\s+(?:the\s+)?vault)\b",
+        value,
+        re.I,
+    ):
+        return False
+    return True
 
 
 def requested_capabilities(message: str, history: Iterable = (), *, active_document=False, workspace=False, image_attachment=False) -> frozenset[str]:
@@ -4912,6 +4960,15 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
             return frozenset({"workspace_read"})
     if lead := _CONVERSATIONAL_ACTION_LEAD.fullmatch(text):
         text = lead["request"].strip()
+    # Simple public "what is / about / plot" questions stay on web lookup.
+    # Do not pull workspace/vault families just because a vault is the default
+    # active workspace — that caused multi-tool vault+parallel detours.
+    if conversational_retrieval_intent(raw_text, workspace=workspace) == "factual_public":
+        return frozenset({"search_browser"})
+    # Empty families + selected_tools_for_request(VAULT_NOTE_REWRITE_TOOLS)
+    # keeps write_file/edit_file; workspace_read alone would strip writers.
+    if looks_like_vault_note_rewrite(raw_text):
+        return frozenset()
     history = tuple(history)
     if corrected_browser_target(raw_text, history):
         return frozenset({'search_browser'})
@@ -6597,6 +6654,11 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
             selected = requested
         else:
             selected.intersection_update(requested)
+            # Read-only families (e.g. default-vault workspace_read) must not
+            # strip writers from an exact file-edit seal such as vault note rewrite.
+            writers = requested & {"write_file", "edit_file", "apply_patch"}
+            if writers and not (selected & writers):
+                selected = set(requested)
     elif operation is not None:
         # A server-sealed safe read is an operation, not merely a family hint.
         # Offer exactly that reader so the model cannot drift to a sibling
@@ -6618,7 +6680,11 @@ def resolve_turn_contract(*, capabilities: Iterable[str], schemas: Iterable[dict
     if 'search_emails' in selected:
         selected.update({'read_email', 'download_attachment', 'list_email_accounts'})
     selected.update(canonical_tool(n) for n in always_available_tools)
-    selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
+    # Exact classifier seals (empty families + selected_tools) must stay narrow.
+    # Prior-turn warm tools otherwise reopen vault_batch_edit/bash/web after a
+    # single-note rewrite was deliberately sealed to write_file/edit_file.
+    if not (selected_tools is not None and not families):
+        selected.update(canonical_tool(n) for n in warm_tools if str(n or "").strip())
     # Controls are neutral; enabling Web is permission, never a requested family.
     if selected:
         selected.update({"ask_user", "update_plan"})

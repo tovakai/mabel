@@ -29,6 +29,85 @@ def _owner(value):
     return str(value or "").strip().casefold()
 
 
+def _interactive_review_capability_families(parameters) -> set[str]:
+    """UI/request scopes for interactive Agent turns (never from model text).
+
+    ``workspace_read`` follows the request workspace (chat routes may default
+    that to the vault target). ``search_browser`` is sealed whenever web search
+    is not policy-disabled so ``web_fetch`` / ``web_search`` do not need a gap
+    card after taint.
+    """
+    if not parameters.get('authority_gap_approvals'):
+        return set()
+    families: set[str] = set()
+    if str(parameters.get('workspace') or '').strip():
+        families.add('workspace_read')
+    policy = parameters.get('tool_policy')
+    if policy is None or not policy.blocks('web_search'):
+        families.add('search_browser')
+    return families
+
+
+# Personal/store tools whose every registered form is a private read.
+_OWNER_PRIVATE_READ_TOOLS = frozenset({
+    "list_email_accounts",
+    "list_emails",
+    "read_email",
+    "scan_spam",
+    "resolve_contact",
+    "scan_email_unsubscribes",
+    "search_chats",
+    "search_emails",
+    "list_sessions",
+    "tail_serve_output",
+    "vault_get",
+    "vault_search",
+})
+
+
+# Multiplexed personal stores an interactive owner may read without a gap card.
+# Admin/control-plane managers stay out; UI scopes or exact approval still
+# admit those list actions when intended.
+_OWNER_PRIVATE_ACTION_READ_TOOLS = frozenset({
+    "manage_calendar",
+    "manage_contact",
+    "manage_documents",
+    "manage_email_state",
+    "manage_memory",
+    "manage_notes",
+    "manage_research",
+    "manage_session",
+    "manage_skills",
+    "manage_tasks",
+})
+
+
+def _with_owner_read_grants(grants):
+    """Union pure personal-read actions into the sealed owner grant set."""
+    from src.tool_capabilities import _PRIVATE_ACTION_READS
+
+    by_tool = {grant.tool: grant for grant in grants}
+    for tool in _OWNER_PRIVATE_ACTION_READ_TOOLS:
+        read_actions = _PRIVATE_ACTION_READS.get(tool)
+        if not read_actions:
+            continue
+        existing = by_tool.get(tool)
+        if existing is None:
+            by_tool[tool] = OperationGrant(tool, actions=frozenset(read_actions))
+            continue
+        if existing.actions is None:
+            continue
+        by_tool[tool] = OperationGrant(
+            tool,
+            actions=frozenset(existing.actions) | frozenset(read_actions),
+            inputs=existing.inputs,
+        )
+    for tool in _OWNER_PRIVATE_READ_TOOLS:
+        if tool not in by_tool:
+            by_tool[tool] = OperationGrant(tool)
+    return list(by_tool.values())
+
+
 def _pairs(pairs):
     result = {}
     for key, value in pairs:
@@ -453,11 +532,12 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
         if operation is not None and name == canonical_tool(operation.tool):
             inputs = frozenset({ExactOperation.normalize(name, _json(dict(operation.args))).input})
         grants.append(OperationGrant(name, actions, inputs))
-    # A named human owner may list their own saved memories without repeated
-    # exact-approval prompts. This does not grant memory writes or wider reads.
-    # Keep the policy/disabled-tool restrictions below authoritative.
-    if _owner(owner) and not any(g.tool == "manage_memory" for g in grants):
-        grants.append(OperationGrant("manage_memory", actions=frozenset({"list"})))
+    # A named human owner may perform pure personal reads (notes search,
+    # memory list, email list/read, …) without repeated exact-approval prompts.
+    # This does not grant writes, deletes, shell, or egress. Policy denials
+    # below remain authoritative.
+    if _owner(owner):
+        grants = _with_owner_read_grants(grants)
     authority = RequestAuthority(uuid4().hex, _owner(owner), str(session_id or ""),
                                  str(workspace or ""), tuple(grants))
     if client_runtime_context is not None:
@@ -581,8 +661,7 @@ def with_request_authority(func):
                     active_document=bool(parameters.get("active_document")),
                     client_runtime_context=parameters.get("client_runtime_context"),
                     interactive_review=bool(parameters.get('authority_gap_approvals')),
-                    capabilities=({'workspace_read'} if parameters.get('authority_gap_approvals') and parameters.get('workspace') else set()) |
-                        ({'search_browser'} if parameters.get('authority_gap_approvals') and parameters.get('tool_policy') and not parameters['tool_policy'].blocks('web_search') else set()))
+                    capabilities=_interactive_review_capability_families(parameters))
         if not isinstance(authority, RequestAuthority):
             raise TypeError("Missing or malformed server request authority")
         # A terse new user turn ("Apply") normally has no shell_files intent.

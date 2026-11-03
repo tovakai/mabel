@@ -1,14 +1,20 @@
-"""web_fetch authorization after web_search taints the external-context gate."""
-from src.tool_capabilities import ToolRunSecurityContext
+"""web_fetch stays a brokered read after web_search taints the external-context gate."""
+from src.tool_capabilities import ToolEffect, ToolRunSecurityContext, capabilities_for_action
 
 
-def test_web_search_then_web_fetch_requires_explicit_approval_gate():
-    """After search results arm the untrusted gate, web_fetch asks for approval.
+def test_web_search_then_web_fetch_does_not_require_approval_gate():
+    """Public web_fetch is brokered network read, same class as web_search.
 
-    web_fetch carries NETWORK_EGRESS and is blocked by POST_EXTERNAL_BLOCKED_EFFECTS
-    once external untrusted context has been observed. web_search itself remains
-    allowed (brokered read only). This is intentional — do not auto-approve.
+    After search/vault results arm the untrusted gate, mutating egress still
+    needs approval, but reading a URL through web_fetch does not.
     """
+    fetch_caps = capabilities_for_action(
+        "web_fetch",
+        '{"url":"https://docs.python.org/3/howto/free-threading-python.html"}',
+    )
+    assert ToolEffect.BROKERED_NETWORK_READ in fetch_caps.effects
+    assert ToolEffect.NETWORK_EGRESS not in fetch_caps.effects
+
     ctx = ToolRunSecurityContext()
     assert ctx.decision_for("web_search", '{"query":"python gil"}').allowed is True
     assert ctx.decision_for(
@@ -30,12 +36,28 @@ def test_web_search_then_web_fetch_requires_explicit_approval_gate():
         "web_fetch",
         '{"url":"https://docs.python.org/3/howto/free-threading-python.html"}',
     )
-    assert fetch_after.allowed is False
-    assert "network_egress" in (fetch_after.reason or "")
+    assert fetch_after.allowed is True
+
+    # Mutating / open egress remains blocked after taint.
+    assert ctx.decision_for("bash", "curl https://example.test").allowed is False
 
 
-def test_chat_session_approval_bypass_allows_web_fetch_after_search_taint():
-    """Smallest persistent authorization: chat-session approval bypasses this gate only."""
+def test_vault_then_web_fetch_does_not_require_approval_gate():
+    ctx = ToolRunSecurityContext()
+    ctx.observe_tool_result(
+        "vault_knowledge_search",
+        {"exit_code": 0, "output": "note hit"},
+        '{"query":"curiosity"}',
+    )
+    assert ctx.external_untrusted_context_seen is True
+    assert ctx.decision_for(
+        "web_fetch",
+        '{"url":"https://peps.python.org/pep-0703/"}',
+    ).allowed is True
+
+
+def test_chat_session_approval_bypass_still_allows_web_fetch_after_search_taint():
+    """Chat-session approval remains a valid bypass for any residual gate blocks."""
     ctx = ToolRunSecurityContext(
         external_untrusted_context_seen=True,
         external_sources=["web_search"],

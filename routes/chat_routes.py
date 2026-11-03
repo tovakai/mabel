@@ -1743,6 +1743,23 @@ def _resolve_persisted_session_workspace(request, sess, *, current_workspace: st
     return _resolve_request_workspace(request, persisted)
 
 
+def _resolve_default_vault_workspace(request, *, current_workspace: str = "", current_rejected: str = "", opted_out: bool = False) -> tuple[str, str]:
+    """Bind the configured vault (Core of Truth) when no workspace was chosen.
+
+    Opt-out wins: an explicit clear from the UI must not be re-bound mid-turn.
+    """
+    if current_workspace or current_rejected or opted_out:
+        return current_workspace, current_rejected
+    try:
+        from src.agent_runtime.vault_target import persisted_vault_path
+        vault = persisted_vault_path()
+    except Exception:
+        vault = None
+    if not vault:
+        return "", ""
+    return _resolve_request_workspace(request, vault)
+
+
 _ABS_PATH_RE = re.compile(r"(?<!\S)(~?/[^\"'\s`<>]+)")
 _LOCAL_FILE_TASK_RE = re.compile(
     r"\b(?:file|folder|directory|path|workspace|repo|project|movie|video|"
@@ -2860,6 +2877,17 @@ def setup_chat_routes(
                 current_workspace=workspace,
                 current_rejected=workspace_rejected,
             )
+            _workspace_opt_out = str(
+                form_data.get("workspace_opt_out")
+                or (body or {}).get("workspace_opt_out")
+                or ""
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            workspace, workspace_rejected = _resolve_default_vault_workspace(
+                request,
+                current_workspace=workspace,
+                current_rejected=workspace_rejected,
+                opted_out=_workspace_opt_out,
+            )
             try:
                 from src.fs_devices.turn_bind import bind_turn_directory_scope
                 directory_scope, scope_compat, scope_rejected = bind_turn_directory_scope(
@@ -2980,6 +3008,20 @@ def setup_chat_routes(
                     allow_web_search = "true"
                     _search_enabled = True
                 chat_mode = "agent"
+                # Intent was classified on the approval click payload before the
+                # continuation swap. Re-classify against the sealed request so
+                # vault/web/parallel compares are not treated as personal notes.
+                _tool_intent = (
+                    _classify_tool_intent(message) if isinstance(message, str) else None
+                )
+                _workspace_agent_intent = bool(
+                    (
+                        _tool_intent
+                        and _tool_intent.needs_tools
+                        and _tool_intent.category in {"shell", "workspace"}
+                    )
+                    or _native_context_has_workspace_inputs(client_runtime_context)
+                )
             else:
                 # A normal user message supersedes the card that was waiting
                 # in this thread. Retire its opaque grant, but preserve the

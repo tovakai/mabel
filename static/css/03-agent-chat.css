@@ -1451,6 +1451,61 @@ body.fullwidth-chat .chat-history {
   70% { opacity: 0.35; top: calc(100% - 20px); }
   100% { opacity: 0; top: calc(100% - 20px); }
 }
+.agent-thread-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0 0 2px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  font: inherit;
+  font-size: 0.82em;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-thread-fold:hover {
+  color: var(--fg);
+}
+.agent-thread-fold-chevron {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 12px;
+  opacity: 0.75;
+}
+.agent-thread-fold-chevron::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+  transition: transform 0.2s ease;
+}
+.agent-thread.expanded > .agent-thread-fold .agent-thread-fold-chevron::before {
+  transform: rotate(90deg);
+}
+.agent-thread-fold-count {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: color-mix(in srgb, var(--fg) 78%, var(--red));
+}
+.agent-thread-fold-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.72;
+}
+/* Actions stay collapsed by default. Only the summary, the live running
+   tool, and private-browser previews stay visible until the user expands. */
+.agent-thread:not(.expanded) > .agent-thread-node:not(.running):not(.browser-preview-node) {
+  display: none;
+}
 .agent-thread-node {
   position: relative;
   padding: 5px 0;
