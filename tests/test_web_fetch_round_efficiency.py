@@ -45,6 +45,7 @@ def test_unambiguous_two_url_strings_are_split(raw,expected):
     "https://wiki.example.org/wiki/Chapter,Part_1",
     "https://wiki.example.org/wiki/A%20B",
     "https://wiki.example.org/Chapter?section=One,Two",
+    "https://wiki.example.org/Chapter?section=One,b.example.org",
     "https://wiki.example.org/Chapter query=two",
     "https://wiki.example.org/ totally-not-a-url",
 ])
