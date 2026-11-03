@@ -5482,8 +5482,22 @@ def setup_chat_routes(
                                     .first()
                                 )
                                 if db_msg:
+                                    rewritten_id = str(db_msg.id)
+                                    old_content = db_msg.content
                                     db_msg.content = full_response
                                     db.commit()
+                                    if old_content != full_response:
+                                        from core.session_manager import (
+                                            _invalidate_episodic_message_sources,
+                                        )
+                                        source_owner = (
+                                            getattr(db_msg.session, "owner", None)
+                                            if getattr(db_msg, "session", None) is not None
+                                            else getattr(sess, "owner", None)
+                                        )
+                                        _invalidate_episodic_message_sources(
+                                            source_owner, session_id, [rewritten_id],
+                                        )
                             except Exception as e:
                                 logger.warning("Failed to update rewritten message in DB: %s", e)
                                 db.rollback()
