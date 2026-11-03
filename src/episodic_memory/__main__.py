@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 from pathlib import Path
 
 from src.constants import DATA_DIR
 from src.agent_runtime.event_ledger import Ledger
 from .candidates import CandidateQueue
 from .outbox import flush_candidate_events
+from .candidates import CapturePolicy
 
 
 def main() -> int:
@@ -27,6 +30,14 @@ def main() -> int:
         default="pending",
     )
     sub.add_parser("events", help="Inspect undelivered transition envelopes")
+    reviewer = sub.add_parser(
+        "review", help="One explicitly consented Dottie inference; advice only",
+    )
+    reviewer.add_argument("--candidate-id", required=True)
+    reviewer.add_argument(
+        "--send-source-to-dottie", action="store_true",
+        help="Explicitly allow this one excerpt to be sent to configured Research / Dottie",
+    )
     publishing = sub.add_parser(
         "publish-events",
         help="Explicitly replay the outbox into the existing Phase 00 ledger",
@@ -40,6 +51,33 @@ def main() -> int:
         output = {"owner": queue.owner, "candidates": queue.list(state=args.state, limit=args.limit)}
     elif args.command == "events":
         output = {"owner": queue.owner, "pending_events": queue.pending_events(limit=args.limit)}
+    elif args.command == "review":
+        if not args.send_source_to_dottie:
+            parser.error("review requires --send-source-to-dottie")
+        from core.database import SessionLocal
+        from routes.prefs_routes import _load_for_user
+        from .dottie_review import review_candidate_with_dottie
+
+        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
+            "1", "true", "yes",
+        }
+        if not enabled:
+            parser.error("review requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+        prefs = _load_for_user(queue.owner)
+        policy = CapturePolicy(
+            episodic_enabled=enabled,
+            memory_enabled=bool(prefs.get("memory_enabled", True)),
+        )
+        with SessionLocal() as db:
+            output = asyncio.run(review_candidate_with_dottie(
+                queue, args.candidate_id, db=db, policy=policy,
+                send_source_to_dottie=True,
+            ))
+        # CLI output contains only advisory metadata, never source excerpts.
+        output = {key: output[key] for key in (
+            "id", "candidate_id", "reviewer", "recommendation",
+            "confidence", "rationale_code", "created", "already_reviewed",
+        )}
     else:
         receipt = flush_candidate_events(queue, Ledger(args.ledger_path), limit=args.limit)
         output = {
