@@ -1398,6 +1398,7 @@ def setup_session_routes(
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
+        episodic_deleted_sessions = []
         # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
         _THROWAWAY_NAMES = {
             "test", "testing", "asdf", "asd", "hello", "hi", "hey",
@@ -1434,6 +1435,7 @@ def setup_session_routes(
                 if (row.name or "").strip() == "Incognito":
                     should_delete = True
                     deleted_throwaway += 1
+                    episodic_deleted_sessions.append((row.owner, row.id))
                     db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
@@ -1467,11 +1469,28 @@ def setup_session_routes(
                         should_delete = True
                         deleted_throwaway += 1
                 if should_delete:
+                    episodic_deleted_sessions.append((row.owner, row.id))
                     db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
             if deleted_empty or deleted_throwaway:
                 db.commit()
+                from pathlib import Path
+                from src.constants import DATA_DIR
+                from src.episodic_memory.retention import purge_deleted_session
+                for deleted_owner, deleted_id in episodic_deleted_sessions:
+                    if not deleted_owner:
+                        continue
+                    try:
+                        purge_deleted_session(
+                            Path(DATA_DIR) / "episodic_candidates",
+                            owner=deleted_owner, session_id=deleted_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Episodic scrub failed after auto-sort deletion %s",
+                            deleted_id,
+                        )
                 logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
         finally:
             db.close()
