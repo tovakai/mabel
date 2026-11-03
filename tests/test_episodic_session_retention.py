@@ -205,3 +205,48 @@ def test_additive_v2_to_v3_migration_preserves_candidate_and_review(sample):
             "SELECT id FROM candidate_reviews WHERE id=?", (review["id"],)
         ).fetchone() is not None
     assert purge_deleted_session(storage, owner="alice", session_id="chat-1")["scrubbed"] == 2
+
+
+def test_actual_session_manager_delete_scrubs_candidate_after_commit(tmp_path, monkeypatch):
+    """Exercise the canonical SessionManager deletion boundary, not just helper."""
+    from sqlalchemy.orm import sessionmaker
+    from core.database import Base, Session as DbSession, ChatMessage as DbMessage
+    from core.session_manager import SessionManager
+    import core.session_manager as sm
+    from src import constants
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'canonical-manager.sqlite'}")
+    Base.metadata.create_all(bind=engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with factory() as db:
+        db.add(DbSession(
+            id="retained-chat", owner="alice",
+            name="Synthetic session", endpoint_url="test", model="test",
+        ))
+        db.add(DbMessage(
+            id="retained-message", session_id="retained-chat",
+            role="assistant", content="Synthetic answer for deletion test",
+        ))
+        db.commit()
+    state = tmp_path / "episodic_candidates"
+    queue = CandidateQueue(state, owner="alice")
+    proposal = CandidateDraft(
+        kind="experience", actor="mabel", source_kind="conversation",
+        source_ref="chat:retained-chat:message:retained-message",
+        source_event_id="message:retained-message",
+        origin="completed_persisted_turn", summary="Synthetic memory excerpt",
+    )
+    candidate = queue.propose(
+        proposal, policy=CapturePolicy(episodic_enabled=True, memory_enabled=True),
+    )
+    monkeypatch.setattr(sm, "SessionLocal", factory)
+    monkeypatch.setattr(constants, "DATA_DIR", str(tmp_path))
+    manager = SessionManager.__new__(SessionManager)
+    manager.sessions = {}
+    assert manager.delete_session("retained-chat") is True
+
+    assert queue.get(candidate["id"]) is None
+    with factory() as db:
+        assert db.query(DbSession).filter(DbSession.id == "retained-chat").first() is None
+        assert db.query(DbMessage).filter(DbMessage.session_id == "retained-chat").count() == 0
+    engine.dispose()
