@@ -14,9 +14,10 @@ import asyncio
 from hashlib import sha256
 import json
 import re
+from sqlalchemy import text
 
 from .candidates import CandidateAdmissionError, CandidateQueue, CapturePolicy
-from .promotion import _verified_transcript
+from .promotion import _SOURCE, _verified_transcript
 from .reviews import (
     ReviewProposal, candidate_fingerprint, list_reviews, propose_review,
 )
@@ -81,6 +82,19 @@ def _parse_review(text: object) -> tuple[str, int, str]:
     return recommendation, confidence, reason
 
 
+def _check_source_memory_controls(db, candidate: dict) -> None:
+    """Recheck stored session-wide memory controls for this specific source."""
+    match = _SOURCE.fullmatch(candidate["source_ref"])
+    if not match:
+        raise CandidateAdmissionError("Candidate has no valid persisted source")
+    setting = db.execute(
+        text("SELECT memory_injection_enabled FROM sessions WHERE id=:id"),
+        {"id": match["session"]},
+    ).scalar_one_or_none()
+    if setting is False or setting == 0:
+        raise PermissionError("Source session has memory injection disabled")
+
+
 def _research_route(owner: str):
     """Resolve only the explicit Research / Dottie primary model assignment."""
     from src import model_roles
@@ -130,6 +144,7 @@ async def review_candidate_with_dottie(
     # Source verification is independent of a model judgment. It proves that
     # these literal words occurred, not that claims inside them are true.
     user_text, assistant_text = _verified_transcript(queue, row, db)
+    _check_source_memory_controls(db, row)
     source_fp = candidate_fingerprint(row)
     assignment, route = _research_route(queue.owner)
     run_digest = sha256(json.dumps(
@@ -186,6 +201,7 @@ async def review_candidate_with_dottie(
     recommendation, confidence, reason = _parse_review(response)
     # If the conversation was deleted/changed during inference, fail closed.
     _verified_transcript(queue, row, db)
+    _check_source_memory_controls(db, row)
     policy.require_capture()
     proposal = ReviewProposal(
         run_id=run_id, recommendation=recommendation, confidence=confidence,
