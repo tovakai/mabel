@@ -241,6 +241,59 @@ class TestGetContextLength:
         assert second == 27000
         assert len(calls) == 2
 
+
+    def test_strata_health_active_window_overrides_model_card(self, monkeypatch):
+        calls = []
+
+        def fake_get(url, *args, **kwargs):
+            calls.append(url)
+            if url == "http://127.0.0.1:8080/health":
+                return _FakeResp({
+                    "status": "ok",
+                    "service": "strata",
+                    "loaded": True,
+                    "model": "qwen3.8-flash-next-gyro-gyro-s",
+                    "max_context": 32768,
+                })
+            raise AssertionError(f"Strata context must resolve from /health: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+        # qwen3 would otherwise match the generic 131072-token model card.
+        assert model_context.get_context_length(endpoint, "qwen3.8-flash-next-gyro-gyro-s") == 32768
+        assert calls == ["http://127.0.0.1:8080/health"]
+        # Local contexts are deliberately reprobed after every server restart.
+        assert model_context.get_context_length(endpoint, "qwen3.8-flash-next-gyro-gyro-s") == 32768
+        assert len(calls) == 2
+
+    def test_unloaded_strata_health_is_not_authoritative(self, monkeypatch):
+        calls = []
+
+        def fake_get(url, *args, **kwargs):
+            calls.append(url)
+            if url.endswith("/health"):
+                return _FakeResp({"service": "strata", "loaded": False, "max_context": 32768})
+            if url.endswith("/slots"):
+                return _FakeResp([{"n_ctx": 16384}])
+            raise AssertionError(f"Unexpected context probe: {url}")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "qwen3.8-flash-next-gyro-gyro-s") == 16384
+        assert calls == ["http://127.0.0.1:8080/health", "http://127.0.0.1:8080/slots"]
+
+    def test_unrelated_health_endpoint_cannot_override_llamacpp(self, monkeypatch):
+        def fake_get(url, *args, **kwargs):
+            if url.endswith("/health"):
+                return _FakeResp({"status": "ok", "max_context": 1000000})
+            if url.endswith("/slots"):
+                return _FakeResp([{"n_ctx": 8192}])
+            raise AssertionError(url)
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+        assert model_context.get_context_length(endpoint, "qwen3.8-flash-next-gyro-gyro-s") == 8192
+
     def test_remote_endpoint_keeps_cached_context(self, monkeypatch):
         calls = []
 
