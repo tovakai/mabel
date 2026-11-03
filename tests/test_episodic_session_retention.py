@@ -250,3 +250,22 @@ def test_actual_session_manager_delete_scrubs_candidate_after_commit(tmp_path, m
         assert db.query(DbSession).filter(DbSession.id == "retained-chat").first() is None
         assert db.query(DbMessage).filter(DbMessage.session_id == "retained-chat").count() == 0
     engine.dispose()
+
+
+def test_pilot_deletion_before_first_capture_persists_tombstone(tmp_path, monkeypatch):
+    state = tmp_path / "new_runtime"
+    monkeypatch.setenv("MABEL_EPISODIC_CAPTURE_ENABLED", "1")
+    result = purge_deleted_session(state, owner="alice", session_id="late-chat")
+    assert result == {
+        "scrubbed": 0, "pending_episode_files": 0, "queue_present": True,
+    }
+    queue = CandidateQueue(state, owner="alice")
+    policy = CapturePolicy(episodic_enabled=True, memory_enabled=True)
+    with pytest.raises(CandidateAdmissionError, match="recapture forbidden"):
+        queue.propose(CandidateDraft(
+            kind="experience", actor="mabel", source_kind="conversation",
+            source_ref="chat:late-chat:message:late-reply",
+            source_event_id="message:late-reply",
+            origin="completed_persisted_turn",
+            summary="An out-of-order synthetic reply after source deletion",
+        ), policy=policy)
