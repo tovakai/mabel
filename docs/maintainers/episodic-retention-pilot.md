@@ -58,6 +58,13 @@ database (including owner) and scrubs missing or reassigned sources:
     python -m src.episodic_memory --owner ACTUAL_MABEL_OWNER \
       reconcile-deletions --confirm-scrub
 
+For large queues, reconciliation returns next_after_session_id when there
+are more sessions to inspect. Continue with that opaque cursor:
+
+    python -m src.episodic_memory --owner ACTUAL_MABEL_OWNER \
+      reconcile-deletions --confirm-scrub \
+      --after-session-id PREVIOUS_NEXT_AFTER_SESSION_ID
+
 Follow that with retention-status, then verified Markdown cleanup if any
 pending episode files exist. This does not require Dottie or model inference.
 
