@@ -252,6 +252,42 @@ def _allow_visual_tool_evidence_for_model(model: str) -> bool:
     return is_odysseus_merged_tools_model(model) or not _is_qwen38_tool_router(model)
 
 
+_TEXT_TOOL_CALL_RE = re.compile(
+    r"<tool_call>|<function=([A-Za-z_][\w:.-]*)>|<invoke\s+name=[\"']([A-Za-z_][\w:.-]*)",
+    re.IGNORECASE,
+)
+_MAX_TEXT_TOOL_CALL_RETRIES = 2
+
+
+def _text_tool_call_names(text: Any) -> Set[str]:
+    """Tool names a model wrote as text-format tool-call markup ({"?"} if unnamed)."""
+    value = _strip_think_blocks(str(text or ""))
+    names: Set[str] = set()
+    for match in _TEXT_TOOL_CALL_RE.finditer(value):
+        name = match.group(1) or match.group(2)
+        names.add(name or "?")
+    if names - {"?"}:
+        names.discard("?")
+    return names
+
+
+def _text_tool_call_retry_instruction(names: Set[str], offered: Set[str]) -> str:
+    wanted = sorted(n for n in names if n != "?")
+    available = sorted(n for n in offered if n not in {"discover_tools"})
+    missing = [n for n in wanted if n not in set(offered)]
+    text = (
+        "Your last message wrote a tool call as text, so it was NOT executed. Call "
+        "tools only through the native function-calling interface. Tools available "
+        f"in this turn: {', '.join(available) or 'none'}."
+    )
+    if missing:
+        text += (
+            f" {', '.join(missing)} is not available in this turn: continue with the "
+            "available tools, or answer and say plainly what you could not do."
+        )
+    return text + " Do not announce what you will do; do it."
+
+
 _MUTATION_TOOL_NAMES = frozenset({"edit_file", "write_file", "apply_patch", "vault_batch_edit"})
 _MAX_MALFORMED_MUTATION_RETRIES = 2
 
@@ -25137,6 +25173,7 @@ async def _stream_agent_loop_impl(
     _artifact_body_handoff_attempts = 0
     _malformed_write_body_handoff_attempts = 0
     _malformed_mutation_retry_attempts = 0
+    _text_tool_call_retry_attempts = 0
     _artifact_observation_rounds = 0
     _artifact_source_recovery_cycles = 0
     _artifact_no_action_rounds = 0
@@ -25423,6 +25460,16 @@ async def _stream_agent_loop_impl(
         re.IGNORECASE,
     )
 
+    # Subject-less progress claims ending the reply: "Making the edits now.",
+    # "Doing a fresh inventory + exact read first ...".
+    _GERUND_PROMISE_RE = re.compile(
+        r"(?:^|\n|[.!?]\s+)\s*(?:now\s+)?(?:making|doing|applying|writing|editing|updating|"
+        r"checking|reading|fetching|searching|looking|verifying|running|starting|pulling|"
+        r"opening|grabbing|preparing|gathering|taking)\b[^.!?\n]{0,160}?"
+        r"(?:\bnow\b|\bfirst\b|\bnext\b|\.\.\.|…)[^.!?\n]{0,80}[.!…:]?\s*$",
+        re.IGNORECASE,
+    )
+
     def _looks_like_unfinished_action_promise(text: str) -> bool:
         """Catch a trailing action/answer promise without scanning old prose.
 
@@ -25437,7 +25484,9 @@ async def _stream_agent_loop_impl(
         if not visible:
             return False
         if len(visible) < 400:
-            return "```" not in visible and bool(_INTENT_RE.search(visible))
+            return "```" not in visible and bool(
+                _INTENT_RE.search(visible) or _GERUND_PROMISE_RE.search(visible)
+            )
         trailing = visible[-600:].strip()
         if "```" in trailing:
             return False
@@ -28391,6 +28440,31 @@ async def _stream_agent_loop_impl(
             _resolution_audit["requested_not_accepted"]
         )
         yield f'data: {json.dumps(_resolution_audit)}\n\n'
+        _text_tool_names = (
+            _text_tool_call_names(_normalized_doc_round)
+            if not tool_blocks and not native_tool_calls else set()
+        )
+        if (
+            _text_tool_names
+            and _is_api_model
+            and not _force_answer
+            and _text_tool_call_retry_attempts < _MAX_TEXT_TOOL_CALL_RETRIES
+            and (_round_limit is None or round_num < _round_limit)
+        ):
+            # A native-tool model wrote its tool call as text. It was not
+            # executed; do not let the round end the turn as an answer.
+            _text_tool_call_retry_attempts += 1
+            _offered_now = {name for name in (_tool_names_sent or ()) if name}
+            logger.warning(
+                "[agent] text-format tool call(s) %s in round %s; retry %s",
+                sorted(_text_tool_names), round_num, _text_tool_call_retry_attempts,
+            )
+            messages.append({
+                "role": "system",
+                "content": _text_tool_call_retry_instruction(_text_tool_names, _offered_now),
+            })
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
         _malformed_mutations = _malformed_native_tool_names & _MUTATION_TOOL_NAMES
         if (
             _malformed_mutations

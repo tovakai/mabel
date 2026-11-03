@@ -50,7 +50,9 @@ async def execute(name, content, ctx):
                 raise ValueError('Status accepts only boolean refresh')
             result = await asyncio.to_thread(index.reconcile if args.get('refresh') else index.status)
         else:
-            if not index.status()['last_scan']:
+            # Notes added or edited after the first scan must be findable:
+            # re-scan only when the cheap probe sees a change.
+            if await asyncio.to_thread(index.needs_reconcile):
                 await asyncio.to_thread(index.reconcile)
             if name == 'vault_knowledge_search':
                 if set(args)-{'query','mode','property_filters','path_prefix','top_k','offset','use_reranking'}:

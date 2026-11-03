@@ -216,7 +216,35 @@ class VaultIndex:
                         raise ValueError('Vault exceeds 50,000-note inventory budget')
         return found
 
+    def needs_reconcile(self):
+        """Cheap change probe: True when Markdown was added, removed or modified
+        since the last scan began. Never reads note text or writes the index."""
+        with self.connect() as db:
+            started = self.meta(db, 'scan_started') or self.meta(db, 'last_scan')
+            if not started:
+                return True
+            known = {r[0] for r in db.execute('SELECT path FROM notes')}
+            try:
+                known |= set(json.loads(self.meta(db, 'scan_errors') or '{}'))
+            except (TypeError, ValueError):
+                pass
+        try:
+            since = datetime.fromisoformat(started).timestamp()
+        except ValueError:
+            return True
+        paths = self.discover()
+        if set(paths) != known:
+            return True
+        for rel in paths:
+            try:
+                if os.stat(self.root / rel, follow_symlinks=False).st_mtime >= since:
+                    return True
+            except OSError:
+                return True
+        return False
+
     def reconcile(self):
+        scan_started = now()
         paths = self.discover()
         snapshots, errors = {}, {}
         total_bytes = 0
@@ -328,6 +356,8 @@ class VaultIndex:
             self.set_meta(db, 'generation', generation)
             self.set_meta(db, 'chunk_config', chunk_config)
             self.set_meta(db, 'last_scan', now())
+            # Edits made while this scan was reading are caught next time.
+            self.set_meta(db, 'scan_started', scan_started)
             self.set_meta(db, 'scan_errors', json_value(errors))
         return self.status() | {'changed':changed, 'discovered':len(paths)}
 

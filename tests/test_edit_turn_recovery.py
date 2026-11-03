@@ -126,5 +126,46 @@ def test_cut_off_edit_does_not_end_the_turn(monkeypatch, tmp_path):
 
 def test_cut_off_edit_retries_are_bounded(monkeypatch, tmp_path):
     seen, _ = _run_loop(monkeypatch, tmp_path, [[_PROMISE, _TRUNCATED_EDIT]], max_rounds=8)
-    # Two recovery rounds, then the loop stops retrying the same failure.
-    assert 3 <= len(seen) <= 4
+    # Two recovery rounds, plus at most two promise nudges ("Making the edits
+    # now."), then the loop stops retrying the same failure.
+    assert 3 <= len(seen) <= 5
+
+
+# --- text-format tool calls and promise-only endings ------------------------------------
+
+# Round 17 of the live failure: the call is written as text, for a tool not offered.
+_TEXT_CALL = 'data: ' + json.dumps({"delta": (
+    "<tool_call>\n<function=web_search>\n<parameter=query>\n"
+    "Lessons in Love Selebus release date\n</parameter>\n</function>\n</tool_call>"
+)}) + "\n\n"
+
+
+def test_text_format_tool_call_does_not_end_the_turn(monkeypatch, tmp_path):
+    seen, _ = _run_loop(monkeypatch, tmp_path, [[_TEXT_CALL], [_FINAL]])
+    assert len(seen) == 2, "the turn must continue after an unexecuted text tool call"
+    retry = json.dumps(seen[1]["messages"])
+    assert "was NOT executed" in retry
+    assert "web_search is not available in this turn" in retry
+    assert "edit_file" in retry
+
+
+def test_text_format_tool_call_retries_are_bounded(monkeypatch, tmp_path):
+    seen, _ = _run_loop(monkeypatch, tmp_path, [[_TEXT_CALL]], max_rounds=8)
+    assert 3 <= len(seen) <= 5
+
+
+def test_text_tool_call_name_extraction():
+    from src.agent_loop import _text_tool_call_names
+    assert _text_tool_call_names("<tool_call>\n<function=web_search>\n") == {"web_search"}
+    assert _text_tool_call_names('<invoke name="read_file">') == {"read_file"}
+    assert _text_tool_call_names("<tool_call>{}") == {"?"}
+    assert _text_tool_call_names("Lessons in Love is a visual novel.") == set()
+    assert _text_tool_call_names("<think><tool_call><function=ls></think>Done.") == set()
+
+
+_GERUND_PROMISE = 'data: {"delta": "Doing a fresh inventory + exact read first, so I don\'t rewrite from memory."}\n\n'
+
+
+def test_promise_only_reply_is_nudged_not_accepted(monkeypatch, tmp_path):
+    seen, _ = _run_loop(monkeypatch, tmp_path, [[_GERUND_PROMISE], [_FINAL]])
+    assert len(seen) == 2, "a reply that only announces the next step must not end the turn"
