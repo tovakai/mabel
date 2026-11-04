@@ -274,3 +274,38 @@ def test_parse_findings_still_rejects_replies_without_the_contract():
     for bad in ("I could not find anything.", '{"answer": "no findings key"}', ""):
         with _pytest.raises(ValueError):
             parse_findings(bad)
+
+
+@pytest.mark.asyncio
+async def test_search_aliases_and_oversized_pages_keep_the_tool_identity(environment, monkeypatch):
+    # The alias loop once rebound the tool's own name, so budget accounting and
+    # error logs saw "path_prefix" instead of vault_knowledge_search.
+    from src import tool_execution
+    from src.knowledge_engine import research
+    from src.tool_types import ToolBlock
+    from src.tool_capabilities import ToolRunSecurityContext
+    root, authority = environment
+    observed = []
+    budget = research.ResearchBudget()
+    original = budget.observe
+    monkeypatch.setattr(budget, "observe", lambda name, *a, **k: (observed.append(name), original(name, *a, **k))[1])
+    with research.budget_scope(budget):
+        _, result = await tool_execution.execute_tool_block(
+            ToolBlock('vault_knowledge_search', json.dumps({'query': 'lid', 'limit': 3, 'prefix': 'Projects', 'top_k': 999})),
+            owner='alice', session_id='research', workspace=str(root), request_authority=authority,
+            security_context=ToolRunSecurityContext())
+    assert result['exit_code'] == 0, result
+    assert observed == ['vault_knowledge_search']
+
+
+def test_wide_search_is_trimmed_to_the_research_budget_instead_of_failing():
+    from src.knowledge_engine.tools import _fit_search_to_budget
+    wide = {"matches": [{"note_id": f"n{i}", "rel_path": f"a/{i}.md", "start_line": 1, "end_line": 9,
+                         "excerpt": "x" * 2000} for i in range(8)],
+            "graph_context": [{"id": i} for i in range(10)]}
+    fitted = _fit_search_to_budget(wide, 24000)
+    assert len(json.dumps(fitted).encode()) <= 12000
+    assert fitted["matches"] and fitted["matches"][0]["note_id"] == "n0"
+    assert all(len(m["excerpt"]) <= 600 for m in fitted["matches"])
+    small = {"matches": [{"note_id": "n", "excerpt": "short"}], "graph_context": []}
+    assert _fit_search_to_budget(small, 24000) == small

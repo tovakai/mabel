@@ -58,10 +58,11 @@ async def execute(name, content, ctx):
             if await asyncio.to_thread(index.needs_reconcile):
                 await asyncio.to_thread(index.reconcile)
             if name == 'vault_knowledge_search':
-                for alias, name in (('limit','top_k'),('k','top_k'),('filters','property_filters'),
-                                    ('sort','sort_by'),('order_by','sort_by'),('prefix','path_prefix')):
-                    if alias in args and name not in args:
-                        args[name]=args.pop(alias)
+                for alias, canonical in (('limit','top_k'),('k','top_k'),('filters','property_filters'),
+                                         ('sort','sort_by'),('order_by','sort_by'),('prefix','path_prefix')):
+                    if alias in args:
+                        value=args.pop(alias)
+                        args.setdefault(canonical,value)
                 args.pop('sort_order',None)  # sort_by is always highest first
                 # Clamp an oversized page to its bound rather than failing the
                 # model's call; the index itself keeps rejecting out-of-range pages.
@@ -84,6 +85,8 @@ async def execute(name, content, ctx):
                     raise ValueError('Unknown source range argument')
                 result = await asyncio.to_thread(index.read_range,**args)
         if budget is not None:
+            if name == 'vault_knowledge_search' and isinstance(result, dict):
+                result = _fit_search_to_budget(result, budget.max_bytes - budget.returned_bytes)
             budget.observe(name,result,{**args,'_source_depth':source_depth or 0})
         bound.validate()
         # The indexed read API also exposes a line-numbered rendering for its
@@ -144,3 +147,33 @@ def schemas():
     from src.agent_runtime.parallel_research import schema as parallel_schema
     result.append(parallel_schema())
     return result
+
+
+def _fit_search_to_budget(result, remaining):
+    """Shrink a search result to the research budget instead of failing the read.
+
+    Inside a bounded research run one wide search could exceed the whole
+    evidence budget and leave the worker with nothing. Excerpts are shortened
+    and graph context trimmed first; trailing (lowest-ranked) matches are
+    dropped only if still too large. Source ids and line ranges are kept, so
+    the worker can read a note in full with vault_read_range.
+    """
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False).encode())
+    budget = max(0, int(remaining * 0.5))  # leave room for follow-up reads
+    if size(result) <= budget:
+        return result
+    out = dict(result)
+    out['graph_context'] = list(out.get('graph_context') or [])[:3]
+    matches = []
+    for match in out.get('matches') or []:
+        item = dict(match)
+        if isinstance(item.get('excerpt'), str) and len(item['excerpt']) > 600:
+            item['excerpt'] = item['excerpt'][:600]
+            item['excerpt_truncated'] = True
+        matches.append(item)
+    out['matches'] = matches
+    while out['matches'] and size(out) > budget:
+        out['matches'] = out['matches'][:-1]
+        out['budget_trimmed'] = True
+    return out

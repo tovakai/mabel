@@ -161,3 +161,17 @@ def test_no_note_read_without_an_exact_title_match(monkeypatch, tmp_path):
     _, _, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"},
                           search_result={"output": hit, "exit_code": 0})
     assert [tool for tool, _ in executed] == ["vault_knowledge_search"]
+
+
+def test_empty_title_lookup_is_injected_with_a_not_found_hint(monkeypatch, tmp_path):
+    global MESSAGE
+    original = MESSAGE
+    MESSAGE = "What do my notes say about Cowboy Bebop?"
+    try:
+        _, seen, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"},
+                                 search_result={"output": json.dumps({"matches": []}), "exit_code": 0})
+    finally:
+        MESSAGE = original
+    first = json.dumps(seen[0]["messages"])
+    assert "has no note matching 'Cowboy Bebop'" in first
+    assert "prefetch_vault_0" in first, "the empty result itself is shown to the model"

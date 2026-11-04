@@ -26377,6 +26377,7 @@ async def _stream_agent_loop_impl(
             _prefetch_plans = []
         _prefetch_calls, _prefetch_texts, _prefetch_records = [], [], []
         _prefetch_queue = [("vault_knowledge_search", plan) for plan in _prefetch_plans[:3]]
+        _prefetch_empty_topics = []
         _prefetch_index = -1
         while _prefetch_queue and _prefetch_index < 4:
             _prefetch_index += 1
@@ -26408,6 +26409,8 @@ async def _stream_agent_loop_impl(
             # metadata listing just means the vault uses other conventions.
             if '"matches": []' in _prefetch_output and "query" not in _prefetch_plan:
                 continue
+            if '"matches": []' in _prefetch_output and _prefetch_plan.get("query"):
+                _prefetch_empty_topics.append(str(_prefetch_plan["query"]))
             total_tool_calls += 1
             _prefetch_text = format_tool_result(_prefetch_desc, _prefetch_result)
             _prefetch_calls.append({"id": f"prefetch_vault_{_prefetch_index}",
@@ -26446,10 +26449,16 @@ async def _stream_agent_loop_impl(
                     "The results above are the user's own library (their ratings or playtime, genres"
                     + (", and the full list of titles they already have" if len(_prefetch_plans) > 1 else "")
                     + "). Recommend titles that are NOT already in their library, "
-                    "explain each pick by pointing to what they rated highly. Answer from your own "
-                    "knowledge; if media_lookup is available, use it (anilist recommendations/details) "
-                    "to check a few candidates instead of web_search. Do not search the vault again "
-                    "unless something essential is missing."
+                    "explain each pick by pointing to what they rated highly. Answer now from your own "
+                    "knowledge of these titles: do not verify every candidate. At most two media_lookup "
+                    "calls if a detail is genuinely uncertain; no web_search, and do not search the vault "
+                    "again unless something essential is missing."
+                )})
+            elif _prefetch_empty_topics and len(_prefetch_calls) == len(_prefetch_empty_topics):
+                messages.append({"role": "system", "content": (
+                    f"The vault index has no note matching {', '.join(map(repr, _prefetch_empty_topics))}. "
+                    "Do at most one grep for an alternate spelling or abbreviation; if that finds nothing, "
+                    "tell the user plainly that their notes do not mention it. Do not use the web for this."
                 )})
             elif any(name == "vault_read_range" for name in (c["name"] for c in _prefetch_calls)):
                 messages.append({"role": "system", "content": (

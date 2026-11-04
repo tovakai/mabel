@@ -46,3 +46,23 @@ def test_count_fields_in_status_payloads_do_not_crash_the_budget():
     record = {"tool_name": "vault_index_status", "content": "{}",
               "result": {"exit_code": 0, "output": _json.dumps({"notes": 1267, "matches": 3, "results": None})}}
     assert isinstance(_local_evidence_keys(record), set)
+
+
+def test_mixed_web_and_local_rounds_hit_the_hard_cap():
+    # parallel_compare ran 21 rounds: research_parallel, then media lookups and
+    # globs/ls. Once web is involved, local rounds count toward the hard cap.
+    budget = ChatResearchBudget(stall_rounds=50, soft_synthesis_rounds=5, hard_synthesis_rounds=12)
+    budget.observe_round([_rec("research_parallel", '{"mode": "both", "query": "Berserk"}', '{"ok": 1}')])
+    reasons = [budget.observe_round([_rec("read_file", f'{{"path": "/v/n{i}.md"}}', f"note {i}")]).hard_reason
+               for i in range(15)]
+    assert "hard_rounds" in reasons and reasons.index("hard_rounds") == 10  # 12th retrieval round overall
+
+
+def test_media_lookups_count_as_searches_and_repeat_queries_stall():
+    budget = ChatResearchBudget(stall_rounds=2, max_searches=50)
+    args = '{"source": "anilist", "query": "Monster"}'
+    budget.observe_round([_rec("media_lookup", args, '{"results": []}')])
+    assert budget.search_count == 1 and budget.stall_streak == 0
+    budget.observe_round([_rec("media_lookup", args, '{"results": []}')])
+    decision = budget.observe_round([_rec("media_lookup", args, '{"results": []}')])
+    assert decision.hard_reason == "stall"

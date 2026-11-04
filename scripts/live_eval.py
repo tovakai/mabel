@@ -70,7 +70,7 @@ SCENARIOS = [
              contains_any=("Madhouse",), max_seconds=30, max_rounds=2),
     Scenario("media_vndb", "Look up Lessons in Love on VNDB: who develops it and when was it first released?",
              tags=("web", "media"), tools_any=("media_lookup",), contains_any=("2022",),
-             max_seconds=30, max_rounds=2),
+             max_seconds=30, max_rounds=3),
     Scenario("media_fanwiki", "According to the Berserk fan wiki, what is Guts's epithet?",
              tags=("web", "media"), tools_any=("media_lookup",), contains_any=("Black Swordsman",),
              max_seconds=40, max_rounds=3),

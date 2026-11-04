@@ -124,7 +124,7 @@ class ChatResearchBudget:
         web_records = [
             record for record in records
             if record.get("tool_name") in {
-                "web_search", "web_fetch", "private_browser", "research_parallel",
+                "web_search", "web_fetch", "private_browser", "research_parallel", "media_lookup",
             }
         ]
         local_records = [record for record in records if record.get("tool_name") in LOCAL_RETRIEVAL_TOOLS]
@@ -181,6 +181,19 @@ class ChatResearchBudget:
                         made_progress = True
             elif name == "private_browser" and ok:
                 made_progress = True
+            elif name == "media_lookup":
+                # Structured lookups count like searches; a new query/id is progress.
+                self.search_count += 1
+                try:
+                    import json as _json
+                    _args = _json.loads(content or "{}")
+                except (TypeError, ValueError):
+                    _args = {}
+                key = "|".join(str(_args.get(k) or "").casefold() for k in ("source", "action", "query", "id", "wiki")) \
+                    if isinstance(_args, dict) else content
+                if ok and key and key not in self.unique_queries:
+                    self.unique_queries.add(key)
+                    made_progress = True
 
         if made_progress:
             self.stall_streak = 0
@@ -194,7 +207,11 @@ class ChatResearchBudget:
             hard_reason = "fetch_budget"
         elif self.stall_streak >= self.stall_rounds:
             hard_reason = "stall"
-        elif self.research_rounds >= self.hard_synthesis_rounds:
+        elif self.research_rounds >= self.hard_synthesis_rounds or (
+            # Once a turn has gone to the web (or media lookups), its local
+            # rounds count too; purely local vault work keeps its own pace.
+            self.research_rounds > 0 and self.retrieval_rounds >= self.hard_synthesis_rounds
+        ):
             hard_reason = "hard_rounds"
         if hard_reason:
             self.exhausted_reason = hard_reason
