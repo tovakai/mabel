@@ -89,3 +89,13 @@ def test_the_live_turn_keeps_its_answer(monkeypatch, tmp_path):
 def test_approved_memory_write_is_a_side_action_unless_it_was_the_request(capabilities, side):
     from src.agent_loop import _approved_write_is_side_action
     assert _approved_write_is_side_action("manage_memory", capabilities) is side
+
+
+@pytest.mark.parametrize("text,families", [
+    ("Mabel, remember this: the wifi password changed", {"memory"}),
+    ("Hey Mabel, remember that I start work at 9", {"memory"}),
+    ("Mabel: what do my notes say about Berserk?", {"workspace_read"}),
+    ("Mabel is a nice name", set()),
+])
+def test_addressing_mabel_by_name_does_not_hide_the_request(text, families):
+    assert set(requested_capabilities(text, vault_scope=True)) == families

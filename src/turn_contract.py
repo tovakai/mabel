@@ -261,6 +261,9 @@ def editor_request_instructions(value: str) -> str:
 def _normalize_request_lead(value: str) -> str:
     """Remove harmless conversational wrappers before intent classification."""
     text = editor_request_instructions(value)
+    # Addressing the assistant by name ("Mabel, remember this: ...") is not
+    # part of the request itself.
+    text = re.sub(r"^(?:(?:hey|hi|ok(?:ay)?)\s+)?mabel\s*[,:!-]\s*(?=\S)", "", text, flags=re.I)
     text = re.sub(r"^(?:thx|thank\s+you)\s*[,!]\s+(?=\S)", "", text, flags=re.I)
     text = re.sub(
         r"^thanks?\s*[,!]\s+(?=(?:do|repeat|show|list|read|open|find|search|check)\b)",
