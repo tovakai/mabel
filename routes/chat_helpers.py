@@ -1160,13 +1160,40 @@ async def build_chat_context(
             else preprocessed.text_for_context
         )
     )
+    # Phase 01 prompt stitching (off / shadow / on). Only for Mabel's own
+    # persona preset; any failure serves the original prompt.
+    _persona_system_prompt = preset.system_prompt
+    _persona_fragment = None
+    try:
+        from src.persona import composer as _persona_composer, current_mode, log_composition
+        _persona_mode = current_mode()
+        _is_mabel = re.sub(r"[^a-z]", "", str(getattr(preset, "character_name", "") or "").lower()) == "mabel"
+        if _persona_mode != "off" and _is_mabel and not compare_mode:
+            from datetime import datetime as _dt
+            from src.turn_contract import requested_capabilities as _caps
+            from src.user_time import user_timezone
+            _comp = _persona_composer().compose(
+                context_message, set(_caps(context_message)), session_id,
+                local_now=_dt.now(user_timezone()), mode=_persona_mode)
+            _serve = _persona_mode == "on" and _comp.core_text is not None
+            if _serve:
+                _persona_system_prompt = _comp.core_text
+                _persona_fragment = _comp.fragment
+            log_composition(_comp, session_id=session_id, served=_serve)
+            logger.info("[persona] %s function=%s(%s) mood=%s(%s) modules=%s",
+                        "served" if _serve else "shadow", _comp.function, _comp.function_reason,
+                        _comp.mood, _comp.mood_source, ",".join(_comp.refs))
+    except Exception:
+        logger.warning("[persona] composition failed; serving the original prompt", exc_info=True)
+        _persona_system_prompt, _persona_fragment = preset.system_prompt, None
+
     _preface_kwargs = dict(
         message=_ctx_msg,
         session=sess,
         use_web=use_web_val and not skip_web,
         use_memory=mem_enabled,
         time_filter=time_filter,
-        preset_system_prompt=preset.system_prompt,
+        preset_system_prompt=_persona_system_prompt,
         owner=user,
         character_name=preset.character_name,
         persona_memory=preset.persona_memory,
@@ -1225,6 +1252,20 @@ async def build_chat_context(
     # history: the session id may be a temporary wrapper or, in buggy clients, a
     # stale normal session id. Only the ephemeral incognito transcript is safe.
     messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
+
+    # Phase 01: the per-turn FUNCTION + MOOD note sits just before the latest
+    # user turn, like the date message, so the stable prefix stays cacheable.
+    if _persona_fragment:
+        # User role like the date/time note: strict chat templates reject late
+        # system messages, and merging it into the system prefix would break
+        # the prefix cache whenever the function or mood changes.
+        _persona_msg = {"role": "user", "content": (
+            "[Context — your current mode and mood, from your own configuration; "
+            "not part of the user's message]\n" + _persona_fragment)}
+        if messages and messages[-1].get("role") == "user":
+            messages.insert(len(messages) - 1, _persona_msg)
+        else:
+            messages.append(_persona_msg)
 
     # Phase 00.5 episodic recall: a few verified snippets from earlier
     # conversations, placed just before the latest user turn (like the date
