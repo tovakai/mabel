@@ -46,7 +46,9 @@ class ResearchBudget:
     verifying:bool=False
 
     def claim(self,name,args,index=None):
-        if time.monotonic()-self.started>self.max_seconds:
+        # Verification reads are local and fast; give them a short grace period
+        # so a slow synthesis does not leave every finding unverified.
+        if time.monotonic()-self.started>self.max_seconds+(30 if self.verifying else 0):
             raise ResearchLimit('Research time limit reached')
         ceiling=self.max_calls if self.verifying else max(1,self.max_calls-6)
         if self.calls>=ceiling:
@@ -91,6 +93,8 @@ class ResearchBudget:
         elif name=='vault_read_range':
             self.depths.setdefault(result['note_id'],0)
             self.notes[result['note_id']]=result['rel_path']
+        if self.verifying:
+            return  # citation checks re-read sources; they are not new evidence for the model
         size=len(json.dumps(result,ensure_ascii=False).encode())
         if self.returned_bytes+size>self.max_bytes:
             raise ResearchLimit('Research evidence output budget exhausted; no partial JSON was emitted')
@@ -312,6 +316,7 @@ async def verify_findings(data,ctx,budget):
     from src.tool_types import ToolBlock
     from src.tool_capabilities import ToolRunSecurityContext
     accepted,unresolved=[],[]
+    sources={}
     budget.verifying=True
     for finding in data['findings']:
         if not isinstance(finding,dict) or not isinstance(finding.get('claim'),str) or not 1<=len(finding['claim'])<=1000:
@@ -323,18 +328,32 @@ async def verify_findings(data,ctx,budget):
         for reference in evidence:
             if not isinstance(reference,dict) or not isinstance(reference.get('note_id'),str) or reference['note_id'] not in budget.notes or not isinstance(reference.get('quote'),str) or not reference['quote'] or len(reference['quote'])>2000:
                 continue
-            request={k:reference.get(k) for k in ('note_id','start_line','end_line')}
-            _,result=await execute_tool_block(ToolBlock('vault_read_range',json.dumps(request)),owner=ctx.get('owner'),
-                session_id=ctx.get('session_id'),workspace=ctx['request_authority'].workspace,
-                request_authority=ctx['request_authority'],security_context=ToolRunSecurityContext(),
-                disabled_tools=ctx.get('disabled_tools'),tool_policy=ctx.get('tool_policy'))
-            if result.get('exit_code')!=0:
+            # Check the quote against the note itself, not the model's line
+            # numbers (small models are often a few lines off); report the
+            # lines where the quote actually is.
+            source=sources.get(reference['note_id'])
+            if source is None:
+                request={'note_id':reference['note_id'],'start_line':1,'end_line':200}
+                _,result=await execute_tool_block(ToolBlock('vault_read_range',json.dumps(request)),owner=ctx.get('owner'),
+                    session_id=ctx.get('session_id'),workspace=ctx['request_authority'].workspace,
+                    request_authority=ctx['request_authority'],security_context=ToolRunSecurityContext(),
+                    disabled_tools=ctx.get('disabled_tools'),tool_policy=ctx.get('tool_policy'))
+                source=json.loads(result['output']) if result.get('exit_code')==0 else {}
+                sources[reference['note_id']]=source
+            if not source:
                 continue
-            source=json.loads(result['output'])
             quote=_quote_form(reference['quote'])
-            if reference.get('rel_path')!=source['rel_path'] or len(quote)<8 or quote not in _quote_form(source['text']):
+            if reference.get('rel_path')!=source.get('rel_path') or len(quote)<8 or quote not in _quote_form(source.get('text')):
                 continue
-            checked.append({**{key:reference[key] for key in ('note_id','rel_path','start_line','end_line','quote')},'content_hash':source['content_hash']})
+            lines=str(source.get('text') or '').splitlines()
+            first=int(source.get('start_line') or 1)
+            hit=next((i for i,line in enumerate(lines)
+                      if len(_quote_form(line))>=8 and (_quote_form(line) in quote or quote in _quote_form(line))),None)
+            span=len(reference['quote'].splitlines()) or 1
+            start=first+hit if hit is not None else reference.get('start_line')
+            end=(start+span-1) if hit is not None else reference.get('end_line')
+            checked.append({'note_id':reference['note_id'],'rel_path':source['rel_path'],'start_line':start,'end_line':end,
+                            'quote':reference['quote'],'content_hash':source.get('content_hash')})
         # Numeric contradictions cannot be labeled verified simply because an
         # unrelated valid citation was attached. Entailment beyond literal
         # citations remains the reasoning model's responsibility.

@@ -430,3 +430,29 @@ async def test_role_call_timeout_can_be_extended_but_not_shortened(monkeypatch):
     assert seen['policy_timeout'] == 90
     await roles.call('research', [], owner='a', timeout=5)
     assert seen['policy_timeout'] == 30
+
+
+@pytest.mark.asyncio
+async def test_exact_quote_with_wrong_line_numbers_is_verified_and_relocated(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+
+    async def synthesize(role, messages, **kwargs):
+        lid = next(e for e in _evidence_from(messages) if e['rel_path'] == 'Projects/Lid.md')
+        index, line = next((i, l) for i, l in enumerate(lid['text'].splitlines()) if 'tolerans' in l)
+        return json.dumps({'status': 'complete', 'findings': [{'claim': 'The lid tolerance is 0.2 mm', 'evidence': [
+            {'note_id': lid['note_id'], 'rel_path': lid['rel_path'], 'start_line': 1, 'end_line': 1,  # wrong lines
+             'quote': line.replace('**', '')}]}]})
+    monkeypatch.setattr(roles, 'call', synthesize)
+    result = await dispatch(environment, {'research_objective': 'tolerans'})
+    assert result['status'] == 'complete', result
+    assert result['findings'][0]['evidence'][0]['start_line'] > 1, "lines point at the actual quote"
+
+
+def test_verification_reads_do_not_spend_the_evidence_budget():
+    budget = ResearchBudget(max_bytes=4096)
+    budget.verifying = True
+    budget.observe('vault_read_range', {'note_id': 'n', 'rel_path': 'x.md', 'text': 'x' * 10000}, {})
+    assert budget.returned_bytes == 0 and budget.notes['n'] == 'x.md'
+    budget.started -= budget.max_seconds + 10  # past the limit, within the verification grace
+    budget.claim('vault_read_range', {'note_id': 'n', 'start_line': 1, 'end_line': 200})
