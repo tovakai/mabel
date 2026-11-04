@@ -1297,9 +1297,12 @@ class GrepTool:
                         ]
                     except re.error:
                         pass
+                multiline = "\\n" in pattern or "\n" in pattern
                 # Validate even when policy filtering leaves no search targets.
                 if not targets:
                     cmd_probe = [rg, "--json", "--no-config"]
+                    if multiline:
+                        cmd_probe.append("--multiline")
                     if glob_pat:
                         cmd_probe += ["--glob", glob_pat]
                     cmd_probe += ["--regexp", pattern, "--", "-"]
@@ -1317,6 +1320,8 @@ class GrepTool:
                     ]
                     if ignore_case:
                         cmd.append("--ignore-case")
+                    if multiline:
+                        cmd.append("--multiline")  # pattern spans lines (\n)
                     if glob_pat:
                         cmd += ["--glob", glob_pat]
                     for sensitive_pattern in _SENSITIVE_FILE_PATTERNS:

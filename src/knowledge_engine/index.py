@@ -481,6 +481,9 @@ class VaultIndex:
                     for r in rows[:top_k]:
                         frontmatter = json.loads(r['frontmatter'])
                         item = {'title': r['title']}
+                        if path_prefix:
+                            # Folder listings are read next: include the source identity.
+                            item.update(note_id=r['id'], rel_path=r['path'])
                         item.update({f: _plain(frontmatter[f]) for f in fields if f in frontmatter})
                         matches.append(item)
                 else:

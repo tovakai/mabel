@@ -75,8 +75,10 @@ class ResearchBudget:
     def observe(self,name,result,args):
         if name=='vault_knowledge_search':
             for row in result.get('matches',[]):
+                if not isinstance(row,dict) or not row.get('note_id'):
+                    continue  # compact title rows carry no source identity
                 self.depths.setdefault(row['note_id'],0)
-                self.notes[row['note_id']]=row['rel_path']
+                self.notes[row['note_id']]=row.get('rel_path')
             self.chunks+=len(result.get('matches',[]))
         elif name=='vault_traverse_graph':
             depth=args.get('_source_depth',0)+1
@@ -161,8 +163,18 @@ def _findings_candidates(value):
 # its own tool loop. Small research models are slow and unreliable as tool-loop
 # drivers, so evidence_first is the default; the role policy can override it.
 DEFAULT_WORKER_MODE='evidence_first'
-_EVIDENCE_NOTES=6
+_EVIDENCE_NOTES=8
 _EVIDENCE_TEXT_CHARS=1500
+# Instruction words that make a lexical search match everything.
+_QUERY_STOPWORDS=frozenset("""a an and are about all any as at be by can each every everything find for from get give
+go how i in into is it its list look me my notes note of on or out please read research say says said search show
+summarise summarize summary tell the their them these this through to up vault what whats which who with write""".split())
+
+
+def _evidence_query(objective):
+    words=re.findall(r"[\w'-]+",objective)
+    kept=[w for w in words if w.casefold() not in _QUERY_STOPWORDS]
+    return ' '.join(kept[:16]) or objective[:200]
 
 
 async def _evidence_first(objective,root,ctx,child,contract,policy,budget,authority,system_prompt):
@@ -179,18 +191,33 @@ async def _evidence_first(objective,root,ctx,child,contract,policy,budget,author
         return result
 
     with budget_scope(budget),bind_turn_contract(contract):
-        found=await run('vault_knowledge_search',{'query':objective[:500],'path':root,'top_k':8})
+        found=await run('vault_knowledge_search',{'query':_evidence_query(objective),'path':root,'top_k':30})
         matches=json.loads(found['output']).get('matches',[]) if found.get('exit_code')==0 else []
-        note_ids=[]
+        note_ids,paths=[],{}
         for match in matches:
             note_id=match.get('note_id') if isinstance(match,dict) else None
             if note_id and note_id not in note_ids:
                 note_ids.append(note_id)
+                paths[note_id]=str(match.get('rel_path') or '')
+        # Few distinct notes (one long note filling the hits, e.g. one of a series'
+        # character pages): read the top hit's small folder too. A folder larger
+        # than the read budget is skipped rather than sampled.
+        top_folder=paths[note_ids[0]].rsplit('/',1)[0] if note_ids and '/' in paths[note_ids[0]] else ''
+        if top_folder and len(note_ids)<3:
+            listed=await run('vault_knowledge_search',{'mode':'metadata_only','path':root,'path_prefix':top_folder,
+                                                       'fields':[],'top_k':_EVIDENCE_NOTES*2})
+            listing=json.loads(listed['output']) if listed.get('exit_code')==0 else {}
+            if listing.get('next_offset') is None:
+                for row in listing.get('matches',[]):
+                    sibling=row.get('note_id') if isinstance(row,dict) else None
+                    if sibling and sibling not in note_ids and len(note_ids)<_EVIDENCE_NOTES:
+                        note_ids.append(sibling)
+                        paths[sibling]=str(row.get('rel_path') or '')
         gate=asyncio.Semaphore(max(1,budget.max_concurrency))
 
         async def read(note_id):
             async with gate:
-                return await run('vault_read_range',{'note_id':note_id,'path':root,'start_line':1,'end_line':80})
+                return await run('vault_read_range',{'note_id':note_id,'path':root,'start_line':1,'end_line':60})
         reads=await asyncio.gather(*(read(n) for n in note_ids[:_EVIDENCE_NOTES]))
     evidence=[]
     for result in reads:

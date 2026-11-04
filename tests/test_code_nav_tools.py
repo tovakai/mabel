@@ -265,3 +265,12 @@ def test_read_file_extracts_legacy_word_documents(repo, monkeypatch):
         "display_name": "report.doc",
         "analyze_embedded_images": False,
     })]
+
+
+def test_grep_pattern_spanning_lines_uses_multiline(repo):
+    import json as _json
+    if not shutil.which("rg"):
+        pytest.skip("ripgrep not installed")
+    r = _run("grep", _json.dumps({"pattern": "import os\\n# needle", "path": repo}))
+    assert r["exit_code"] == 0, r
+    assert "a.py" in r["output"]

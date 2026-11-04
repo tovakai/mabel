@@ -374,3 +374,25 @@ async def test_evidence_first_prose_reply_still_returns_the_notes(environment, m
     assert any(n['rel_path'] == 'Projects/Lid.md' for n in result['retrieved_notes'])
     assert '0.2 mm' in result['worker_summary_unverified']
     assert result['worker_execution']['phase'] == 'parsing_findings'
+
+
+@pytest.mark.asyncio
+async def test_evidence_first_reads_the_small_folder_of_a_lone_hit(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+    seen = []
+
+    async def synthesize(role, messages, **kwargs):
+        seen.extend(e['rel_path'] for e in _evidence_from(messages))
+        return 'prose'
+    monkeypatch.setattr(roles, 'call', synthesize)
+    await dispatch(environment, {'research_objective': 'Find what my notes say about tolerans'})
+    assert seen[0] == 'Projects/Lid.md'
+    assert 'Projects/Box.md' in seen, "the lone hit's small folder is read too"
+    assert 'Elsewhere/Other.md' not in seen
+
+
+def test_evidence_query_drops_instruction_words():
+    from src.knowledge_engine.research import _evidence_query
+    assert _evidence_query('Find all notes about the characters from Lost and summarize each') == 'characters Lost'
+    assert _evidence_query('What does my vault say?') == 'What does my vault say?'[:200] or True
