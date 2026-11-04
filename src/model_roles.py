@@ -278,16 +278,19 @@ async def call(role,messages,*,owner='',primary_route=None,**kwargs):
             try:resolved[id(a)]=resolve(a,owner)
             except (RoleUnavailable,ValueError):continue
         entries=[a for a in entries if id(a) in resolved]
+    # The role timeout is a floor; a caller with a larger bounded budget may extend it.
+    timeout=max(get_policy(role,owner)['timeout'],int(kwargs.pop('timeout',0) or 0))
     async def operation(route):
         from src.llm_core import llm_call_async
         from src.model_role_runtime import _RUNNING
         token=_RUNNING.set(True)
         try:
             return await llm_call_async(route.url,route.assignment.model,messages,headers=route.headers,
-                **{**kwargs,'timeout':get_policy(role,owner)['timeout'],'max_retries':1})
+                **{**kwargs,'timeout':timeout,'max_retries':1})
         finally:
             _RUNNING.reset(token)
-    result,_,_=await run_candidates(role,entries,operation,owner=owner,resolved_routes=resolved)
+    result,_,_=await run_candidates(role,entries,operation,owner=owner,resolved_routes=resolved,
+                                    policy={**get_policy(role,owner),'timeout':timeout})
     return result
 
 

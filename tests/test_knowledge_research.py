@@ -405,3 +405,28 @@ def test_quote_form_ignores_formatting_but_not_words():
     assert _quote_form('She escaped with Claire.') in _quote_form(note)
     assert _quote_form("Kate is the protagonist of Lost.") not in _quote_form(note)
     assert _quote_form('It’s  a   “test” – done') == '''It's a "test" - done'''
+
+
+def test_truncated_findings_reply_keeps_the_complete_findings():
+    from src.knowledge_engine.research import parse_findings
+    one = {"claim": "Charlie played bass in Drive Shaft", "evidence": [{"note_id": "a", "quote": "bassist"}]}
+    text = '{"status":"complete","findings":[' + json.dumps(one) + ',' + json.dumps(one) + ',{"claim":"Hurley won the lott'
+    data = parse_findings(text)
+    assert len(data["findings"]) == 2 and data["status"] == "partial"
+    assert "cut off" in data["unresolved_questions"][0]
+
+
+@pytest.mark.asyncio
+async def test_role_call_timeout_can_be_extended_but_not_shortened(monkeypatch):
+    seen = {}
+
+    async def fake_run_candidates(role, entries, operation, **kwargs):
+        seen['policy_timeout'] = kwargs['policy']['timeout']
+        return 'ok', {}, None
+    monkeypatch.setattr(roles, 'candidates', lambda role, owner: [object()])
+    monkeypatch.setattr(roles, 'run_candidates', fake_run_candidates)
+    monkeypatch.setattr(roles, 'get_policy', lambda role, owner='': {'timeout': 30, 'retries': 0})
+    await roles.call('research', [], owner='a', timeout=90)
+    assert seen['policy_timeout'] == 90
+    await roles.call('research', [], owner='a', timeout=5)
+    assert seen['policy_timeout'] == 30
