@@ -230,3 +230,43 @@ def test_compare_turn_gets_the_one_lookup_hint(monkeypatch, tmp_path):
         MESSAGE = original
     first = json.dumps(seen[0]["messages"])
     assert "notes on 'Berserk' are above" in first and "make ONE" in first
+
+
+# --- broad questions: read the distinct matching notes up front -------------------------
+
+@pytest.mark.parametrize("text,query", [
+    ("Summarize what my notes say about the characters from Lost.", "characters Lost"),
+    ("Give me an overview of my notes on Berserk", "Berserk"),
+    ("Summarize everything in my vault about Studio Ghibli", "Studio Ghibli"),
+])
+def test_broad_questions_get_a_broad_plan(text, query):
+    assert vault_prefetch_requests(text) == [{"query": query, "top_k": 30, "_broad": True}]
+
+
+@pytest.mark.parametrize("text", [
+    "Summarize my notes about Lost and add a tag",   # an edit, not a read
+    "summarize this article",                        # not about the vault
+])
+def test_broad_plan_needs_a_vault_question_without_edits(text):
+    assert vault_prefetch_requests(text) == []
+
+
+def test_broad_turn_reads_distinct_notes_before_round_one(monkeypatch, tmp_path):
+    global MESSAGE
+    original = MESSAGE
+    MESSAGE = "Summarize what my notes say about the characters from Lost."
+    hits = json.dumps({"matches": [{"note_id": f"n{i % 10}", "title": f"Char {i % 10}"} for i in range(25)]})
+
+    def handler(block):
+        if block.tool_type == "vault_read_range":
+            return {"output": json.dumps({"text": "note " + json.loads(block.content)["note_id"]}), "exit_code": 0}
+        assert "_broad" not in json.loads(block.content), "internal plan keys never reach the tool"
+        return {"output": hits, "exit_code": 0}
+    try:
+        _, seen, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"}, search_result=handler)
+    finally:
+        MESSAGE = original
+    reads = [json.loads(a)["note_id"] for t, a in executed if t == "vault_read_range"]
+    assert reads == [f"n{i}" for i in range(8)], "eight distinct notes, in rank order"
+    first = json.dumps(seen[0]["messages"])
+    assert "note n7" in first and "Summarise from them now" in first

@@ -187,6 +187,25 @@ def compare_topic(text: str) -> str | None:
     return topic if topic and len(topic.split()) <= 10 else None
 
 
+_BROAD = re.compile(
+    r"\b(?:summari[sz]e|sum\s+up|overview|recap|everything|all\s+(?:that\s+)?(?:i|my)|what\s+all)\b"
+    r".{0,60}?\b(?:my\s+(?:obsidian\s+)?(?:vault|notes?)|in\s+(?:my\s+)?(?:notes?|vault))\b"
+    r".{0,40}?\b(?:about|on|regarding|concerning|for)\s+(?P<topic>[^?!.\n]{2,120}?)\s*[?!.]*\s*$", re.I)
+_BROAD_MUTATION = re.compile(r"\b(?:add|create|write|edit|update|fix|change|delete|remove|rename|move|tag)\b", re.I)
+BROAD_NOTE_READS = 8
+
+
+def broad_topic(text: str) -> str | None:
+    """Search terms for "summarise what my notes say about X"-style questions, or None."""
+    text = str(text or "").strip()
+    match = _BROAD.search(text)
+    if not match or _BROAD_MUTATION.search(text) or _PUBLIC_WEB_ONLY.search(text):
+        return None
+    from src.knowledge_engine.research import _evidence_query
+    query = _evidence_query(match.group("topic"))
+    return query if query and re.search(r"\w", query) else None
+
+
 def vault_prefetch_requests(text: str) -> list[dict]:
     """Obvious first vault queries for a library question, run before round 1.
 
@@ -194,6 +213,10 @@ def vault_prefetch_requests(text: str) -> list[dict]:
     not a simple library question. Never used for edits or web comparisons.
     """
     text = str(text or "").strip()
+    broad = broad_topic(text)
+    if broad:
+        # "_broad" is internal: the prefetch reads the distinct matching notes next.
+        return [{"query": broad, "top_k": 30, "_broad": True}]
     topic = compare_topic(text)
     if topic:
         return [{"query": topic, "top_k": 10}]  # the notes side of a notes-vs-public comparison

@@ -26424,10 +26424,10 @@ async def _stream_agent_loop_impl(
         _prefetch_queue = [("vault_knowledge_search", plan) for plan in _prefetch_plans[:3]]
         _prefetch_empty_topics = []
         _prefetch_index = -1
-        while _prefetch_queue and _prefetch_index < 6:
+        while _prefetch_queue and _prefetch_index < 10:
             _prefetch_index += 1
             _prefetch_tool, _prefetch_plan = _prefetch_queue.pop(0)
-            _prefetch_args = json.dumps(_prefetch_plan)
+            _prefetch_args = json.dumps({k: v for k, v in _prefetch_plan.items() if not k.startswith("_")})
             yield "data: " + json.dumps({
                 "type": "tool_start", "tool": _prefetch_tool,
                 "command": _prefetch_args, "full_command": _prefetch_args, "round": 0,
@@ -26469,8 +26469,23 @@ async def _stream_agent_loop_impl(
                 "command": _prefetch_args, "output": _truncate(_prefetch_output),
                 "exit_code": _prefetch_result.get("exit_code"),
             })
+            # Broad questions ("summarise what my notes say about X"): read the
+            # distinct matching notes up front.
+            if _prefetch_tool == "vault_knowledge_search" and _prefetch_plan.get("_broad"):
+                try:
+                    _hits = json.loads(_prefetch_output).get("matches") or []
+                except (TypeError, ValueError, AttributeError):
+                    _hits = []
+                _broad_ids = []
+                for _h in _hits:
+                    _nid = _h.get("note_id") if isinstance(_h, dict) else None
+                    if _nid and _nid not in _broad_ids:
+                        _broad_ids.append(_nid)
+                from src.agent_runtime.vault_lookup_budget import BROAD_NOTE_READS
+                _prefetch_queue.extend(("vault_read_range", {"note_id": nid, "start_line": 1, "end_line": 40})
+                                       for nid in _broad_ids[:BROAD_NOTE_READS])
             # A note titled exactly like the topic is the answer: read it now.
-            if _prefetch_tool == "vault_knowledge_search" and _prefetch_plan.get("query"):
+            elif _prefetch_tool == "vault_knowledge_search" and _prefetch_plan.get("query"):
                 try:
                     _hits = json.loads(_prefetch_output).get("matches") or []
                 except (TypeError, ValueError, AttributeError):
@@ -26510,6 +26525,12 @@ async def _stream_agent_loop_impl(
                     "knowledge of these titles: do not verify every candidate. At most two media_lookup "
                     "calls if a detail is genuinely uncertain; no web_search, and do not search the vault "
                     "again unless something essential is missing."
+                )})
+            elif any(p.get("_broad") for p in _prefetch_plans):
+                messages.append({"role": "system", "content": (
+                    "The notes that match this question are above (the first 40 lines of each). Summarise "
+                    "from them now. Read more only for a note that is clearly missing or lines beyond 40 "
+                    "that the question needs; do not re-read the notes shown."
                 )})
             elif compare_topic(_last_user):
                 messages.append({"role": "system", "content": (

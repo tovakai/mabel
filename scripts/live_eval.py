@@ -92,10 +92,10 @@ SCENARIOS = [
              contains_min=(6, ("Berserk", "Pluto", "One Piece", "GTO", "20th Century Boys",
                                "21st Century Boys", "Shingeki no Kyojin", "Sayonara Eri", "Eden")),
              max_seconds=40, max_rounds=4),
-    Scenario("dottie_vault", "Ask Dottie to go through my vault and summarize what my notes say about the "
-             "characters from Lost.", tags=("vault", "dottie"), tools_any=("dispatch_dottie",),
+    Scenario("vault_broad", "Summarize what my notes say about the characters from Lost.",
+             tags=("vault",), tools_any=tuple(VAULT_TOOLS),
              contains_min=(3, ("Jack", "Kate", "Sawyer", "James", "Locke", "Hugo", "Hurley", "Charlie",
-                               "Sayid", "Jin")), max_seconds=120, max_rounds=4),
+                               "Sayid", "Jin")), max_seconds=60, max_rounds=3),
     # --- parallel research -----------------------------------------------------------
     Scenario("parallel_compare", "Compare my notes on Berserk with public information about the manga.",
              tags=("research",), tools_any=("research_parallel", "media_lookup", "web_search", "web_fetch"),
