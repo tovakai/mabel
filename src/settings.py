@@ -153,6 +153,9 @@ DEFAULT_SETTINGS = {
     "reranking_endpoint_id": "",
     "reranking_model": "",
     "task_endpoint_id": "",
+    # Phase 00.5 episodic memory (off by default; toggled in the Memory sidebar).
+    "episodic_capture_enabled": False,
+    "episodic_recall_enabled": False,
     "task_model": "",
     "default_endpoint_id": "",
     "default_model": "",

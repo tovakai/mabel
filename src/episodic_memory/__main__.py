@@ -117,11 +117,10 @@ def main() -> int:
         from routes.prefs_routes import _load_for_user
         from .promotion import promote_verified_conversation
 
-        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
-            "1", "true", "yes",
-        }
+        from .chat_recall import capture_enabled
+        enabled = capture_enabled()
         if not enabled:
-            parser.error("promote requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+            parser.error("promote requires episodic capture to be enabled (setting or MABEL_EPISODIC_CAPTURE_ENABLED)")
         prefs = _load_for_user(queue.owner)
         policy = CapturePolicy(
             episodic_enabled=enabled,
@@ -148,11 +147,10 @@ def main() -> int:
         from routes.prefs_routes import _load_for_user
         from .semantic_advisory import suggest_semantic_episode_links
 
-        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
-            "1", "true", "yes",
-        }
+        from .chat_recall import capture_enabled
+        enabled = capture_enabled()
         if not enabled:
-            parser.error("semantic-links requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+            parser.error("semantic-links requires episodic capture to be enabled (setting or MABEL_EPISODIC_CAPTURE_ENABLED)")
         prefs = _load_for_user(queue.owner)
         policy = CapturePolicy(
             episodic_enabled=enabled,
@@ -176,11 +174,10 @@ def main() -> int:
         from routes.prefs_routes import _load_for_user
         from .associations import related_verified_episodes
 
-        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
-            "1", "true", "yes",
-        }
+        from .chat_recall import capture_enabled
+        enabled = capture_enabled()
         if not enabled:
-            parser.error("associations requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+            parser.error("associations requires episodic capture to be enabled (setting or MABEL_EPISODIC_CAPTURE_ENABLED)")
         prefs = _load_for_user(queue.owner)
         policy = CapturePolicy(
             episodic_enabled=enabled,
@@ -204,11 +201,10 @@ def main() -> int:
         from routes.prefs_routes import _load_for_user
         from .recall import search_verified_episodes
 
-        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
-            "1", "true", "yes",
-        }
+        from .chat_recall import capture_enabled
+        enabled = capture_enabled()
         if not enabled:
-            parser.error("recall requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+            parser.error("recall requires episodic capture to be enabled (setting or MABEL_EPISODIC_CAPTURE_ENABLED)")
         prefs = _load_for_user(queue.owner)
         policy = CapturePolicy(
             episodic_enabled=enabled,
@@ -272,11 +268,10 @@ def main() -> int:
         from routes.prefs_routes import _load_for_user
         from .dottie_review import review_candidate_with_dottie
 
-        enabled = os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {
-            "1", "true", "yes",
-        }
+        from .chat_recall import capture_enabled
+        enabled = capture_enabled()
         if not enabled:
-            parser.error("review requires the explicit MABEL_EPISODIC_CAPTURE_ENABLED pilot")
+            parser.error("review requires episodic capture to be enabled (setting or MABEL_EPISODIC_CAPTURE_ENABLED)")
         prefs = _load_for_user(queue.owner)
         policy = CapturePolicy(
             episodic_enabled=enabled,

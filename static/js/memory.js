@@ -1615,6 +1615,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target === 'skills') {
         import('./skills.js?v=20261028agentapprovals1').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
       }
+      if (target === 'episodes') {
+        import('./episodes.js').then(m => m.openEpisodesTab());
+      }
     });
   });
 
