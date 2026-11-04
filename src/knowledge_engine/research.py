@@ -194,6 +194,10 @@ async def _evidence_first(objective,root,ctx,child,contract,policy,budget,author
             security_context=ToolRunSecurityContext(),disabled_tools=ctx.get('disabled_tools'),tool_policy=policy)
         return result
 
+    # The byte budget protects the caller's context in agentic mode. Here the
+    # evidence goes to one synthesis call and only a capped excerpt is returned,
+    # so a note-heavy topic (long frontmatter) must not starve after three reads.
+    budget.max_bytes=max(budget.max_bytes,64000)
     with budget_scope(budget),bind_turn_contract(contract):
         found=await run('vault_knowledge_search',{'query':_evidence_query(objective),'path':root,'top_k':30})
         matches=json.loads(found['output']).get('matches',[]) if found.get('exit_code')==0 else []
@@ -221,7 +225,7 @@ async def _evidence_first(objective,root,ctx,child,contract,policy,budget,author
 
         async def read(note_id):
             async with gate:
-                return await run('vault_read_range',{'note_id':note_id,'path':root,'start_line':1,'end_line':60})
+                return await run('vault_read_range',{'note_id':note_id,'path':root,'start_line':1,'end_line':40})
         reads=await asyncio.gather(*(read(n) for n in note_ids[:_EVIDENCE_NOTES]))
     evidence=[]
     for result in reads:

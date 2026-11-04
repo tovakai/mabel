@@ -469,3 +469,19 @@ async def test_result_carries_the_note_texts_already_read(environment, monkeypat
     result = await dispatch(environment, {'research_objective': 'tolerans'})
     assert any(s['rel_path'] == 'Projects/Lid.md' and 'tolerans' in s['text'] for s in result['sources'])
     assert 'do not re-read' in result['how_to_use']
+
+
+@pytest.mark.asyncio
+async def test_evidence_first_is_not_starved_by_the_agentic_byte_budget(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+    original = research_module.ResearchBudget
+    monkeypatch.setattr(research_module, 'ResearchBudget', lambda **kw: original(**{**kw, 'max_bytes': 300}))
+    seen = []
+
+    async def synthesize(role, messages, **kwargs):
+        seen.extend(e['rel_path'] for e in _evidence_from(messages))
+        return 'prose'
+    monkeypatch.setattr(roles, 'call', synthesize)
+    await dispatch(environment, {'research_objective': 'Find what my notes say about tolerans'})
+    assert {'Projects/Lid.md', 'Projects/Box.md'} <= set(seen)
