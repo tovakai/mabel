@@ -35,11 +35,12 @@ def _search_root(
         protected_path = Path(protected).expanduser().resolve()
         if root == protected_path or root.is_relative_to(protected_path):
             raise CandidateAdmissionError("Refusing to read episodes from a protected source vault")
-    if queue.path.resolve().is_relative_to(root):
-        raise CandidateAdmissionError("Candidate SQLite must remain outside the synced vault")
+    from .promotion import EPISODE_DIR
+    if queue.path.resolve().is_relative_to(root / EPISODE_DIR[0]):
+        raise CandidateAdmissionError("Candidate SQLite must remain outside the synced memory folder")
     bucket = sha256(queue.owner.encode("utf-8")).hexdigest()[:24]
     parent = root
-    for part in ("Memory", "Episodes", bucket):
+    for part in (*EPISODE_DIR, bucket):
         parent /= part
         if parent.is_symlink():
             raise CandidateAdmissionError("Symlinked episode directory is not permitted")

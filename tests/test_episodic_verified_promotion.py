@@ -223,7 +223,58 @@ def test_tampered_promoted_markdown_is_not_silently_accepted(scenario):
 
 def test_symlinked_episode_directory_is_refused(scenario, tmp_path):
     engine, _, opts, original = scenario
-    (opts["vault_root"] / "Memory").symlink_to(original.parent, target_is_directory=True)
+    (opts["vault_root"] / "memory").symlink_to(original.parent, target_is_directory=True)
     with pytest.raises(CandidateAdmissionError, match="symlink"):
         _promote(engine, opts)
     assert original.read_bytes() == b"untouched"
+
+
+# --- the repo-is-the-vault layout (Documents/mabel) ---------------------------------------
+
+def _git_vault(tmp_path, ignore_memory):
+    import subprocess
+    vault = tmp_path / "repo-vault"
+    vault.mkdir()
+    subprocess.run(["git", "init", "-q", str(vault)], check=True)
+    (vault / ".gitignore").write_text("data/\n" + ("/memory/**\n" if ignore_memory else ""))
+    return vault
+
+
+def _queue_inside(vault, candidate_opts, scenario_queue_dir):
+    """Move the runtime queue under the vault's data/ folder, as in the real repo."""
+    import shutil
+    target = vault / "data" / "episodic_candidates"
+    shutil.copytree(scenario_queue_dir, target)
+    return CandidateQueue(target, owner="alice")
+
+
+def test_repo_vault_writes_lowercase_memory_episodes_when_git_ignores_it(scenario, tmp_path):
+    engine, candidate, opts, _ = scenario
+    vault = _git_vault(tmp_path, ignore_memory=True)
+    queue = _queue_inside(vault, opts, opts["queue"].path.parent)
+    row = _promote(engine, {**opts, "queue": queue, "vault_root": vault})
+    path = Path(row["episode_path"])
+    assert path.relative_to(vault).parts[:2] == ("memory", "episodes")
+    import subprocess
+    assert subprocess.run(["git", "-C", str(vault), "status", "--porcelain"],
+                          capture_output=True, text=True).stdout.strip() in ("", "?? .gitignore")
+
+
+def test_repo_vault_refuses_when_episodes_would_be_committable(scenario, tmp_path):
+    engine, candidate, opts, _ = scenario
+    vault = _git_vault(tmp_path, ignore_memory=False)
+    queue = _queue_inside(vault, opts, opts["queue"].path.parent)
+    with pytest.raises(CandidateAdmissionError, match="not Git-ignored"):
+        _promote(engine, {**opts, "queue": queue, "vault_root": vault})
+    assert not (vault / "memory").exists()
+
+
+def test_queue_inside_the_synced_memory_folder_is_still_refused(scenario, tmp_path):
+    engine, candidate, opts, _ = scenario
+    vault = tmp_path / "plain-vault"
+    vault.mkdir()
+    import shutil
+    target = vault / "memory" / "queue"
+    shutil.copytree(opts["queue"].path.parent, target)
+    with pytest.raises(CandidateAdmissionError, match="synced memory folder"):
+        _promote(engine, {**opts, "queue": CandidateQueue(target, owner="alice"), "vault_root": vault})

@@ -101,6 +101,30 @@ def _episode_markdown(candidate: dict, user: str, assistant: str) -> str:
     )
 
 
+# Mabel's vault keeps private knowledge in lowercase top-level folders that
+# Syncthing replicates and Git ignores (see .gitignore / .stignore). Episodes
+# live under memory/, never a differently-cased sibling Git would track.
+EPISODE_DIR = ("memory", "episodes")
+
+
+def _require_git_ignored(root: Path, target: Path) -> None:
+    """In a Git checkout, refuse to write unless Git ignores the episode path.
+
+    The vault root may double as a public source repository; a private
+    conversation excerpt must never become committable.
+    """
+    if not (root / ".git").exists():
+        return
+    import subprocess
+    try:
+        checked = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--",
+                                  str(target.relative_to(root))], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise CandidateAdmissionError("Cannot confirm Git ignores the episode path") from error
+    if checked.returncode != 0:
+        raise CandidateAdmissionError("Episode path is not Git-ignored in this repository; refusing to write")
+
+
 def _target(queue: CandidateQueue, candidate_id: str, vault_root: str | Path,
             protected_roots: tuple[str | Path, ...]) -> Path:
     if not _ID.fullmatch(candidate_id):
@@ -115,11 +139,12 @@ def _target(queue: CandidateQueue, candidate_id: str, vault_root: str | Path,
         protected_path = Path(protected).expanduser().resolve()
         if root == protected_path or root.is_relative_to(protected_path):
             raise CandidateAdmissionError("Cannot write episodic memory inside a protected source vault")
-    if queue.path.resolve().is_relative_to(root):
-        raise CandidateAdmissionError("SQLite candidate queue must remain outside the synced vault")
+    if queue.path.resolve().is_relative_to(root / EPISODE_DIR[0]):
+        raise CandidateAdmissionError("SQLite candidate queue must remain outside the synced memory folder")
     owner_bucket = sha256(queue.owner.encode("utf-8")).hexdigest()[:24]
+    _require_git_ignored(root, root.joinpath(*EPISODE_DIR, owner_bucket, f"{candidate_id}.md"))
     parent = root
-    for piece in ("Memory", "Episodes", owner_bucket):
+    for piece in (*EPISODE_DIR, owner_bucket):
         parent = parent / piece
         if parent.is_symlink():
             raise CandidateAdmissionError("Refusing symlinked episode directory")

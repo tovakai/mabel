@@ -9,7 +9,7 @@ injection. The legacy factual memory and prompt composer remain unchanged.
 The existing owner-scoped candidate queue already identifies episodes in
 state promoted. The original promotion writer creates an immutable,
 deterministically named Markdown file in Mabel's writable vault under
-Memory/Episodes/<owner-hash>/<candidate-id>.md.
+memory/episodes/<owner-hash>/<candidate-id>.md.
 
 A read-only search requires **all** of the following before returning a hit:
 

@@ -129,8 +129,8 @@ def test_symlinked_note_and_protected_source_vault_fail_closed(scenario):
     with pytest.raises(CandidateAdmissionError, match="protected"):
         search("permission",vault_root=protected)
     path.unlink()
-    (vault / "Memory").rename(vault / "episodes-moved")
-    (vault / "Memory").symlink_to(protected,target_is_directory=True)
+    (vault / "memory").rename(vault / "episodes-moved")
+    (vault / "memory").symlink_to(protected,target_is_directory=True)
     with pytest.raises(CandidateAdmissionError, match="Symlinked"):
         search("permission")
 
