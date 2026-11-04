@@ -360,6 +360,11 @@ async def dispatch(content,ctx):
         result={'status':'partial','findings':[],'uncertainties':[],
             'unresolved_questions':['Worker could not produce verified findings: '+type(error).__name__],
             'retrieved_notes':[{'note_id':n,'rel_path':p} for n,p in budget.notes.items()]}
+        worker_text=re.sub(r'<think>.*?</think>','',''.join(text),flags=re.S|re.I).strip()
+        if worker_text:
+            # Prose instead of the findings contract: pass it on, clearly
+            # unverified, so the caller can check it against retrieved_notes.
+            result['worker_summary_unverified']=worker_text[:3000]
         # One inference-only synthesis attempt can salvage completed reads.
         # Never restart the child workflow or reset its tool/time budgets.
         remaining=budget.max_seconds-(time.monotonic()-budget.started)

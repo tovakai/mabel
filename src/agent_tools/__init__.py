@@ -38,6 +38,7 @@ from .admin_tools import (
 
 from .task_result_tools import TaskResultsTool
 from src.agent_runtime.tool_catalog import discover_tools
+from .media_lookup_tool import MediaLookupTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -45,6 +46,7 @@ TOOL_HANDLERS = {
     "python": PythonTool().execute,
     "web_search": WebSearchTool().execute,
     "get_weather": WeatherTool().execute,
+    "media_lookup": MediaLookupTool().execute,
     "web_fetch": WebFetchTool().execute,
     "pdf_extract": PdfExtractTool().execute,
     "youtube_tool": YouTubeTool().execute,

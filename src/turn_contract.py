@@ -78,7 +78,7 @@ FAMILY_TOOLS = {
     "memory": frozenset({"manage_memory", "search_chats"}),
     "documents": frozenset({"manage_documents", "create_document", "edit_document", "update_document", "suggest_document"}),
     "email": frozenset({"list_email_accounts", "list_emails", "search_emails", "read_email", "download_attachment", "scan_email_unsubscribes", "scan_spam", "unsubscribe_email", "send_email", "reply_to_email", "draft_email", "draft_email_reply", "ai_draft_email_reply", "bulk_email", "block_sender", "manage_email_state", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"}),
-    "search_browser": frozenset({"web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract", "research_parallel"}),
+    "search_browser": frozenset({"web_search", "web_fetch", "get_weather", "media_lookup", "private_browser", "youtube_tool", "search_hf_models", "pdf_extract", "research_parallel"}),
     "shell_files": frozenset({"bash", "python", "host_shell", "read_file", "write_file", "edit_file", "vault_batch_edit", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie", "research_parallel", "apply_patch", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs", "inspect_media", "extract_text", "transcribe_media"}),
     "cookbook_admin": frozenset({"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "list_cached_models", "list_cookbook_servers", "adopt_served_model", "list_models", "manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "api_call", "app_api", "list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "ask_teacher"}),
     "ui": frozenset({"ui_control"}),
@@ -5027,6 +5027,7 @@ _PERSONAL_LIBRARY_RE = re.compile(
     r"|based\s+on\s+(?:me|my|what))\b",
     re.I,
 )
+_RECOMMENDATION_RE = re.compile(r"\b(?:recommend|suggest)\w*\b", re.I)
 # Creation/editing of notes keeps its existing routing (personal Notes, or the
 # sealed single-note vault rewrite handled by looks_like_vault_note_rewrite).
 _NOTE_MUTATION_RE = re.compile(
@@ -5053,6 +5054,10 @@ def vault_knowledge_families(text: str) -> frozenset[str] | None:
     value = str(text or "")
     if not (_VAULT_KNOWLEDGE_RE.search(value) or _PERSONAL_LIBRARY_RE.search(value)):
         return None
+    if _RECOMMENDATION_RE.search(value) and _PERSONAL_LIBRARY_RE.search(value):
+        # Taste comes from the vault; candidate details (scores, genres) come
+        # from structured media lookups when web is allowed.
+        return frozenset({"workspace_read", "search_browser"})
     # "what did I write" / "what I wrote" describe past content, not an edit.
     action_text = re.sub(r"\bwhat\s+(?:did\s+|have\s+)?i\s+(?:write|written|wrote)\b", " ", value, flags=re.I)
     if _NOTE_MUTATION_RE.search(action_text):

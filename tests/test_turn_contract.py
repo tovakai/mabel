@@ -4423,15 +4423,22 @@ import pytest as _pytest_personal_library
 @_pytest_personal_library.mark.parametrize("message", [
     "What did I rate Berserk?",
     "Which manga have I rated 10?",
-    "Recommend me an anime I haven't seen yet, based on my preferences.",
-    "Recommend me a manga based on what I like.",
-    "Recommend me a game based on what I've been playing.",
     "Have I watched Monster?",
     "What's my highest rated anime?",
-    "Suggest a movie for tonight based on my taste",
 ])
 def test_personal_library_questions_route_to_the_vault(message):
     assert requested_capabilities(message, vault_scope=True) == frozenset({"workspace_read"})
+
+
+@_pytest_personal_library.mark.parametrize("message", [
+    "Recommend me an anime I haven't seen yet, based on my preferences.",
+    "Recommend me a manga based on what I like.",
+    "Recommend me a game based on what I've been playing.",
+    "Suggest a movie for tonight based on my taste",
+])
+def test_taste_based_recommendations_use_the_vault_and_media_lookups(message):
+    # Taste from the vault; candidate details from media_lookup when web is allowed.
+    assert requested_capabilities(message, vault_scope=True) == frozenset({"workspace_read", "search_browser"})
 
 
 @_pytest_personal_library.mark.parametrize("message", [

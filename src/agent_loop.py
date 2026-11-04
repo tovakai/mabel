@@ -7937,7 +7937,7 @@ _WEB_UNAVAILABLE_PARTIAL_NOTE = (
 
 # Tools a contract may contain while still being a pure web turn.
 _CONTRACT_PURE_WEB_TOOLS = frozenset({
-    "web_search", "web_fetch", "get_weather", "private_browser", "youtube_tool",
+    "web_search", "web_fetch", "get_weather", "media_lookup", "private_browser", "youtube_tool",
     "pdf_extract", "search_hf_models", "ask_user", "update_plan", "discover_tools",
 })
 
@@ -26374,15 +26374,19 @@ async def _stream_agent_loop_impl(
         if "vault_knowledge_search" not in _prefetch_offered:
             _prefetch_plans = []
         _prefetch_calls, _prefetch_texts, _prefetch_records = [], [], []
-        for _prefetch_index, _prefetch_plan in enumerate(_prefetch_plans[:3]):
+        _prefetch_queue = [("vault_knowledge_search", plan) for plan in _prefetch_plans[:3]]
+        _prefetch_index = -1
+        while _prefetch_queue and _prefetch_index < 4:
+            _prefetch_index += 1
+            _prefetch_tool, _prefetch_plan = _prefetch_queue.pop(0)
             _prefetch_args = json.dumps(_prefetch_plan)
             yield "data: " + json.dumps({
-                "type": "tool_start", "tool": "vault_knowledge_search",
+                "type": "tool_start", "tool": _prefetch_tool,
                 "command": _prefetch_args, "full_command": _prefetch_args, "round": 0,
             }) + "\n\n"
             try:
                 _prefetch_desc, _prefetch_result = await execute_tool_block(
-                    ToolBlock("vault_knowledge_search", _prefetch_args), session_id=session_id,
+                    ToolBlock(_prefetch_tool, _prefetch_args), session_id=session_id,
                     disabled_tools=set(disabled_tools) | _caller_hard_denials,
                     tool_policy=tool_policy, owner=owner, workspace=workspace,
                     security_context=run_security,
@@ -26390,10 +26394,10 @@ async def _stream_agent_loop_impl(
                 )
             except Exception:
                 logger.warning("[agent] vault prefetch failed", exc_info=True)
-                _prefetch_desc, _prefetch_result = "vault_knowledge_search", {"exit_code": 1, "error": "prefetch failed"}
+                _prefetch_desc, _prefetch_result = _prefetch_tool, {"exit_code": 1, "error": "prefetch failed"}
             _prefetch_output = str(_prefetch_result.get("output") or _prefetch_result.get("error") or "")
             yield "data: " + json.dumps({
-                "type": "tool_output", "tool": "vault_knowledge_search", "command": _prefetch_args,
+                "type": "tool_output", "tool": _prefetch_tool, "command": _prefetch_args,
                 "output": _truncate(_prefetch_output), "exit_code": _prefetch_result.get("exit_code"),
             }) + "\n\n"
             if not tool_result_is_successful(_prefetch_result):
@@ -26405,29 +26409,54 @@ async def _stream_agent_loop_impl(
             total_tool_calls += 1
             _prefetch_text = format_tool_result(_prefetch_desc, _prefetch_result)
             _prefetch_calls.append({"id": f"prefetch_vault_{_prefetch_index}",
-                                    "name": "vault_knowledge_search", "arguments": _prefetch_args})
+                                    "name": _prefetch_tool, "arguments": _prefetch_args})
             _prefetch_texts.append(_prefetch_text)
-            _prefetch_records.append({"tool_name": "vault_knowledge_search", "content": _prefetch_args,
+            _prefetch_records.append({"tool_name": _prefetch_tool, "content": _prefetch_args,
                                       "result": _prefetch_result, "text": _prefetch_text})
-            run_security.observe_tool_result("vault_knowledge_search", _prefetch_result, _prefetch_args)
+            run_security.observe_tool_result(_prefetch_tool, _prefetch_result, _prefetch_args)
             tool_events.append({
-                "round": 0, "tool": "vault_knowledge_search", "desc": _prefetch_desc,
+                "round": 0, "tool": _prefetch_tool, "desc": _prefetch_desc,
                 "command": _prefetch_args, "output": _truncate(_prefetch_output),
                 "exit_code": _prefetch_result.get("exit_code"),
             })
+            # A note titled exactly like the topic is the answer: read it now.
+            if _prefetch_tool == "vault_knowledge_search" and _prefetch_plan.get("query"):
+                try:
+                    _hits = json.loads(_prefetch_output).get("matches") or []
+                except (TypeError, ValueError, AttributeError):
+                    _hits = []
+                _wanted = str(_prefetch_plan["query"]).casefold()
+                _exact = next((h for h in _hits if isinstance(h, dict) and h.get("note_id") and (
+                    str(h.get("title") or "").casefold() == _wanted
+                    or str(h.get("rel_path") or "").rsplit("/", 1)[-1].removesuffix(".md").casefold() == _wanted
+                )), None)
+                if _exact is not None:
+                    _prefetch_queue.append(("vault_read_range", {"note_id": _exact["note_id"], "start_line": 1, "end_line": 120}))
+
         if _prefetch_calls:
             _append_tool_results(
                 messages, "", _prefetch_calls, _prefetch_texts, _prefetch_texts, True, 0,
                 tool_result_records=_prefetch_records,
                 include_reasoning_content=False, allow_visual_evidence=False,
             )
-            if any(p.get("fields") == [] and "sort_by" not in p for p in _prefetch_plans) and len(_prefetch_plans) > 1:
+            if any(p.get("sort_by") for p in _prefetch_plans):
                 messages.append({"role": "system", "content": (
-                    "The results above are the user's own library: their ratings and genres, and the "
-                    "full list of titles they already have. Recommend titles that are NOT in that list, "
-                    "explain each pick by pointing to what they rated highly, and answer from your own "
-                    "knowledge. Do not search the vault again unless something essential is missing."
+                    "The results above are the user's own library (their ratings or playtime, genres"
+                    + (", and the full list of titles they already have" if len(_prefetch_plans) > 1 else "")
+                    + "). Recommend titles that are NOT already in their library, "
+                    "explain each pick by pointing to what they rated highly. Answer from your own "
+                    "knowledge; if media_lookup is available, use it (anilist recommendations/details) "
+                    "to check a few candidates instead of web_search. Do not search the vault again "
+                    "unless something essential is missing."
                 )})
+            elif any(name == "vault_read_range" for name in (c["name"] for c in _prefetch_calls)):
+                messages.append({"role": "system", "content": (
+                    "The search results and the full matching note are above. If they answer the "
+                    "question, answer now from them; read more only if something is cut off or missing."
+                )})
+            if _vault_lookup_budget is None and _prefetch_plans:
+                # Library questions and recommendations converge like simple lookups.
+                _vault_lookup_budget = VaultLookupBudget()
             if _vault_lookup_budget is not None:
                 _vault_lookup_budget.observe(_prefetch_records)
             # Round 1 normally reuses a request built before this point.

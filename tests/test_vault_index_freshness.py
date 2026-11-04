@@ -73,6 +73,6 @@ def test_compact_listing_bounds_are_enforced(tmp_path):
     import pytest
     index = _media_vault(tmp_path)
     with pytest.raises(ValueError):
-        index.search(mode="metadata_only", fields=["My Rating"], top_k=200)  # only titles-only may page to 200
+        index.search(mode="metadata_only", fields=["My Rating"], top_k=101)  # rows with fields page to 100
     with pytest.raises(ValueError):
         index.search("x", mode="lexical", fields=[])

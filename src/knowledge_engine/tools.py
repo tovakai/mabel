@@ -4,6 +4,9 @@ import json
 import sqlite3
 from .index import VaultIndex
 
+import logging
+logger = logging.getLogger(__name__)
+
 TOOLS = frozenset({'vault_knowledge_search','vault_traverse_graph','vault_read_range','vault_index_status','vault_retrieve_batch','dispatch_dottie','research_parallel'})
 VAULT_BOUND = frozenset({'vault_knowledge_search','vault_traverse_graph','vault_read_range','vault_index_status','vault_retrieve_batch','dispatch_dottie'})
 
@@ -78,6 +81,8 @@ async def execute(name, content, ctx):
             result = {key: value for key, value in result.items() if key != 'line_numbered'}
         return {'output':json.dumps(result,ensure_ascii=False,allow_nan=False),'exit_code':0}
     except (ValueError,TypeError,OSError,RuntimeError,sqlite3.Error) as error:
+        # Error class and message only (no arguments or note content).
+        logger.warning('[knowledge] %s failed: %s: %s', name, type(error).__name__, str(error)[:200])
         return {'error':str(error),'exit_code':1,'executed':False,'failure_kind':'knowledge_retrieval_failed'}
 
 

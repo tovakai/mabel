@@ -117,7 +117,7 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"get_weather", "private_browser", "web_search", "web_fetch", "youtube_tool"},
+    {"get_weather", "media_lookup", "private_browser", "web_search", "web_fetch", "youtube_tool"},
     ToolEffect.BROKERED_NETWORK_READ,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )

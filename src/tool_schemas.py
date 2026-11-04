@@ -30,6 +30,7 @@ _BINARY_VISUAL_MEDIA_SUFFIXES = {
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "get_weather": ("location",),
+    "media_lookup": ("source",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -360,6 +361,26 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"location": {"type": "string", "description": "City or place, optionally with region/country"}},
                 "required": ["location"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "media_lookup",
+            "description": "Structured anime/manga, visual novel and fan-wiki lookups. Prefer this over web_search/web_fetch for these topics: one call returns exact scores, genres, studios, dates and recommendations. anilist: anime/manga (kind), search/details/recommendations by query or AniList id. vndb: visual novels, search/details/recommendations (id like v2002). wiki: any MediaWiki fan wiki (Fandom, wiki.gg, self-hosted; default en.wikipedia.org), search or details (exact page title).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "enum": ["anilist", "vndb", "wiki"]},
+                    "action": {"type": "string", "enum": ["search", "details", "recommendations"]},
+                    "query": {"type": "string", "description": "Title or search terms; for wiki details, the exact page title"},
+                    "id": {"type": "string", "description": "AniList id or VNDB id (v2002) from a previous search"},
+                    "kind": {"type": "string", "enum": ["anime", "manga"], "description": "anilist only (default anime)"},
+                    "wiki": {"type": "string", "description": "wiki host, e.g. berserk.fandom.com, terraria.wiki.gg"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10}
+                },
+                "required": ["source"]
             }
         }
     },

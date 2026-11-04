@@ -445,7 +445,7 @@ class VaultIndex:
             raise ValueError('fields is a list of up to twelve property names for metadata_only')
         if sort_by is not None and (mode != 'metadata_only' or not isinstance(sort_by, str) or not sort_by or len(sort_by) > 120):
             raise ValueError('sort_by names one numeric property for metadata_only')
-        page_limit = 200 if compact and not fields else 50
+        page_limit = (200 if not fields else 100) if compact else 50
         if not isinstance(query,str) or len(query)>500 or type(top_k) is not int or not 1<=top_k<=page_limit or type(offset) is not int or not 0<=offset<=10000:
             raise ValueError('Invalid search query or page bounds')
         where, args = self._filters(property_filters or {}, path_prefix)

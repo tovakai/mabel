@@ -48,7 +48,8 @@ def _run(monkeypatch, tmp_path, *, capabilities, search_result):
 
     async def fake_execute(block, **kwargs):
         executed.append((block.tool_type, block.content))
-        return block.tool_type, dict(search_result)
+        result = search_result(block) if callable(search_result) else search_result
+        return block.tool_type, dict(result)
 
     monkeypatch.setattr(agent_loop, "execute_tool_block", fake_execute)
     policy = build_effective_tool_policy(disabled_tools=set())
@@ -135,4 +136,28 @@ def test_recommendation_turn_gets_library_and_guidance(monkeypatch, tmp_path):
     assert len(executed) == 2
     first = json.dumps(seen[0]["messages"])
     assert "Pluto-marker-77" in first
-    assert "Recommend titles that are NOT in that list" in first
+    assert "Recommend titles that are NOT already in their library" in first
+
+
+
+def test_exact_title_match_is_read_before_round_one(monkeypatch, tmp_path):
+    hit = json.dumps({"matches": [{"note_id": "n-lil", "title": "Lessons In Love",
+                                   "rel_path": "Library/Games/Lessons In Love.md", "excerpt": "Creator: Selebus"}]})
+
+    def handler(block):
+        if block.tool_type == "vault_read_range":
+            assert json.loads(block.content)["note_id"] == "n-lil"
+            return {"output": json.dumps({"text": "My Rating: 10 marker-note-body"}), "exit_code": 0}
+        return {"output": hit, "exit_code": 0}
+
+    _, seen, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"}, search_result=handler)
+    assert [tool for tool, _ in executed] == ["vault_knowledge_search", "vault_read_range"]
+    first = json.dumps(seen[0]["messages"])
+    assert "marker-note-body" in first and "answer now from them" in first
+
+
+def test_no_note_read_without_an_exact_title_match(monkeypatch, tmp_path):
+    hit = json.dumps({"matches": [{"note_id": "n-x", "title": "Visual Novel", "excerpt": "Lessons in Love is one"}]})
+    _, _, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"},
+                          search_result={"output": hit, "exit_code": 0})
+    assert [tool for tool, _ in executed] == ["vault_knowledge_search"]

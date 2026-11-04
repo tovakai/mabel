@@ -11,7 +11,7 @@ ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 # a public low-level module and must be importable without initializing the
 # facade, whose backwards-compatible re-exports include the parser itself.
 TOOL_TAGS = {
-    "bash", "host_shell", "python", "web_search", "web_fetch", "get_weather", "pdf_extract", "youtube_tool", "private_browser", "inspect_media", "extract_text", "transcribe_media", "read_file", "write_file", "edit_file", "vault_batch_edit", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie", "research_parallel", "task_results", "discover_tools",
+    "bash", "host_shell", "python", "web_search", "web_fetch", "get_weather", "media_lookup", "pdf_extract", "youtube_tool", "private_browser", "inspect_media", "extract_text", "transcribe_media", "read_file", "write_file", "edit_file", "vault_batch_edit", "vault_audit", "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "vault_index_status", "vault_retrieve_batch", "dispatch_dottie", "research_parallel", "task_results", "discover_tools",
     "apply_patch", "todowrite",
     "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",
     "create_document", "update_document", "edit_document",
