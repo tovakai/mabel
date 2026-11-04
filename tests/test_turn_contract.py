@@ -4415,3 +4415,30 @@ def test_chinese_video_to_image_artifact_keeps_media_and_workspace_tools():
         "请完整浏览 /workspace/input/video.mp4，为每款零食截图并拼成清单图，"
         "输出到 /workspace/snack_checklist.jpg，交付前打开成品图检查。"
     ) == {"media_inspection", "shell_files"}
+
+
+import pytest as _pytest_personal_library
+
+
+@_pytest_personal_library.mark.parametrize("message", [
+    "What did I rate Berserk?",
+    "Which manga have I rated 10?",
+    "Recommend me an anime I haven't seen yet, based on my preferences.",
+    "Recommend me a manga based on what I like.",
+    "Recommend me a game based on what I've been playing.",
+    "Have I watched Monster?",
+    "What's my highest rated anime?",
+    "Suggest a movie for tonight based on my taste",
+])
+def test_personal_library_questions_route_to_the_vault(message):
+    assert requested_capabilities(message, vault_scope=True) == frozenset({"workspace_read"})
+
+
+@_pytest_personal_library.mark.parametrize("message", [
+    "Recommend me a good anime",
+    "Did I leave the oven on?",
+    "What did I do wrong in this code?",
+    "rate this essay",
+])
+def test_generic_requests_do_not_route_to_the_vault(message):
+    assert "workspace_read" not in requested_capabilities(message, vault_scope=True)

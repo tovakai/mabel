@@ -55,7 +55,7 @@ async def execute(name, content, ctx):
             if await asyncio.to_thread(index.needs_reconcile):
                 await asyncio.to_thread(index.reconcile)
             if name == 'vault_knowledge_search':
-                if set(args)-{'query','mode','property_filters','path_prefix','top_k','offset','use_reranking'}:
+                if set(args)-{'query','mode','property_filters','path_prefix','top_k','offset','use_reranking','fields','sort_by'}:
                     raise ValueError('Unknown knowledge search argument')
                 from .semantic import search
                 result = await search(index,owner=owner,**args)
@@ -96,10 +96,13 @@ def schemas():
         return {'type':'function','function':{'name':name,'description':description,
             'parameters':{'type':'object','additionalProperties':False,'properties':{**scoped,**properties},'required':list(required)}}}
     result = [
-        make('vault_knowledge_search','Search Obsidian Markdown knowledge (not passwords). Lexical or typed metadata filters; returns source lines and bounded explicit graph context. Markdown remains unchanged.',
+        make('vault_knowledge_search','Search Obsidian Markdown knowledge (not passwords). Lexical or typed metadata filters; returns source lines and bounded explicit graph context. For library questions (ratings, lists, "what have I watched") use mode=metadata_only with property_filters, fields and sort_by for a compact list. Markdown remains unchanged.',
             {'query':{'type':'string','maxLength':500},'mode':{'type':'string','enum':['lexical','metadata_only','semantic','hybrid']},
              'property_filters':{'type':'object'},'use_reranking':{'type':'boolean'},'path_prefix':{'type':'string'},
-             'top_k':{'type':'integer','minimum':1,'maximum':50},'offset':{'type':'integer','minimum':0,'maximum':10000}}),
+             'top_k':{'type':'integer','minimum':1,'maximum':200},'offset':{'type':'integer','minimum':0,'maximum':10000},
+             'fields':{'type':'array','items':{'type':'string'},'maxItems':12,
+                       'description':'metadata_only: return only these properties per note (e.g. ["My Rating","Genre"]); [] lists titles only (up to 200).'},
+             'sort_by':{'type':'string','description':'metadata_only: numeric property to sort by, highest first (e.g. "My Rating").'}}),
         make('vault_traverse_graph','Follow explicit wikilinks/frontmatter links or backlinks in the scoped Obsidian index. Unresolved/ambiguous links are labeled. Use next_offset for bounded pages.',
             {'note_id':{'type':'string','description':'Native note ID or vault-relative Markdown path'},
              'direction':{'type':'string','enum':['in','out','both']},'edge_type':{'type':['string','null'],'enum':['inline','property','embed',None]},

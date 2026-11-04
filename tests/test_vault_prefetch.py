@@ -96,3 +96,43 @@ def test_no_prefetch_when_the_search_tool_is_not_offered(monkeypatch, tmp_path):
     _, _, executed = _run(monkeypatch, tmp_path, capabilities=set(),
                           search_result={"output": _HIT, "exit_code": 0})
     assert executed == []
+
+
+# --- library plans --------------------------------------------------------------
+
+from src.agent_runtime.vault_lookup_budget import vault_prefetch_requests
+
+
+def test_library_question_plans():
+    assert vault_prefetch_requests("What did I rate Berserk?") == [{"query": "Berserk", "top_k": 10}]
+    assert vault_prefetch_requests("Have I watched Monster?") == [{"query": "Monster", "top_k": 10}]
+    rated = vault_prefetch_requests("Which manga have I rated 10?")
+    assert rated == [{"mode": "metadata_only", "property_filters": {"Type": "Comic", "My Rating": 10},
+                      "fields": [], "top_k": 200}]
+    anime = vault_prefetch_requests("Recommend me an anime I haven't seen yet, based on my preferences.")
+    assert [p.get("sort_by") for p in anime] == ["My Rating", None]
+    assert anime[1]["fields"] == [] and anime[1]["property_filters"] == {"Type": "Anime"}
+    game = vault_prefetch_requests("Recommend me a game based on what I've been playing.")
+    assert game[0]["sort_by"] == "Playtime"
+
+
+def test_no_plan_for_generic_edits_or_web_comparisons():
+    for text in ("Recommend me a good anime", "Fix the rating in my Berserk note",
+                 "Compare my notes on Berserk with public information about the manga.", "Hey!"):
+        assert vault_prefetch_requests(text) == []
+
+
+def test_recommendation_turn_gets_library_and_guidance(monkeypatch, tmp_path):
+    global MESSAGE
+    original = MESSAGE
+    MESSAGE = "Recommend me an anime I haven't seen yet, based on my preferences."
+    try:
+        listing = json.dumps({"matches": [{"title": "Pluto-marker-77", "My Rating": 10, "Genre": ["Mystery"]}]})
+        _, seen, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"},
+                                 search_result={"output": listing, "exit_code": 0})
+    finally:
+        MESSAGE = original
+    assert len(executed) == 2
+    first = json.dumps(seen[0]["messages"])
+    assert "Pluto-marker-77" in first
+    assert "Recommend titles that are NOT in that list" in first

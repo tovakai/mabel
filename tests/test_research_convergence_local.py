@@ -36,3 +36,13 @@ def test_soft_nudge_counts_local_rounds_once():
     nudges = [budget.observe_round([_rec("read_file", f'{{"path": "/v/{i}.md"}}', "x")]).soft_nudge
               for i in range(6)]
     assert nudges.count("soft_synthesis") == 1 and nudges[3] == "soft_synthesis"
+
+
+def test_count_fields_in_status_payloads_do_not_crash_the_budget():
+    # vault_index_status returns {"notes": 1267, ...}; iterating the count
+    # crashed the whole agent run ("'int' object is not iterable").
+    import json as _json
+    from src.agent_runtime.chat_research_budget import _local_evidence_keys
+    record = {"tool_name": "vault_index_status", "content": "{}",
+              "result": {"exit_code": 0, "output": _json.dumps({"notes": 1267, "matches": 3, "results": None})}}
+    assert isinstance(_local_evidence_keys(record), set)

@@ -5009,6 +5009,24 @@ _VAULT_KNOWLEDGE_RE = re.compile(
     r"|\bmy\s+obsidian\b",
     re.I,
 )
+# Questions about the user's own media library: ratings, what they watched,
+# read or played, their top picks, and recommendations based on their taste.
+# The vault is where that history lives, so these are vault retrieval too.
+_MEDIA = r"(?:anime|manga|manhwa|light\s+novels?|visual\s+novels?|vns?|games?|movies?|films?|shows?|series|books?|novels?|albums?|music|songs?)"
+_PERSONAL_LIBRARY_RE = re.compile(
+    r"\b(?:what|how)\s+did\s+i\s+(?:rate|score|think\s+(?:of|about))\b"
+    r"|\bwhat(?:'s|\s+is)\s+my\s+(?:rating|score)\b"
+    r"|\bhave\s+i\s+(?:ever\s+)?(?:rated|watched|seen|read|played|finished|completed|beaten|owned?)\b"
+    r"|\bdid\s+i\s+(?:ever\s+)?(?:rate|watch|see|read|play|finish|complete|beat|like|enjoy)\b"
+    rf"|\b(?:which|what|how\s+many)\s+(?:of\s+(?:my|the)\s+)?{_MEDIA}\s+(?:have|did|do)\s+i\b"
+    rf"|\bmy\s+(?:highest|lowest|top|best|worst|favou?rite)[-\s]+(?:rated\s+|scored\s+)?{_MEDIA}\b"
+    rf"|\bmy\s+(?:{_MEDIA}\s+)?(?:library|collection|backlog|ratings|watch\s*list|reading\s+list)\b"
+    rf"|\b(?:recommend|suggest)\w*\b.{{0,60}}\b{_MEDIA}\b.{{0,80}}"
+    r"\b(?:my\s+(?:preferences|taste|tastes|ratings|library|favou?rites|history|backlog)"
+    r"|what\s+i(?:'ve|\s+have)?\s+(?:like[ds]?|love[ds]?|enjoy(?:ed)?|play(?:ed|ing)?|watch(?:ed|ing)?|read(?:ing)?|rated)"
+    r"|based\s+on\s+(?:me|my|what))\b",
+    re.I,
+)
 # Creation/editing of notes keeps its existing routing (personal Notes, or the
 # sealed single-note vault rewrite handled by looks_like_vault_note_rewrite).
 _NOTE_MUTATION_RE = re.compile(
@@ -5033,7 +5051,7 @@ def vault_knowledge_families(text: str) -> frozenset[str] | None:
     combined request keeps research_parallel/web tools.
     """
     value = str(text or "")
-    if not _VAULT_KNOWLEDGE_RE.search(value):
+    if not (_VAULT_KNOWLEDGE_RE.search(value) or _PERSONAL_LIBRARY_RE.search(value)):
         return None
     # "what did I write" / "what I wrote" describe past content, not an edit.
     action_text = re.sub(r"\bwhat\s+(?:did\s+|have\s+)?i\s+(?:write|written|wrote)\b", " ", value, flags=re.I)

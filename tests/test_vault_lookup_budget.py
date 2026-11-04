@@ -112,3 +112,22 @@ def test_workspace_reads_count_toward_the_budget():
     assert budget.successful_reads == 5 and budget.attempts == 7
     # The sixth source read converges, as in the 14-call live run around its fifth round.
     assert budget.observe([_record("read_file")]) == "bounded_vault_evidence"
+
+
+def _empty(tool):
+    return {"tool_name": tool, "result": {"exit_code": 0, "output": '{"matches": [], "graph_context": []}'}}
+
+
+def test_repeated_empty_lookups_converge_on_not_found():
+    budget = VaultLookupBudget()
+    assert budget.observe([_empty("vault_knowledge_search")]) is None
+    assert budget.observe([{"tool_name": "grep", "result": {"exit_code": 0, "output": "No matches for 'bebop'"}}]) is None
+    assert budget.observe([{"tool_name": "glob", "result": {"exit_code": 0, "output": "No files matching '**/*bebop*'"}}]) is None
+    assert budget.observe([_empty("vault_knowledge_search")]) == "no_vault_evidence"
+
+
+def test_any_real_hit_keeps_the_normal_budget():
+    budget = VaultLookupBudget()
+    budget.observe([_record("vault_knowledge_search")])
+    for _ in range(3):
+        assert budget.observe([_empty("vault_knowledge_search")]) is None

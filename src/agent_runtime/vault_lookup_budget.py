@@ -47,12 +47,22 @@ _PUBLIC_WEB_ONLY = re.compile(
 
 def simple_vault_lookup(text: str) -> bool:
     text = str(text or "").strip()
+    if (_RATED_LIST.search(text) or _TITLE_LOOKUP.search(text)) and not _DEEP.search(text):
+        return True  # "what did I rate X", "which manga have I rated 10"
     return bool(
         (_LOOKUP.search(text) or _KNOWLEDGE_QUESTION.search(text))
         and _VAULT_TOPIC.search(text)
         and not _DEEP.search(text)
         and not _PUBLIC_WEB_ONLY.search(text)
     )
+
+
+_EMPTY_MARKERS = ('"matches": []', "No matches", "No files matching", "no matches found")
+
+
+def _empty_result(result: dict) -> bool:
+    output = str(result.get("output") or "").strip()
+    return not output or any(marker in output[:400] for marker in _EMPTY_MARKERS)
 
 
 @dataclass
@@ -66,6 +76,7 @@ class VaultLookupBudget:
     successful_reads: int = 0
     consecutive_failures: int = 0
     successful_queries: int = 0
+    found_evidence: bool = False
     stopped: bool = False
 
     def observe(self, records) -> str | None:
@@ -85,6 +96,8 @@ class VaultLookupBudget:
                   and not result.get("error") and not result.get("blocked"))
             if ok:
                 self.consecutive_failures = 0
+                if not _empty_result(result):
+                    self.found_evidence = True
                 if tool in _SOURCE_TOOLS:
                     self.successful_reads += 1
                     if tool == "vault_knowledge_search":
@@ -94,6 +107,8 @@ class VaultLookupBudget:
         reason = None
         if self.consecutive_failures >= 2:
             reason = "repeated_vault_failures"
+        elif self.attempts >= 4 and not self.found_evidence:
+            reason = "no_vault_evidence"  # several lookups, all empty: say so
         elif self.successful_reads >= 6:
             reason = "bounded_vault_evidence"
         elif self.attempts >= 9:
@@ -125,3 +140,73 @@ def knowledge_question_topic(text: str) -> str | None:
     if not re.search(r"\w", topic) or len(topic.split()) > 12:
         return None
     return topic
+
+
+# --- library prefetch ------------------------------------------------------------
+# The vault's media-note conventions (frontmatter Type values and the rating /
+# playtime properties). Queries that match nothing inject nothing, so a vault
+# with other conventions simply falls back to the model's own searches.
+LIBRARY_TYPES = {
+    "anime": "Anime", "manga": "Comic", "manhwa": "Comic", "comic": "Comic",
+    "game": "Game", "movie": "Movie", "film": "Movie", "series": "Series", "show": "Series",
+}
+RATING_KEY = "My Rating"
+PLAYTIME_KEY = "Playtime"
+
+_KIND = re.compile(r"\b(anime|manga|manhwa|comics?|games?|movies?|films?|series|shows?)\b", re.I)
+_RECOMMEND = re.compile(r"\b(?:recommend|suggest)\w*\b", re.I)
+_RATED_LIST = re.compile(
+    r"\b(?:which|what)\s+(?P<kind>anime|manga|manhwa|comics?|games?|movies?|films?|series|shows?)\s+"
+    r"(?:have|did)\s+i\s+(?:rated?|given?|scored?)\s+(?:an?\s+)?(?P<n>10|[1-9])\b", re.I)
+_TITLE_LOOKUP = re.compile(
+    r"\b(?:what|how)\s+did\s+i\s+(?:rate|score)\s+(?P<a>[^?!.\n]{2,80})"
+    r"|\bmy\s+(?:rating|score)\s+(?:for|of|on)\s+(?P<b>[^?!.\n]{2,80})"
+    r"|\bhave\s+i\s+(?:ever\s+)?(?:watched|seen|read|played|finished|rated)\s+(?P<c>[^?!.\n]{2,80})", re.I)
+
+
+def _library_type(text: str) -> str | None:
+    match = _KIND.search(text or "")
+    if not match:
+        return None
+    word = match.group(1).lower().rstrip("s") if match.group(1).lower() not in {"series"} else "series"
+    return LIBRARY_TYPES.get(word)
+
+
+def vault_prefetch_requests(text: str) -> list[dict]:
+    """Obvious first vault queries for a library question, run before round 1.
+
+    Returns vault_knowledge_search argument objects, or [] when the request is
+    not a simple library question. Never used for edits or web comparisons.
+    """
+    text = str(text or "").strip()
+    if not text or _DEEP.search(text.replace("recommend", "")) or _PUBLIC_WEB_ONLY.search(text):
+        return []
+    from src.turn_contract import _PERSONAL_LIBRARY_RE
+    if _RECOMMEND.search(text) and _PERSONAL_LIBRARY_RE.search(text):
+        kind = _library_type(text)
+        if not kind:
+            return []
+        if kind == "Game":
+            return [{"mode": "metadata_only", "property_filters": {"Type": kind, PLAYTIME_KEY: {"exists": True}},
+                     "fields": [PLAYTIME_KEY, "Genre"], "sort_by": PLAYTIME_KEY, "top_k": 25}]
+        return [
+            {"mode": "metadata_only", "property_filters": {"Type": kind}, "fields": [RATING_KEY, "Genre", "Year"],
+             "sort_by": RATING_KEY, "top_k": 40},
+            {"mode": "metadata_only", "property_filters": {"Type": kind}, "fields": [], "top_k": 200},
+        ]
+    rated = _RATED_LIST.search(text)
+    if rated:
+        kind = _library_type(rated.group("kind"))
+        if kind:
+            return [{"mode": "metadata_only", "property_filters": {"Type": kind, RATING_KEY: int(rated.group("n"))},
+                     "fields": [], "top_k": 200}]
+    title = _TITLE_LOOKUP.search(text)
+    if title:
+        topic = (title.group("a") or title.group("b") or title.group("c") or "").strip()
+        topic = re.sub(r"\s+(?:yet|already|before|ever)\s*$", "", topic, flags=re.I)
+        if topic and len(topic.split()) <= 10:
+            return [{"query": topic, "top_k": 10}]
+    topic = knowledge_question_topic(text)
+    if topic:
+        return [{"query": topic, "top_k": 10}]
+    return []

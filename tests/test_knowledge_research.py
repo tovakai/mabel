@@ -251,3 +251,26 @@ async def test_empty_worker_stream_has_diagnostic_parse_stage(environment, monke
     assert result['worker_execution']['stream_events'] == 1
     assert result['worker_execution']['tool_reads'] == 0
     assert result['worker_execution']['failure_type'] == 'ValueError'
+
+
+def test_parse_findings_accepts_the_contract_wrapped_in_prose_or_reasoning():
+    from src.knowledge_engine.research import parse_findings
+    contract = '{"status": "complete", "findings": [{"claim": "Kate is the deuteragonist", "evidence": []}]}'
+    fence = chr(96) * 3
+    for wrapped in (
+        contract,
+        f"{fence}json\n{contract}\n{fence}",
+        f"Here is what I found.\n\n{contract}",
+        f"<think>reading notes...</think>\n{contract}",
+        f"Summary first.\n{fence}json\n{contract}\n{fence}\nDone.",
+        f'Notes mention {{"x": 1}} as data.\n{contract}',
+    ):
+        assert parse_findings(wrapped)["findings"][0]["claim"] == "Kate is the deuteragonist"
+
+
+def test_parse_findings_still_rejects_replies_without_the_contract():
+    import pytest as _pytest
+    from src.knowledge_engine.research import parse_findings
+    for bad in ("I could not find anything.", '{"answer": "no findings key"}', ""):
+        with _pytest.raises(ValueError):
+            parse_findings(bad)

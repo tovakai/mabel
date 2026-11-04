@@ -44,3 +44,35 @@ def test_edited_and_deleted_notes_trigger_rescan(tmp_path):
     note.unlink()
     assert index.needs_reconcile()
 
+
+
+def _media_vault(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "Anime").mkdir(parents=True)
+    for name, rating, genre in (("Pluto", 10, "Mystery"), ("Monster", 9, "Thriller"), ("Unrated", None, "Comedy")):
+        lines = ["---", "Type: Anime", f"Genre:\n  - \"[[{genre}]]\""]
+        if rating is not None:
+            lines.append(f"My Rating: {rating}")
+        (vault / "Anime" / f"{name}.md").write_text("\n".join(lines + ["---", "body"]) + "\n")
+    index = VaultIndex(vault, owner="alice", cache_dir=tmp_path / "cache")
+    index.reconcile()
+    return index
+
+
+def test_compact_metadata_listing_sorted_by_rating(tmp_path):
+    index = _media_vault(tmp_path)
+    result = index.search(mode="metadata_only", property_filters={"Type": "Anime"},
+                          fields=["My Rating", "Genre"], sort_by="My Rating", top_k=10)
+    assert [m["title"] for m in result["matches"]] == ["Pluto", "Monster", "Unrated"]
+    assert result["matches"][0] == {"title": "Pluto", "My Rating": 10, "Genre": ["Mystery"]}
+    titles = index.search(mode="metadata_only", property_filters={"Type": "Anime"}, fields=[], top_k=200)
+    assert all(set(m) == {"title"} for m in titles["matches"])
+
+
+def test_compact_listing_bounds_are_enforced(tmp_path):
+    import pytest
+    index = _media_vault(tmp_path)
+    with pytest.raises(ValueError):
+        index.search(mode="metadata_only", fields=["My Rating"], top_k=200)  # only titles-only may page to 200
+    with pytest.raises(ValueError):
+        index.search("x", mode="lexical", fields=[])

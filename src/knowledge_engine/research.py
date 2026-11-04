@@ -132,13 +132,42 @@ async def batch(content,ctx):
     return {'output':json.dumps({'results':results},ensure_ascii=False),'exit_code':0}
 
 
+def _findings_candidates(value):
+    """JSON objects in a worker reply, most likely first.
+
+    Small research models wrap the contract in prose, a reasoning block or a
+    later code fence. Accept the object wherever it is; the contract checks
+    below (and source verification afterwards) are unchanged.
+    """
+    import re
+    value=re.sub(r'<think>.*?</think>','',value,flags=re.S|re.I)
+    value=re.sub(r'^.*?</think>','',value,flags=re.S|re.I).strip()
+    yield value
+    fence=chr(96)*3
+    for block in reversed(re.findall(fence+r'(?:json)?\s*\n(.*?)'+fence,value,flags=re.S|re.I)):
+        yield block.strip()
+    decoder=json.JSONDecoder()
+    starts=[m.start() for m in re.finditer(r'\{\s*"(?:status|findings)"',value)]
+    for start in reversed(starts):
+        try:
+            obj,_=decoder.raw_decode(value[start:])
+        except ValueError:
+            continue
+        yield obj
+
+
 def parse_findings(text):
-    value=str(text or '').strip()
-    if value.startswith(chr(96)*3):
-        value=value.split('\n',1)[-1].rsplit(chr(96)*3,1)[0]
-    try:
-        data=json.loads(value)
-    except ValueError:
+    data=None
+    for candidate in _findings_candidates(str(text or '').strip()):
+        if isinstance(candidate,str):
+            try:
+                candidate=json.loads(candidate)
+            except ValueError:
+                continue
+        if isinstance(candidate,dict) and 'findings' in candidate:
+            data=candidate
+            break
+    if data is None:
         raise ValueError('Worker did not return the structured findings contract')
     if not isinstance(data,dict) or not isinstance(data.get('findings'),list) or len(data['findings'])>12:
         raise ValueError('Worker findings must be a bounded structured list')

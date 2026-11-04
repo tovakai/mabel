@@ -25790,6 +25790,7 @@ async def _stream_agent_loop_impl(
         schemas = _apply_tool_surface_to_schemas(schemas, tool_surface)
         return _filter_route_tool_schemas(schemas)
 
+    _prefix_audit_state: dict = {}
     _approved_result_injected = False
     _approved_effectful_completed = False
     _approved_read_completed = False
@@ -26358,32 +26359,30 @@ async def _stream_agent_loop_impl(
         from src.agent_runtime.edit_exploration_budget import EditExplorationBudget
         _edit_exploration_budget = EditExplorationBudget()
 
-    # "What do my notes say about X?": run the obvious first index search
-    # before round 1 instead of spending a full model round deciding to. Same
-    # executor, authority and policy as a model call; on any failure the
-    # model simply searches itself.
-    if (
-        exact_approval is None
-        and _vault_lookup_budget is not None
-        and turn_contract is not None
-        and not guide_only
-    ):
+    # Library questions ("what do my notes say about X", "what did I rate X",
+    # "recommend me an anime based on my taste"): run the obvious first vault
+    # queries before round 1 instead of spending model rounds deciding to.
+    # Same executor, authority and policy as a model call; failures or empty
+    # results inject nothing and the model searches itself.
+    if exact_approval is None and turn_contract is not None and not guide_only:
         try:
-            from src.agent_runtime.vault_lookup_budget import knowledge_question_topic
-            _prefetch_topic = knowledge_question_topic(_last_user)
+            from src.agent_runtime.vault_lookup_budget import vault_prefetch_requests
+            _prefetch_plans = vault_prefetch_requests(_last_user)
             _prefetch_offered = {s["function"]["name"] for s in turn_contract.schemas()}
         except Exception:
-            _prefetch_topic, _prefetch_offered = None, set()
-        if _prefetch_topic and "vault_knowledge_search" in _prefetch_offered:
-            _prefetch_args = json.dumps({"query": _prefetch_topic, "top_k": 10})
-            _prefetch_block = ToolBlock("vault_knowledge_search", _prefetch_args)
+            _prefetch_plans, _prefetch_offered = [], set()
+        if "vault_knowledge_search" not in _prefetch_offered:
+            _prefetch_plans = []
+        _prefetch_calls, _prefetch_texts, _prefetch_records = [], [], []
+        for _prefetch_index, _prefetch_plan in enumerate(_prefetch_plans[:3]):
+            _prefetch_args = json.dumps(_prefetch_plan)
             yield "data: " + json.dumps({
                 "type": "tool_start", "tool": "vault_knowledge_search",
                 "command": _prefetch_args, "full_command": _prefetch_args, "round": 0,
             }) + "\n\n"
             try:
                 _prefetch_desc, _prefetch_result = await execute_tool_block(
-                    _prefetch_block, session_id=session_id,
+                    ToolBlock("vault_knowledge_search", _prefetch_args), session_id=session_id,
                     disabled_tools=set(disabled_tools) | _caller_hard_denials,
                     tool_policy=tool_policy, owner=owner, workspace=workspace,
                     security_context=run_security,
@@ -26397,30 +26396,43 @@ async def _stream_agent_loop_impl(
                 "type": "tool_output", "tool": "vault_knowledge_search", "command": _prefetch_args,
                 "output": _truncate(_prefetch_output), "exit_code": _prefetch_result.get("exit_code"),
             }) + "\n\n"
-            if tool_result_is_successful(_prefetch_result) and '"matches": []' not in _prefetch_output:
-                total_tool_calls += 1
-                _prefetch_text = format_tool_result(_prefetch_desc, _prefetch_result)
-                _prefetch_record = {
-                    "tool_name": "vault_knowledge_search", "content": _prefetch_args,
-                    "result": _prefetch_result, "text": _prefetch_text,
-                }
-                _append_tool_results(
-                    messages, "",
-                    [{"id": "prefetch_vault_search", "name": "vault_knowledge_search", "arguments": _prefetch_args}],
-                    [_prefetch_text], [_prefetch_text], True, 0,
-                    tool_result_records=[_prefetch_record],
-                    include_reasoning_content=False, allow_visual_evidence=False,
-                )
-                run_security.observe_tool_result("vault_knowledge_search", _prefetch_result, _prefetch_args)
-                _vault_lookup_budget.observe([_prefetch_record])
-                tool_events.append({
-                    "round": 0, "tool": "vault_knowledge_search", "desc": _prefetch_desc,
-                    "command": _prefetch_args, "output": _truncate(_prefetch_output),
-                    "exit_code": _prefetch_result.get("exit_code"),
-                })
-                # Round 1 normally reuses a request built before this point.
-                _initial_route_request_messages = _trim_route_request_messages(endpoint_url, model, messages)
-                logger.info("[agent] vault prefetch for %r injected before round 1", _prefetch_topic)
+            if not tool_result_is_successful(_prefetch_result):
+                continue
+            # An empty title lookup is an answer ("no note about X"); an empty
+            # metadata listing just means the vault uses other conventions.
+            if '"matches": []' in _prefetch_output and "query" not in _prefetch_plan:
+                continue
+            total_tool_calls += 1
+            _prefetch_text = format_tool_result(_prefetch_desc, _prefetch_result)
+            _prefetch_calls.append({"id": f"prefetch_vault_{_prefetch_index}",
+                                    "name": "vault_knowledge_search", "arguments": _prefetch_args})
+            _prefetch_texts.append(_prefetch_text)
+            _prefetch_records.append({"tool_name": "vault_knowledge_search", "content": _prefetch_args,
+                                      "result": _prefetch_result, "text": _prefetch_text})
+            run_security.observe_tool_result("vault_knowledge_search", _prefetch_result, _prefetch_args)
+            tool_events.append({
+                "round": 0, "tool": "vault_knowledge_search", "desc": _prefetch_desc,
+                "command": _prefetch_args, "output": _truncate(_prefetch_output),
+                "exit_code": _prefetch_result.get("exit_code"),
+            })
+        if _prefetch_calls:
+            _append_tool_results(
+                messages, "", _prefetch_calls, _prefetch_texts, _prefetch_texts, True, 0,
+                tool_result_records=_prefetch_records,
+                include_reasoning_content=False, allow_visual_evidence=False,
+            )
+            if any(p.get("fields") == [] and "sort_by" not in p for p in _prefetch_plans) and len(_prefetch_plans) > 1:
+                messages.append({"role": "system", "content": (
+                    "The results above are the user's own library: their ratings and genres, and the "
+                    "full list of titles they already have. Recommend titles that are NOT in that list, "
+                    "explain each pick by pointing to what they rated highly, and answer from your own "
+                    "knowledge. Do not search the vault again unless something essential is missing."
+                )})
+            if _vault_lookup_budget is not None:
+                _vault_lookup_budget.observe(_prefetch_records)
+            # Round 1 normally reuses a request built before this point.
+            _initial_route_request_messages = _trim_route_request_messages(endpoint_url, model, messages)
+            logger.info("[agent] vault prefetch injected %s result(s) before round 1", len(_prefetch_calls))
 
     for round_num in (
         count(1) if _round_limit is None else range(1, _round_limit + 1)
@@ -26973,6 +26985,28 @@ async def _stream_agent_loop_impl(
                 digest_system_prefix(request_messages),
                 _route_web_max_tokens, _route_web_thinking,
             )
+            # Where does this request first differ from the previous round's?
+            # A break before the newest messages defeats the server's prefix cache.
+            try:
+                _msg_digests = [
+                    hashlib.sha256(json.dumps(m, sort_keys=True, default=str).encode()).hexdigest()[:12]
+                    for m in request_messages
+                ]
+                _prev_digests = _prefix_audit_state.get(index)
+                if _prev_digests is not None:
+                    _break = next(
+                        (i for i, (a, b) in enumerate(zip(_prev_digests, _msg_digests)) if a != b),
+                        min(len(_prev_digests), len(_msg_digests)),
+                    )
+                    logger.info(
+                        "[agent-prefix-audit] round=%s candidate=%s first_changed_message=%s "
+                        "previous_messages=%s messages=%s stable=%s",
+                        round_num, index, _break, len(_prev_digests), len(_msg_digests),
+                        _break >= len(_prev_digests) - 1,
+                    )
+                _prefix_audit_state[index] = _msg_digests
+            except Exception:
+                pass
 
             candidate_max_tokens = fit_output_token_budget(
                 _route_web_max_tokens,
@@ -37653,6 +37687,10 @@ async def _stream_agent_loop_impl(
                 messages.append({
                     "role": "system",
                     "content": (
+                        "Several vault lookups found nothing about this. Do not call more "
+                        "tools. Tell the user plainly that their notes do not mention it; "
+                        "do not guess or fill in from memory as if it were in their notes."
+                        if _vault_lookup_reason == "no_vault_evidence" else
                         "This simple vault document lookup has reached its bounded "
                         "research budget. Do not call more tools. Answer the user "
                         "from source evidence already retrieved; cite exact note "

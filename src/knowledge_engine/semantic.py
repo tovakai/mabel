@@ -210,10 +210,16 @@ async def rerank(query,candidates,*,owner=''):
     return result,diag
 
 
-async def search(index,query='',*,mode='hybrid',property_filters=None,path_prefix='',top_k=8,offset=0,use_reranking=False,owner=''):
+async def search(index,query='',*,mode='hybrid',property_filters=None,path_prefix='',top_k=8,offset=0,use_reranking=False,owner='',fields=None,sort_by=None):
+    if mode=='metadata_only':
+        # The index validates compact listing bounds (titles-only pages may reach 200).
+        return await asyncio.to_thread(index.search,query,mode=mode,property_filters=property_filters,path_prefix=path_prefix,
+                                       top_k=top_k,offset=offset,fields=fields,sort_by=sort_by)
+    if fields is not None or sort_by is not None:
+        raise ValueError('fields and sort_by apply to metadata_only searches')
     if mode not in {'semantic','hybrid','lexical','metadata_only'} or type(top_k) is not int or not 1<=top_k<=50 or type(offset) is not int or not 0<=offset<=10000:
         raise ValueError('Invalid retrieval mode/page bounds')
-    if mode in {'lexical','metadata_only'}:
+    if mode=='lexical':
         return await asyncio.to_thread(index.search,query,mode=mode,property_filters=property_filters,path_prefix=path_prefix,top_k=top_k,offset=offset)
     if offset:
         raise ValueError('Ranked semantic search is bounded to top_k; refine filters rather than using unstable offsets')

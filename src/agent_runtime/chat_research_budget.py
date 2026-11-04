@@ -253,7 +253,11 @@ def _local_evidence_keys(record: Mapping[str, Any]) -> set[str]:
             parsed = None
         if isinstance(parsed, dict):
             for bucket in ("matches", "results", "findings", "notes"):
-                for item in parsed.get(bucket) or ():
+                items = parsed.get(bucket)
+                # Status payloads use the same names for counts ({"notes": 1267}).
+                if not isinstance(items, list):
+                    continue
+                for item in items:
                     if isinstance(item, dict):
                         path = item.get("rel_path") or item.get("path") or item.get("note_id")
                         if path:

@@ -433,19 +433,50 @@ class VaultIndex:
             params.extend([key, *map(json_value, values)])
         return (' AND '.join(clauses) or '1'), params
 
-    def search(self, query='', *, mode='lexical', property_filters=None, path_prefix='', top_k=8, offset=0):
+    def search(self, query='', *, mode='lexical', property_filters=None, path_prefix='', top_k=8, offset=0,
+               fields=None, sort_by=None):
         if mode not in {'lexical','metadata_only'}:
             raise ValueError('Deterministic search supports lexical or metadata_only')
-        if not isinstance(query,str) or len(query)>500 or type(top_k) is not int or not 1<=top_k<=50 or type(offset) is not int or not 0<=offset<=10000:
+        # Compact metadata listings: only the named properties per note, and a
+        # titles-only listing (fields=[]) may page up to 200 notes.
+        compact = fields is not None
+        if compact and (mode != 'metadata_only' or not isinstance(fields, list) or len(fields) > 12
+                        or any(not isinstance(f, str) or not f or len(f) > 120 for f in fields)):
+            raise ValueError('fields is a list of up to twelve property names for metadata_only')
+        if sort_by is not None and (mode != 'metadata_only' or not isinstance(sort_by, str) or not sort_by or len(sort_by) > 120):
+            raise ValueError('sort_by names one numeric property for metadata_only')
+        page_limit = 200 if compact and not fields else 50
+        if not isinstance(query,str) or len(query)>500 or type(top_k) is not int or not 1<=top_k<=page_limit or type(offset) is not int or not 0<=offset<=10000:
             raise ValueError('Invalid search query or page bounds')
         where, args = self._filters(property_filters or {}, path_prefix)
         match_strategy = 'exact_all_terms'
         with self.connect() as db:
             if mode == 'metadata_only':
-                rows = db.execute(f'SELECT n.* FROM notes n WHERE {where} ORDER BY path LIMIT ? OFFSET ?', (*args,top_k+1,offset)).fetchall()
-                matches = [{'note_id':r['id'],'rel_path':r['path'],'title':r['title'],'frontmatter':json.loads(r['frontmatter']),
+                order, order_args = 'path', ()
+                if sort_by:
+                    # Highest first; notes without a numeric value sort last.
+                    order = ("(SELECT MAX(CAST(p.value AS REAL)) FROM properties p WHERE p.note_id=n.id AND p.key=?) "
+                             "IS NULL, (SELECT MAX(CAST(p.value AS REAL)) FROM properties p WHERE p.note_id=n.id AND p.key=?) DESC, path")
+                    order_args = (sort_by, sort_by)
+                rows = db.execute(f'SELECT n.* FROM notes n WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?',
+                                  (*args,*order_args,top_k+1,offset)).fetchall()
+                if compact:
+                    def _plain(value):
+                        if isinstance(value, str):
+                            return re.sub(r'\[\[(?:[^\]|]*\|)?([^\]]*)\]\]', r'\1', value)
+                        if isinstance(value, list):
+                            return [_plain(v) for v in value]
+                        return value
+                    matches = []
+                    for r in rows[:top_k]:
+                        frontmatter = json.loads(r['frontmatter'])
+                        item = {'title': r['title']}
+                        item.update({f: _plain(frontmatter[f]) for f in fields if f in frontmatter})
+                        matches.append(item)
+                else:
+                  matches = [{'note_id':r['id'],'rel_path':r['path'],'title':r['title'],'frontmatter':json.loads(r['frontmatter']),
                     'content_hash':r['content_hash']} for r in rows[:top_k]]
-                for item in matches:
+                for item in matches if not compact else ():
                     # Full properties stay indexed for exact filters; the
                     # model receives a bounded view with an explicit flag.
                     if len(json_value(item['frontmatter']))>4000:
@@ -475,6 +506,12 @@ class VaultIndex:
             generation = int(self.meta(db,'generation','0'))
         unavailable = []
         accessible = []
+        if compact:
+            # Titles and selected properties only; no source paths or graph.
+            return {'matches':matches,'graph_context':[],'omitted_neighbors':0,'generation':generation,
+                'next_offset':offset+top_k if len(rows)>top_k else None,'mode':mode,
+                'match_strategy':'metadata_filter','source':'local_markdown_index','unavailable_sources':[],
+                'last_scan':self.status()['last_scan']}
         for item in matches:
             try:
                 FilesystemResource.resolve(self.seal,str(self.root/item['rel_path'])).validate()
