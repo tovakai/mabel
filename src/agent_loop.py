@@ -317,6 +317,48 @@ def _dedupe_repeated_read_result(tool_name: str, text: Any, messages: list, roun
     )
 
 
+def _dottie_sources(output: Any) -> Dict[str, str]:
+    """{normalized path or note id: rel_path} for notes whose text a Dottie result carries."""
+    try:
+        data = json.loads(str(output or ""))
+    except (TypeError, ValueError):
+        return {}
+    found: Dict[str, str] = {}
+    for source in (data.get("sources") or []) if isinstance(data, dict) else []:
+        if not isinstance(source, dict) or not source.get("rel_path"):
+            continue
+        rel = str(source["rel_path"]).strip("/")
+        found[rel.casefold()] = rel
+        if source.get("note_id"):
+            found[str(source["note_id"]).casefold()] = rel
+    return found
+
+
+def _dottie_source_hit(tool: str, content: Any, sources: Dict[str, str]) -> Optional[str]:
+    """rel_path when a read of a note from its first line targets a Dottie source."""
+    if not sources or tool not in {"read_file", "vault_read_range"}:
+        return None
+    try:
+        args = json.loads(str(content or ""))
+    except (TypeError, ValueError):
+        args = {"path": str(content or "").split("\n", 1)[0]}
+    if not isinstance(args, dict):
+        return None
+    start = args.get("start_line") or args.get("offset") or 1
+    try:
+        if int(start) > 1:
+            return None  # reading further than the provided excerpt is legitimate
+    except (TypeError, ValueError):
+        return None
+    target = str(args.get("note_id") or args.get("path") or args.get("file") or "").strip().casefold()
+    if not target:
+        return None
+    if target in sources:
+        return sources[target]
+    return next((rel for key, rel in sources.items()
+                 if "/" in key and target.endswith("/" + key)), None)
+
+
 _MUTATION_TOOL_NAMES = frozenset({"edit_file", "write_file", "apply_patch", "vault_batch_edit"})
 _MAX_MALFORMED_MUTATION_RETRIES = 2
 
@@ -25208,6 +25250,9 @@ async def _stream_agent_loop_impl(
     _malformed_mutation_retry_attempts = 0
     _rejected_call_retry_attempts = 0
     _text_tool_call_retry_attempts = 0
+    # Notes whose text a Dottie result already carries; first re-read gets a pointer.
+    _dottie_source_paths: Dict[str, str] = {}
+    _dottie_pointed: Set[str] = set()
     _artifact_observation_rounds = 0
     _artifact_source_recovery_cycles = 0
     _artifact_no_action_rounds = 0
@@ -33396,6 +33441,11 @@ async def _stream_agent_loop_impl(
                 _workspace_mutation_epoch,
                 _browser_state_epoch,
             )
+            _dottie_hit = _dottie_source_hit(block.tool_type, block.content, _dottie_source_paths)
+            if _dottie_hit and _dottie_hit in _dottie_pointed:
+                _dottie_hit = None  # the model insisted: let the read run
+            if _dottie_hit:
+                _dottie_pointed.add(_dottie_hit)
             # --- Tool budget check ---
             if max_tool_calls > 0 and total_tool_calls >= max_tool_calls:
                 if _runtime_action is not None:
@@ -34523,6 +34573,18 @@ async def _stream_agent_loop_impl(
                     _prior_round,
                     _workspace_mutation_epoch,
                 )
+            elif _dottie_hit:
+                desc = f"{block.tool_type}: {_dottie_hit} (already provided)"
+                result = {
+                    "output": (
+                        f"Not re-read: the text of {_dottie_hit} (its first ~40 lines) is already in the "
+                        "dispatch_dottie result above, under sources. Answer from it. If you need lines "
+                        "beyond that excerpt, read again with start_line 41."
+                    ),
+                    "exit_code": 0,
+                    "policy": "dottie_source_pointer",
+                }
+                logger.info("[agent] pointed re-read of %s at the Dottie sources", _dottie_hit)
             elif _blocked_failed_retry:
                 _prior_round = _previous_failure.get("round")
                 _prior_error = str(_previous_failure.get("error") or "tool call failed")[:600]
@@ -34866,7 +34928,10 @@ async def _stream_agent_loop_impl(
                         "uncheck", "scroll", "back", "forward", "reload", "evaluate",
                     }:
                         _browser_state_epoch += 1
-                if _workspace_inspection_tool_block(block):
+                if _workspace_inspection_tool_block(block) and not (
+                    isinstance(result, dict) and result.get("policy") == "dottie_source_pointer"
+                ):
+                    # A pointer is not a read: the insisted re-read must be allowed to run.
                     _prior_read = _successful_read_call_history.get(_call_signature) or {}
                     _same_observation_state = (
                         _prior_read.get("mutation_epoch") == _workspace_mutation_epoch
@@ -36987,6 +37052,8 @@ async def _stream_agent_loop_impl(
             model_formatted = _dedupe_repeated_read_result(
                 block.tool_type, model_formatted, messages, tool_result_texts
             )
+            if block.tool_type == "dispatch_dottie" and isinstance(result, dict) and result.get("exit_code") == 0:
+                _dottie_source_paths.update(_dottie_sources(result.get("output")))
             tool_results.append(formatted)
             tool_result_texts.append(model_formatted)
             _capability_recovery.observe(block.tool_type, result,

@@ -580,7 +580,7 @@ async def dispatch(content,ctx):
         if used+len(text)>12000:
             break
         used+=len(text)
-        sources.append({'rel_path':item.get('rel_path'),'start_line':item.get('start_line'),
+        sources.append({'note_id':item.get('note_id'),'rel_path':item.get('rel_path'),'start_line':item.get('start_line'),
                         'end_line':item.get('end_line'),'text':text})
     if sources:
         result['sources']=sources
