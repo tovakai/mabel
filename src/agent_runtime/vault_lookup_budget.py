@@ -8,14 +8,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+# Workspace reads count too: on vault turns the model mixes indexed search
+# with read_file/grep/glob/ls, and a budget that ignored them never fired.
+_WORKSPACE_LOOKUP_TOOLS = frozenset({"grep", "glob", "ls", "get_workspace"})
 READ_TOOLS = frozenset({
     "vault_knowledge_search", "vault_traverse_graph", "vault_read_range",
-    "vault_index_status",
+    "vault_index_status", "read_file",
+}) | _WORKSPACE_LOOKUP_TOOLS
+_SOURCE_TOOLS = frozenset({
+    "vault_knowledge_search", "vault_traverse_graph", "vault_read_range", "read_file",
 })
-_SOURCE_TOOLS = READ_TOOLS - {"vault_index_status"}
 _LOOKUP = re.compile(
     r"^\s*(?:please\s+)?(?:find|locate|show\s+me|where\s+(?:is|are)|"
     r"look\s+up|search\s+for)\b", re.I,
+)
+# "What do my notes say about X?" is a lookup plus a short summary, not research.
+_KNOWLEDGE_QUESTION = re.compile(
+    r"^\s*(?:please\s+)?(?:what\s+(?:do|does|did)\s+(?:my|the)\s+(?:notes?|vault|obsidian)\s+"
+    r"(?:say|have|contain|mention)|what(?:'s|\s+is)\s+in\s+my\s+(?:notes?|vault)|"
+    r"what\s+have\s+i\s+(?:written|noted)|do\s+i\s+have\s+(?:any\s+)?notes?)\b", re.I,
 )
 _VAULT_TOPIC = re.compile(
     r"\b(?:vault|obsidian|note(?:s)?|document(?:ation|s)?|"
@@ -37,7 +48,7 @@ _PUBLIC_WEB_ONLY = re.compile(
 def simple_vault_lookup(text: str) -> bool:
     text = str(text or "").strip()
     return bool(
-        _LOOKUP.search(text)
+        (_LOOKUP.search(text) or _KNOWLEDGE_QUESTION.search(text))
         and _VAULT_TOPIC.search(text)
         and not _DEEP.search(text)
         and not _PUBLIC_WEB_ONLY.search(text)

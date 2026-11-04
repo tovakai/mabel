@@ -25082,6 +25082,10 @@ async def _stream_agent_loop_impl(
         requested_route,
     )
     messages = _route_state["messages"]
+    if _agent_loop_contract_seal is not None:
+        # Note-edit rules ride with the first request and every later one.
+        from src.agent_runtime.edit_exploration_budget import NOTE_EDIT_RULES
+        messages.append({"role": "system", "content": NOTE_EDIT_RULES})
     mcp_schemas = _route_state["mcp_schemas"]
     _relevant_tools = _route_state["relevant_tools"]
     _is_api_model = _route_state["is_api_model"]
@@ -26347,6 +26351,12 @@ async def _stream_agent_loop_impl(
     if _round_limit is not None:
         _round_limit = max(1, _round_limit)
     _last_round_num = 0
+    # Sealed note-edit turns: bounded browsing before the first write, and
+    # rules that keep chat commentary and unverified facts out of notes.
+    _edit_exploration_budget = None
+    if _agent_loop_contract_seal is not None:
+        from src.agent_runtime.edit_exploration_budget import EditExplorationBudget
+        _edit_exploration_budget = EditExplorationBudget()
 
     for round_num in (
         count(1) if _round_limit is None else range(1, _round_limit + 1)
@@ -37560,6 +37570,18 @@ async def _stream_agent_loop_impl(
                                  or str(_round_actual_endpoint_id or "").lower() == "flashteach"
                              ),
                              allow_visual_evidence=_allow_visual_tool_evidence_for_model(_round_actual_model))
+        if _edit_exploration_budget is not None and not _force_answer:
+            _edit_decision = _edit_exploration_budget.observe(tool_result_records)
+            if _edit_decision:
+                if _edit_decision == "restrict":
+                    from src.agent_runtime.edit_exploration_budget import DISCOVERY_TOOLS
+                    # Refused at execution; schemas stay stable for the prefix cache.
+                    _capability_recovery.unavailable.update(DISCOVERY_TOOLS)
+                messages.append({"role": "system", "content": _edit_exploration_budget.message(_edit_decision)})
+                logger.info(
+                    "[agent] edit exploration %s after %s read-only rounds",
+                    _edit_decision, _edit_exploration_budget.read_rounds,
+                )
         if _vault_lookup_budget is not None and not _force_answer:
             _vault_lookup_reason = _vault_lookup_budget.observe(tool_result_records)
             if _vault_lookup_reason:

@@ -83,3 +83,32 @@ def test_vault_convergence_hook_reuses_existing_tool_free_finalization():
     assert "if _vault_lookup_reason:" in source
     assert "vault_lookup_convergence" in source
     assert "Never invent files" in source
+
+
+@pytest.mark.parametrize("user_text", [
+    "What do my notes say about Lessons in Love?",
+    "what does my vault say about Berserk",
+    "What's in my notes about Takashi Miike?",
+    "What have I written about the History Study Plan in my notes?",
+    "Do I have any notes on Dome Keeper?",
+])
+def test_knowledge_questions_use_the_budget(user_text):
+    assert simple_vault_lookup(user_text)
+
+
+@pytest.mark.parametrize("user_text", [
+    "Compare my notes on Lessons in Love with public information about the game.",
+    "What do my notes say about X? Then update them with the release date.",
+    "Summarize everything in my notes about Lost.",
+])
+def test_knowledge_questions_that_compare_edit_or_summarize_everything_are_not_capped(user_text):
+    assert not simple_vault_lookup(user_text)
+
+
+def test_workspace_reads_count_toward_the_budget():
+    budget = VaultLookupBudget()
+    sequence = ("vault_knowledge_search", "grep", "glob", "read_file", "read_file", "read_file", "read_file")
+    assert all(budget.observe([_record(tool)]) is None for tool in sequence)
+    assert budget.successful_reads == 5 and budget.attempts == 7
+    # The sixth source read converges, as in the 14-call live run around its fifth round.
+    assert budget.observe([_record("read_file")]) == "bounded_vault_evidence"
