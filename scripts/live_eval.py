@@ -98,8 +98,8 @@ SCENARIOS = [
                                "Sayid", "Jin")), max_seconds=120, max_rounds=4),
     # --- parallel research -----------------------------------------------------------
     Scenario("parallel_compare", "Compare my notes on Berserk with public information about the manga.",
-             tags=("research",), tools_any=("research_parallel",), contains_any=("Miura",),
-             max_seconds=150, max_rounds=5),
+             tags=("research",), tools_any=("research_parallel", "media_lookup", "web_search", "web_fetch"),
+             contains_any=("Miura",), max_seconds=90, max_rounds=5),
     # --- recommendations ---------------------------------------------------------------
     Scenario("rec_anime", "Recommend me an anime I haven't seen yet, based on my preferences.",
              tags=("recommend",), tools_any=tuple(VAULT_TOOLS), recommend_kind="Anime",

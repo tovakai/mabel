@@ -255,6 +255,20 @@ def parse_findings(text):
     return data
 
 
+def _quote_form(text):
+    """Formatting-insensitive form for quote checks: the words must still match.
+
+    Small models quote notes without Markdown/wikilink syntax, with straight
+    quotes or collapsed whitespace. Those are presentation, not content.
+    """
+    value=str(text or '')
+    value=re.sub(r'\[\[(?:[^\]|]*\|)?([^\]]*)\]\]',r'\1',value)   # [[target|label]] -> label
+    value=re.sub(r'[*_`>#]+','',value)                              # emphasis, code, quotes, headings
+    value=value.replace('\u2019',"'").replace('\u2018',"'").replace('\u201c','"').replace('\u201d','"')
+    value=value.replace('\u2013','-').replace('\u2014','-')
+    return re.sub(r'\s+',' ',value).strip()
+
+
 async def verify_findings(data,ctx,budget):
     from src.tool_execution import execute_tool_block
     from src.tool_types import ToolBlock
@@ -279,7 +293,8 @@ async def verify_findings(data,ctx,budget):
             if result.get('exit_code')!=0:
                 continue
             source=json.loads(result['output'])
-            if reference.get('rel_path')!=source['rel_path'] or reference['quote'] not in source['text']:
+            quote=_quote_form(reference['quote'])
+            if reference.get('rel_path')!=source['rel_path'] or len(quote)<8 or quote not in _quote_form(source['text']):
                 continue
             checked.append({**{key:reference[key] for key in ('note_id','rel_path','start_line','end_line','quote')},'content_hash':source['content_hash']})
         # Numeric contradictions cannot be labeled verified simply because an

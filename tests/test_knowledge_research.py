@@ -396,3 +396,12 @@ def test_evidence_query_drops_instruction_words():
     from src.knowledge_engine.research import _evidence_query
     assert _evidence_query('Find all notes about the characters from Lost and summarize each') == 'characters Lost'
     assert _evidence_query('What does my vault say?') == 'What does my vault say?'[:200] or True
+
+
+def test_quote_form_ignores_formatting_but_not_words():
+    from src.knowledge_engine.research import _quote_form
+    note = 'Kate is the **deuteragonist** of [[Lost]]. She escaped with [[Claire Littleton|Claire]].'
+    assert _quote_form('Kate is the deuteragonist of Lost.') in _quote_form(note)
+    assert _quote_form('She escaped with Claire.') in _quote_form(note)
+    assert _quote_form("Kate is the protagonist of Lost.") not in _quote_form(note)
+    assert _quote_form('It’s  a   “test” – done') == '''It's a "test" - done'''
