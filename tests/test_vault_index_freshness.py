@@ -84,3 +84,15 @@ def test_numeric_range_filters_and_top_k_clamp(tmp_path):
     assert sorted(m["title"] for m in high["matches"]) == ["Monster", "Pluto"]
     exact = index.search(mode="metadata_only", property_filters={"My Rating": {"gt": 9}}, fields=[], top_k=10)
     assert [m["title"] for m in exact["matches"]] == ["Pluto"]
+
+
+def test_title_and_frontmatter_matches_outrank_body_mentions(tmp_path):
+    vault = tmp_path / "vault"
+    (vault / "Series").mkdir(parents=True)
+    (vault / "Genres").mkdir()
+    (vault / "Series" / "Lost.md").write_text("---\nType: Series\n---\nA show about survivors.\n")
+    (vault / "Genres" / "Drama.md").write_text("# Drama\n" + "Many series, lost and found, series series lost.\n" * 3)
+    index = VaultIndex(vault, owner="alice", cache_dir=tmp_path / "cache")
+    index.reconcile()
+    hits = index.search("TV series Lost")["matches"]
+    assert hits[0]["rel_path"] == "Series/Lost.md"

@@ -508,7 +508,11 @@ class VaultIndex:
                 if not exists and len(tokens)>1:
                     expression = ' OR '.join('"'+t+'"' for t in dict.fromkeys(tokens))
                     match_strategy = 'relaxed_any_term'
-                rows = db.execute(f"""SELECT c.*,n.path,n.title,n.content_hash AS note_hash,bm25(chunks_fts) AS rank
+                # Column weights (chunk_id, title, aliases, heading, text, frontmatter):
+                # a note titled or tagged with the query term outranks one that only
+                # mentions a common query word in its body.
+                rows = db.execute(f"""SELECT c.*,n.path,n.title,n.content_hash AS note_hash,
+                    bm25(chunks_fts, 0, 10.0, 5.0, 3.0, 1.0, 3.0) AS rank
                     FROM chunks_fts JOIN chunks c ON c.id=chunks_fts.chunk_id JOIN notes n ON n.id=c.note_id
                     WHERE chunks_fts MATCH ? AND {where} ORDER BY rank,n.path,c.start_line LIMIT ? OFFSET ?""",
                     (expression,*args,top_k+1,offset)).fetchall()
