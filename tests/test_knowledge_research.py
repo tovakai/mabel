@@ -23,6 +23,9 @@ def environment(vault,monkeypatch,routing):
     monkeypatch.setattr(loop,'estimate_tokens',lambda *a,**k:10)
     monkeypatch.setattr(loop,'blocked_tools_for_owner',lambda owner:set())
     monkeypatch.setattr(tool_execution,'owner_is_admin_or_single_user',lambda owner:True)
+    # These tests exercise the agentic worker; evidence_first has its own tests below.
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module,'DEFAULT_WORKER_MODE','agentic')
     configure(routing,roles.Assignment('primary','Dottie-test','openai_tools',('chat','tools')),role='research')
     from src.agent_runtime.authority import create_request_authority
     authority=create_request_authority('Research the lid dimensions',owner='alice',session_id='research',workspace=str(root),
@@ -309,3 +312,65 @@ def test_wide_search_is_trimmed_to_the_research_budget_instead_of_failing():
     assert all(len(m["excerpt"]) <= 600 for m in fitted["matches"])
     small = {"matches": [{"note_id": "n", "excerpt": "short"}], "graph_context": []}
     assert _fit_search_to_budget(small, 24000) == small
+
+
+# --- evidence-first worker (default) ----------------------------------------------------
+
+def _evidence_from(messages):
+    return json.loads(messages[-1]['content'].split('line range shown):\n',1)[1])
+
+
+@pytest.mark.asyncio
+async def test_evidence_first_retrieves_then_synthesizes_once(environment, monkeypatch):
+    from src import agent_loop as loop
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+    calls = []
+
+    async def no_tool_loop(*a, **k):
+        raise AssertionError('evidence_first must not start an agent tool loop')
+        yield
+
+    async def synthesize(role, messages, **kwargs):
+        calls.append(kwargs)
+        lid = next(e for e in _evidence_from(messages) if e['rel_path'] == 'Projects/Lid.md')
+        line = next(l for l in lid['text'].splitlines() if 'tolerans' in l)
+        return json.dumps({'status': 'complete', 'findings': [{'claim': 'The lid tolerance is 0.2 mm', 'evidence': [
+            {'note_id': lid['note_id'], 'rel_path': lid['rel_path'], 'start_line': lid['start_line'],
+             'end_line': lid['end_line'], 'quote': line}]}]})
+    monkeypatch.setattr(loop, 'stream_agent_loop', no_tool_loop)
+    monkeypatch.setattr(roles, 'call', synthesize)
+    result = await dispatch(environment, {'research_objective': 'tolerans'})
+    assert len(calls) == 1 and calls[0].get('thinking_mode') == 'off'
+    assert result['status'] == 'complete' and result['findings'][0]['evidence'][0]['rel_path'] == 'Projects/Lid.md'
+    assert result['worker_execution']['status'] == 'completed'
+
+
+@pytest.mark.asyncio
+async def test_evidence_first_rejects_fabricated_quotes(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+
+    async def fabricate(role, messages, **kwargs):
+        note = _evidence_from(messages)[0]
+        return json.dumps({'status': 'complete', 'findings': [{'claim': 'Width is 999 mm', 'evidence': [
+            {'note_id': note['note_id'], 'rel_path': note['rel_path'], 'start_line': 1, 'end_line': 80,
+             'quote': 'Width: 999 mm'}]}]})
+    monkeypatch.setattr(roles, 'call', fabricate)
+    result = await dispatch(environment, {'research_objective': 'tolerans'})
+    assert result['status'] == 'partial' and result['findings'] == []
+
+
+@pytest.mark.asyncio
+async def test_evidence_first_prose_reply_still_returns_the_notes(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+
+    async def prose(role, messages, **kwargs):
+        return 'The lid has a 0.2 mm tolerance according to the notes.'
+    monkeypatch.setattr(roles, 'call', prose)
+    result = await dispatch(environment, {'research_objective': 'tolerans'})
+    assert result['status'] == 'partial'
+    assert any(n['rel_path'] == 'Projects/Lid.md' for n in result['retrieved_notes'])
+    assert '0.2 mm' in result['worker_summary_unverified']
+    assert result['worker_execution']['phase'] == 'parsing_findings'

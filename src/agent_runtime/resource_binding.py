@@ -188,10 +188,11 @@ def resolve_filesystem_operation(operation, *, roots, workspace="", request_id="
                 _resolve(roots, args["path"], workspace=workspace, allow_missing=False)
             from src.agent_runtime.audit_receipts import resolve_arguments
             args = resolve_arguments(authority, args)
-        if tool in {"vault_read_range", "vault_traverse_graph"}:
+        if tool in {"vault_read_range", "vault_traverse_graph"} and str(args.get("path") or "").lower().endswith(".md"):
             # note_id identifies the note; models put the note's file path in
             # the optional directory field, which failed every first read.
             # Binding to the configured vault is what an omitted path does.
+            # A directory path (a scoped research root) is kept.
             args.pop("path", None)
         selector = args.get("path", "" if search else None)
         if search and selector == "":
