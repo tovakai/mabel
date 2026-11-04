@@ -317,6 +317,22 @@ def _dedupe_repeated_read_result(tool_name: str, text: Any, messages: list, roun
     )
 
 
+def _approved_write_is_side_action(tool: str, capabilities: Iterable[str]) -> bool:
+    """True when an approved write was not the whole request, so the turn goes on.
+
+    A pure "remember X" (only the memory family) ends with "Done."; a compound
+    request ("look up X and remember Y") or a request about something else
+    continues to its answer after the approval.
+    """
+    try:
+        from src.turn_contract import _families_for_tool
+        tool_families = set(_families_for_tool(tool))
+    except Exception:
+        return False
+    requested = set(capabilities or ())
+    return bool(requested - tool_families) or not (tool_families & requested)
+
+
 def _dottie_sources(output: Any) -> Dict[str, str]:
     """{normalized path or note id: rel_path} for notes whose text a Dottie result carries."""
     try:
@@ -2073,8 +2089,12 @@ def _state_manager_expected_action(
     except TypeError:
         tools = set()
 
+    from src.turn_contract import REMEMBER_REQUEST_RE, REMEMBER_SAVE_RE
+
     def _actions(candidate: str = positive_value) -> set[str]:
-        if re.search(r"\b(?:add|create|save|remember|schedule|set\s+up)\b", candidate):
+        # "remember" is a save action only when addressed to Mabel, never in
+        # narration such as "I remember that it was good".
+        if re.search(r"\b(?:add|create|save|schedule|set\s+up)\b", candidate) or REMEMBER_SAVE_RE.search(candidate):
             return {"add", "create", "save"}
         if re.search(r"\b(?:edit|update|change|rename|modify|pause|resume|enable|disable)\b", candidate):
             return {"edit", "update", "change", "rename", "modify", "pause", "resume", "enable", "disable"}
@@ -2090,7 +2110,9 @@ def _state_manager_expected_action(
     actions = _actions()
     if not actions:
         return "", set()
-    if "manage_memory" in tools and re.search(r"\b(?:memory|memories|remember)\b", positive_value):
+    if "manage_memory" in tools and (
+        re.search(r"\b(?:memory|memories)\b", positive_value) or REMEMBER_REQUEST_RE.search(positive_value)
+    ):
         return "manage_memory", actions
     if "manage_tasks" in tools:
         _task_noun = re.compile(
@@ -4126,12 +4148,20 @@ def _qwen_memory_id_from_search_output(text: str, marker: str) -> Optional[str]:
 
 def _extract_memory_add_text_from_user(text: str) -> str:
     value = str(text or "").strip()
+    from src.turn_contract import REMEMBER_SAVE_RE
+    save = REMEMBER_SAVE_RE.search(value)
+    if save and re.search(r"remember", save.group(0), re.IGNORECASE):
+        # Take the text after the addressed "remember", not any later or
+        # earlier "remember" in narration.
+        tail = value[save.start():]
+        match = re.search(r"\bremember\s+(?:this\s*:\s*|that\s+)?(.+)$", tail, re.IGNORECASE | re.DOTALL)
+        if match:
+            return re.sub(r"\s+", " ", match.group(1)).strip(" .?!")
     patterns = [
         r"\bremember\s+this\s+temporary\s+eval\s+fact:\s*(.+)$",
         r"\bremember\s+this:\s*(.+)$",
         r"\bplease\s+remember:\s*(.+)$",
         r"\bplease\s+remember\s+(.+)$",
-        r"\bremember\s+(?:that\s+)?(.+)$",
         r"\bsave\s+this\s+as\s+a\s+memory:\s*(.+)$",
         r"\bsave\s+this\s+(?:memory|fact):\s*(.+)$",
         r"\badd\s+to\s+memory\s+that\s+(.+)$",
@@ -7608,7 +7638,8 @@ def _compact_native_route_tools(
         if tool in original and any(phrase in text for phrase in phrases):
             compact.add(tool)
 
-    if "memory" in domains or re.search(r"\b(?:remember|memory|memories)\b", q):
+    from src.turn_contract import REMEMBER_REQUEST_RE
+    if "memory" in domains or re.search(r"\b(?:memory|memories)\b", q) or REMEMBER_REQUEST_RE.search(q):
         compact.add("manage_memory")
 
     if "skills" in domains or re.search(r"\b(?:skill|skills|tdd|skill library)\b", q):
@@ -26289,6 +26320,7 @@ async def _stream_agent_loop_impl(
             _effectful_used = True
         formatted_approved_result = format_tool_result(desc, approved_result)
         _restored_placeholder = False
+        _restored_turn = False
         try:
             from src.agent_runtime import turn_continuation
             _continuation = turn_continuation.take(approved.approval_id, owner=owner, session_id=session_id)
@@ -26297,6 +26329,7 @@ async def _stream_agent_loop_impl(
                     _continuation, formatted_approved_result
                 )
                 messages.extend(_restored)
+                _restored_turn = bool(_restored)
                 logger.info(
                     "[agent] restored %s turn messages across approval (placeholder replaced=%s)",
                     len(_restored), _restored_placeholder,
@@ -26333,7 +26366,16 @@ async def _stream_agent_loop_impl(
                 or (approved.tool_name in {"create_document", "edit_document", "update_document"})
             )
         )
-        if _approved_effectful:
+        # A write the model made on the side of a different request (e.g. saving
+        # a memory while answering about an anime) is not the whole task: once
+        # approved, let the restored turn continue to its actual answer.
+        _approved_side_write = bool(
+            _approved_effectful and _restored_turn and turn_contract is not None
+            and _approved_write_is_side_action(approved.tool_name, getattr(turn_contract, "capabilities", ()))
+        )
+        if _approved_side_write:
+            logger.info("[agent] approved %s was a side action; continuing the turn", approved.tool_name)
+        if _approved_effectful and not _approved_side_write:
             full_response = "Done."
             # The approval question was streamed on the original request and
             # is already rendered as its own approval card. On the approval
@@ -31959,6 +32001,16 @@ async def _stream_agent_loop_impl(
                         "manage_skills",
                         json.dumps(_skill_request),
                     )
+            if (
+                _forced_state_block
+                and _forced_state_block.tool_type == "manage_memory"
+                and turn_contract is not None
+                and "memory" not in getattr(turn_contract, "capabilities", ())
+            ):
+                # Never replace the model's answer with a memory write the turn
+                # contract did not select (it misread conversation as a command).
+                logger.info("[agent] skipped forced manage_memory call outside a memory contract")
+                _forced_state_block = None
             if (
                 _forced_state_block
                 and not _has_successful_state_manager_evidence(

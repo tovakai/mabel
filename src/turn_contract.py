@@ -165,12 +165,40 @@ def _mentions_under_budget(text: str) -> bool:
             if cursor == len(value) or not (value[cursor].isalnum() or value[cursor] == "_"):
                 return True
     return False
+# "remember"/"forget" route to memory only when addressed to Mabel. Narration
+# ("I've seen the anime and remember that it was good", "I can't remember the
+# details", "remember when...") is ordinary conversation, not a memory request.
+_ADDRESSED = r"(?:^|[.!?;:\n]\s*|\b(?:please|pls|ok|okay|hey\s+mabel,?|mabel,?)\s+)"
+_REMEMBER_SAVE = (
+    _ADDRESSED + r"remember\b(?!\s+(?:when|how|the\s+time|what))"
+    r"|\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?remember\b(?!\s+(?:when|what|how|if|whether))"
+    r"|\b(?:you|mabel)\s+(?:should|must|need\s+to|have\s+to)\s+remember\b"
+    r"|\b(?:don'?t|do\s+not|never)\s+forget\s+(?:that|this)\b"
+    r"|\bremember\s+(?:this|that)\s*:"
+    r"|\b(?:save|add|store|keep)\s+(?:this|that|it)?\s*(?:to|in|as\s+a)\s+(?:your\s+)?(?:memory|memories)\b"
+)
+_REMEMBER_REQUEST = (
+    _REMEMBER_SAVE
+    + r"|\b(?:do|did)\s+(?:you|u)\s+(?:still\s+)?remember\b"
+    + r"|" + _ADDRESSED + r"forget\b"
+    + r"|\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?forget\b"
+)
+REMEMBER_SAVE_RE = re.compile(_REMEMBER_SAVE, re.I)
+# A clause that starts with the speaker or a narrated subject ("I've seen...",
+# "we watched...", "it was...") is narration, not a request.
+_NARRATION_START = re.compile(
+    r"^\s*(?:(?:so|well|yeah|yes|also|but|honestly|actually)[,\s]+)*"
+    r"(?:i|i['’]?ve|i['’]?m|i['’]?d|i['’]?ll|we|we['’]?ve|we['’]?re|my|our|it|it['’]?s|that|this|they|he|she)\b",
+    re.I,
+)
+REMEMBER_REQUEST_RE = re.compile(_REMEMBER_REQUEST, re.I)
+
 _FAMILY_WORDS = {
     "calendar": r"\b(?:calendar|calender|events?|appointments?|meetings?|agenda)\b",
     "notes": r"\b(?:notes?|checklists?|groceries|remind\s+me)\b",
     "tasks": r"\b(?:tasks?|todos?|schedul(?:ed|d)\s+jobs?|automations?)\b",
     "skills": r"\bskills?\b",
-    "memory": r"\b(?:memory|memories|memores|remember|forget|past\s+chats?|previous\s+conversations?)\b",
+    "memory": r"\b(?:memory|memories|memores|past\s+chats?|previous\s+conversations?)\b|" + _REMEMBER_REQUEST,
     "documents": r"\b(?:documents?|documets?|docs?|editor)\b",
     "email": r"\b(?:emails?|inbox|mailbox|mail|spam)\b",
     "search_browser": r"\b(?:search\s+(?:the\s+)?web|web|online|browse|browser|websites?|sites?|news|weather|youtube|arxiv|hugging\s*face)\b|https?://|\b\w+\.(?:com|org|net|io)\b",
@@ -187,7 +215,7 @@ _FUZZY_FAMILY_TERMS = {
     "notes": ("note", "notes", "checklist", "groceries"),
     "tasks": ("task", "tasks", "todo", "reminder"),
     "skills": ("skill", "skills"),
-    "memory": ("memory", "memories", "remember", "forget"),
+    "memory": ("memory", "memories"),
     "documents": ("document", "documents", "editor"),
     "email": ("email", "emails", "inbox", "mailbox"),
     "search_browser": ("search", "browser", "website", "youtube"),
@@ -6507,9 +6535,23 @@ def requested_capabilities(message: str, history: Iterable = (), *, active_docum
         return frozenset().union(*(_families_for_tool(tool) for tool in selected))
     # Classify independent requests separately so the first routing match
     # cannot hide a second capability. Keep noun conjunctions intact.
-    clauses = re.split(r"[;\n]|[.!?]\s+|\b(?:and|then)\s+(?=" + _ACTION_REQUEST + r")",
-                       text, flags=re.I)
-    families = set().union(*(_clause_capabilities(clause) for clause in clauses))
+    parts = re.split(r"([;\n]|[.!?]\s+|\b(?:and|then)\s+(?=" + _ACTION_REQUEST + r"))",
+                     text, flags=re.I)
+    clauses = parts[0::2]
+    joiners = [""] + parts[1::2]
+    families = set()
+    for index, clause in enumerate(clauses):
+        clause_families = set(_clause_capabilities(clause))
+        # "I've seen the anime and remember that it was good": a clause joined
+        # by and/then to narration is narration too, not a memory command.
+        if (
+            "memory" in clause_families
+            and re.match(r"(?:and|then)\s+$", joiners[index] or "", re.I)
+            and _NARRATION_START.match(clauses[index - 1])
+            and not re.search(r"\b(?:memory|memories)\b", clause, re.I)
+        ):
+            clause_families.discard("memory")
+        families |= clause_families
     if re.search(r"(?:file://)?/tmp_workspace(?:/|\b)", text, re.I):
         families.add("shell_files")
     if (
