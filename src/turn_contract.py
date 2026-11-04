@@ -1083,6 +1083,10 @@ def selected_tools_for_request(message: str) -> frozenset[str] | None:
         return frozenset()
     # Public synopsis / "what is X about" → web_search(+fetch) only.
     if conversational_retrieval_intent(raw_text, workspace=False) == "factual_public":
+        from src.agent_tools.media_lookup_tool import MEDIA_CUE_RE
+        if MEDIA_CUE_RE.search(raw_text):
+            # Anime/manga/VN/fan-wiki facts: structured lookups beat page scraping.
+            return frozenset(FACTUAL_PUBLIC_LOOKUP_TOOLS | {"media_lookup"})
         return frozenset(FACTUAL_PUBLIC_LOOKUP_TOOLS)
     # Single vault/genre note rewrite → file editors only (no bulk/shell/web).
     if looks_like_vault_note_rewrite(raw_text):

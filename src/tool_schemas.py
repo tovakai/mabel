@@ -30,7 +30,6 @@ _BINARY_VISUAL_MEDIA_SUFFIXES = {
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "get_weather": ("location",),
-    "media_lookup": ("source",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -372,7 +371,7 @@ FUNCTION_TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "enum": ["anilist", "vndb", "wiki"]},
+                    "source": {"type": "string", "enum": ["anilist", "vndb", "wiki"], "description": "default: anilist (or vndb for a v-id, wiki when wiki is set)"},
                     "action": {"type": "string", "enum": ["search", "details", "recommendations"]},
                     "query": {"type": "string", "description": "Title or search terms; for wiki details, the exact page title"},
                     "id": {"type": "string", "description": "AniList id or VNDB id (v2002) from a previous search"},
@@ -380,7 +379,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "wiki": {"type": "string", "description": "wiki host, e.g. berserk.fandom.com, terraria.wiki.gg"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10}
                 },
-                "required": ["source"]
+                "required": []
             }
         }
     },

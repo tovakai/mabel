@@ -257,6 +257,7 @@ _TEXT_TOOL_CALL_RE = re.compile(
     re.IGNORECASE,
 )
 _MAX_TEXT_TOOL_CALL_RETRIES = 2
+_MAX_REJECTED_CALL_RETRIES = 2
 
 
 def _text_tool_call_names(text: Any) -> Set[str]:
@@ -25205,6 +25206,7 @@ async def _stream_agent_loop_impl(
     _artifact_body_handoff_attempts = 0
     _malformed_write_body_handoff_attempts = 0
     _malformed_mutation_retry_attempts = 0
+    _rejected_call_retry_attempts = 0
     _text_tool_call_retry_attempts = 0
     _artifact_observation_rounds = 0
     _artifact_source_recovery_cycles = 0
@@ -26462,6 +26464,20 @@ async def _stream_agent_loop_impl(
             # Round 1 normally reuses a request built before this point.
             _initial_route_request_messages = _trim_route_request_messages(endpoint_url, model, messages)
             logger.info("[agent] vault prefetch injected %s result(s) before round 1", len(_prefetch_calls))
+
+    if turn_contract is not None and exact_approval is None:
+        try:
+            from src.agent_tools.media_lookup_tool import MEDIA_CUE_RE
+            if MEDIA_CUE_RE.search(_last_user or "") and turn_contract.permits("media_lookup"):
+                messages.append({"role": "system", "content": (
+                    "For anime, manga, visual-novel or fan-wiki facts, call media_lookup first "
+                    "(source anilist, vndb or wiki with the wiki host, e.g. berserk.fandom.com) instead "
+                    "of web_search/web_fetch; Fandom pages refuse web_fetch. Use web_search only if "
+                    "media_lookup has nothing."
+                )})
+                _initial_route_request_messages = _trim_route_request_messages(endpoint_url, model, messages)
+        except Exception:
+            logger.debug("media hint skipped", exc_info=True)
 
     for round_num in (
         count(1) if _round_limit is None else range(1, _round_limit + 1)
@@ -28650,6 +28666,38 @@ async def _stream_agent_loop_impl(
             yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
             continue
         _malformed_mutations = _malformed_native_tool_names & _MUTATION_TOOL_NAMES
+        if (
+            _malformed_native_tool_names
+            and not _malformed_mutations
+            and not tool_blocks
+            and not _strip_think_blocks(str(round_response or "")).strip()
+            and not _force_answer
+            and _rejected_call_retry_attempts < _MAX_REJECTED_CALL_RETRIES
+            and (_round_limit is None or round_num < _round_limit)
+        ):
+            # Every call this round was rejected (missing/invalid arguments)
+            # and there is no answer text: retry instead of ending in silence.
+            _rejected_call_retry_attempts += 1
+            logger.warning(
+                "[agent] all tool calls rejected in round %s (%s); retry %s",
+                round_num, sorted(_malformed_native_tool_names), _rejected_call_retry_attempts,
+            )
+            _rejected_schemas = {
+                str(s.get("function", {}).get("name")): s.get("function", {}).get("parameters", {})
+                for s in (all_tool_schemas or []) if isinstance(s, dict)
+            }
+            _required = {
+                name: list((_rejected_schemas.get(name) or {}).get("required") or [])
+                for name in sorted(_malformed_native_tool_names)
+            }
+            messages.append({"role": "system", "content": (
+                "Your tool calls were rejected because their arguments were missing or invalid, so "
+                "nothing ran: " + "; ".join(f"{n} requires {', '.join(r) or 'valid arguments'}"
+                                              for n, r in _required.items())
+                + ". Re-issue the calls with every required argument, or answer if you already can."
+            )})
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
         if (
             _malformed_mutations
             and not tool_blocks

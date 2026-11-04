@@ -169,3 +169,21 @@ _GERUND_PROMISE = 'data: {"delta": "Doing a fresh inventory + exact read first, 
 def test_promise_only_reply_is_nudged_not_accepted(monkeypatch, tmp_path):
     seen, _ = _run_loop(monkeypatch, tmp_path, [[_GERUND_PROMISE], [_FINAL]])
     assert len(seen) == 2, "a reply that only announces the next step must not end the turn"
+
+
+# --- every call rejected: retry instead of an empty answer -------------------------------
+
+_REJECTED_READ = 'data: ' + json.dumps({"type": "tool_calls", "calls": [
+    {"id": "r1", "name": "read_file", "arguments": "{}"}]}) + "\n\n"
+
+
+def test_all_rejected_calls_retry_instead_of_ending_silently(monkeypatch, tmp_path):
+    seen, _ = _run_loop(monkeypatch, tmp_path, [[_REJECTED_READ], [_FINAL]])
+    assert len(seen) == 2, "a round whose only call was rejected must not end the turn"
+    retry = json.dumps(seen[1]["messages"])
+    assert "were rejected" in retry and "read_file requires path" in retry
+
+
+def test_rejected_call_retries_are_bounded(monkeypatch, tmp_path):
+    seen, _ = _run_loop(monkeypatch, tmp_path, [[_REJECTED_READ]], max_rounds=8)
+    assert 3 <= len(seen) <= 5

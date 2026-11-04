@@ -110,3 +110,23 @@ def test_vndb_details_uses_an_id_filter_without_searchrank(monkeypatch):
     out = json.loads(_run({"source": "vndb", "action": "details", "id": "28118"})["output"])
     assert seen["filters"] == ["id", "=", "v28118"] and seen["sort"] != "searchrank"
     assert out["result"]["developers"] == ["Selebus"]
+
+
+def test_source_is_inferred_when_missing(monkeypatch):
+    hosts = []
+
+    def handler(request):
+        hosts.append(request.url.host)
+        if request.url.host == "api.vndb.org":
+            return httpx.Response(200, json={"results": [{"id": "v2002", "title": "STEINS;GATE"}]})
+        return httpx.Response(200, json={"data": {"Page": {"media": []}}})
+    monkeypatch.setattr(media.httpx, "AsyncClient", _mock_transport(handler))
+    assert _run({"action": "search", "kind": "manga", "query": "Berserk"})["exit_code"] == 0
+    assert _run({"action": "details", "id": "v2002"})["exit_code"] == 0
+    assert hosts == ["graphql.anilist.co", "api.vndb.org"]
+
+
+def test_anime_fact_questions_offer_media_lookup():
+    from src.turn_contract import selected_tools_for_request
+    assert "media_lookup" in selected_tools_for_request("What is Sousou no Frieren's AniList score, and which studio made it?")
+    assert "media_lookup" not in (selected_tools_for_request("What is the capital of Peru?") or set())

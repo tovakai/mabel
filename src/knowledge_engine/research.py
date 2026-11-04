@@ -410,9 +410,14 @@ async def dispatch(content,ctx):
         'elapsed_seconds':round(time.monotonic()-budget.started,3),'max_hops':budget.max_hops}
     if authority.owner and authority.session_id:
         from src.agent_runtime.task_artifacts import publish
-        publish(owner=authority.owner,session_id=authority.session_id,workspace=authority.workspace,
-            kind='vault_research',title=objective[:200],result=result,resource=bound.bindings[0].resource,
-            required_tools=('vault_read_range',))
+        try:
+            publish(owner=authority.owner,session_id=authority.session_id,workspace=authority.workspace,
+                kind='vault_research',title=objective[:200],result=result,resource=bound.bindings[0].resource,
+                required_tools=('vault_read_range',))
+        except ValueError as error:
+            # Saving the result as a reusable task artifact is optional (it needs
+            # a bound workspace); the findings themselves are still returned.
+            logger.info('[dottie] result not saved as a task artifact: %s', str(error)[:160])
     return {'output':json.dumps(result,ensure_ascii=False),'exit_code':0}
 
 

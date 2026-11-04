@@ -27,6 +27,12 @@ _VNDB_FIELDS = ("id, title, alttitle, released, rating, votecount, length_minute
                 "developers.name, tags.id, tags.name, tags.rating, tags.spoiler, description")
 
 
+# Questions that media_lookup answers better than web_search.
+MEDIA_CUE_RE = re.compile(
+    r"\b(?:anime|manga|manhwa|manhua|light\s+novels?|visual\s+novels?|vns?|eroge|otome|"
+    r"anilist|myanimelist|mal|vndb|fandom|fan[-\s]?wikis?|wiki\.gg|wikis?)\b", re.I)
+
+
 class LookupError_(Exception):
     pass
 
@@ -276,6 +282,11 @@ class MediaLookupTool:
             if not isinstance(args, dict):
                 raise LookupError_("arguments must be a JSON object")
             source = str(args.get("source") or "").strip().lower()
+            if not source:
+                # Infer the obvious source rather than rejecting the call.
+                raw_id = str(args.get("id") or "").strip().lower()
+                source = ("wiki" if args.get("wiki") else "vndb" if re.fullmatch(r"v\d+", raw_id)
+                          else "anilist")
             action = str(args.get("action") or "search").strip().lower()
             query = str(args.get("query") or "").strip()[:200]
             item_id = str(args.get("id") or "").strip()[:20]

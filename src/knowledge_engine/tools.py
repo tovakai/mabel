@@ -58,8 +58,21 @@ async def execute(name, content, ctx):
             if await asyncio.to_thread(index.needs_reconcile):
                 await asyncio.to_thread(index.reconcile)
             if name == 'vault_knowledge_search':
-                if set(args)-{'query','mode','property_filters','path_prefix','top_k','offset','use_reranking','fields','sort_by'}:
-                    raise ValueError('Unknown knowledge search argument')
+                for alias, name in (('limit','top_k'),('k','top_k'),('filters','property_filters'),
+                                    ('sort','sort_by'),('order_by','sort_by'),('prefix','path_prefix')):
+                    if alias in args and name not in args:
+                        args[name]=args.pop(alias)
+                args.pop('sort_order',None)  # sort_by is always highest first
+                # Clamp an oversized page to its bound rather than failing the
+                # model's call; the index itself keeps rejecting out-of-range pages.
+                if type(args.get('top_k')) is int:
+                    compact='fields' in args and args.get('mode')=='metadata_only'
+                    page_bound=(200 if not args.get('fields') else 100) if compact else 50
+                    args['top_k']=max(1,min(args['top_k'],page_bound))
+                unknown=set(args)-{'query','mode','property_filters','path_prefix','top_k','offset','use_reranking','fields','sort_by'}
+                if unknown:
+                    raise ValueError('Unknown knowledge search argument(s) '+', '.join(sorted(unknown))[:120]
+                                     +'; use query, mode, property_filters, path_prefix, top_k, offset, fields, sort_by')
                 from .semantic import search
                 result = await search(index,owner=owner,**args)
             elif name == 'vault_traverse_graph':

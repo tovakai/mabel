@@ -418,12 +418,22 @@ class VaultIndex:
                 raise ValueError('Invalid property key')
             base = f'SELECT 1 FROM properties p WHERE p.note_id={alias}.id AND p.key=?'
             if isinstance(value,dict):
+                comparisons = {'>=':'>=','>':'>','<=':'<=','<':'<','gte':'>=','gt':'>','lte':'<=','lt':'<',
+                               '$gte':'>=','$gt':'>','$lte':'<=','$lt':'<'}
+                if value and set(value) <= set(comparisons):
+                    # Numeric ranges: {"My Rating": {">=": 9}}.
+                    for op, bound in value.items():
+                        if type(bound) not in (int, float):
+                            raise ValueError('Range filters need numeric bounds')
+                        clauses.append(f'EXISTS({base} AND CAST(p.value AS REAL) {comparisons[op]} ?)')
+                        params.extend([key, bound])
+                    continue
                 if set(value) == {'exists'} and type(value['exists']) is bool:
                     clauses.append(('' if value['exists'] else 'NOT ') + 'EXISTS('+base+')')
                     params.append(key)
                     continue
                 if set(value) != {'in'} or not isinstance(value['in'],list) or not 1 <= len(value['in']) <= 20:
-                    raise ValueError('Filters support equality, exists or in')
+                    raise ValueError('Filters support equality, {"exists": bool}, {"in": [...]} or numeric ranges like {">=": 9}')
                 values = value['in']
             else:
                 values = [value]

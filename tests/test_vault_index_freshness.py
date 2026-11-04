@@ -73,6 +73,14 @@ def test_compact_listing_bounds_are_enforced(tmp_path):
     import pytest
     index = _media_vault(tmp_path)
     with pytest.raises(ValueError):
-        index.search(mode="metadata_only", fields=["My Rating"], top_k=101)  # rows with fields page to 100
+        index.search(mode="metadata_only", fields=["My Rating"], top_k=101)  # the index stays strict; tools clamp
     with pytest.raises(ValueError):
         index.search("x", mode="lexical", fields=[])
+
+
+def test_numeric_range_filters_and_top_k_clamp(tmp_path):
+    index = _media_vault(tmp_path)
+    high = index.search(mode="metadata_only", property_filters={"My Rating": {">=": 9}}, fields=[], top_k=200)
+    assert sorted(m["title"] for m in high["matches"]) == ["Monster", "Pluto"]
+    exact = index.search(mode="metadata_only", property_filters={"My Rating": {"gt": 9}}, fields=[], top_k=10)
+    assert [m["title"] for m in exact["matches"]] == ["Pluto"]
