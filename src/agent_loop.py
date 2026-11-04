@@ -288,6 +288,34 @@ def _text_tool_call_retry_instruction(names: Set[str], offered: Set[str]) -> str
     return text + " Do not announce what you will do; do it."
 
 
+_DEDUPE_READ_TOOLS = frozenset({
+    "read_file", "ls", "glob", "grep", "get_workspace",
+    "vault_read_range", "vault_knowledge_search", "vault_traverse_graph",
+})
+_DEDUPE_MIN_CHARS = 200
+
+
+def _dedupe_repeated_read_result(tool_name: str, text: Any, messages: list, round_texts: list) -> Any:
+    """Point at an identical earlier read instead of repeating it.
+
+    Applies only when byte-identical output from this turn is still in the
+    model's context, so nothing is lost: same output means the source is
+    unchanged, and the model already has it.
+    """
+    if tool_name not in _DEDUPE_READ_TOOLS or not isinstance(text, str) or len(text) < _DEDUPE_MIN_CHARS:
+        return text
+    present = text in round_texts or any(
+        isinstance(m, dict) and m.get("role") == "tool" and m.get("content") == text
+        for m in messages
+    )
+    if not present:
+        return text
+    return (
+        f"[Unchanged: this {tool_name} call returned exactly the same output as an earlier call "
+        "in this turn, which is still shown above. Use that result; do not repeat this call.]"
+    )
+
+
 _MUTATION_TOOL_NAMES = frozenset({"edit_file", "write_file", "apply_patch", "vault_batch_edit"})
 _MAX_MALFORMED_MUTATION_RETRIES = 2
 
@@ -25502,6 +25530,9 @@ async def _stream_agent_loop_impl(
         return bool(match and match.end() >= len(trailing) - 40)
 
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
+    # Approval raised this turn: keep its working context for the resume.
+    _continuation_approval = None
+    _continuation_call_id = ""
 
     _doc_stream_create_completed = False
     _ody_doc_tool_completed = False
@@ -26205,7 +26236,23 @@ async def _stream_agent_loop_impl(
         if approved.tool_name in _VERIFIER_EFFECTFUL_TOOLS:
             _effectful_used = True
         formatted_approved_result = format_tool_result(desc, approved_result)
-        _append_tool_results(
+        _restored_placeholder = False
+        try:
+            from src.agent_runtime import turn_continuation
+            _continuation = turn_continuation.take(approved.approval_id, owner=owner, session_id=session_id)
+            if _continuation is not None and approval_matches:
+                _restored, _restored_placeholder = turn_continuation.restore(
+                    _continuation, formatted_approved_result
+                )
+                messages.extend(_restored)
+                logger.info(
+                    "[agent] restored %s turn messages across approval (placeholder replaced=%s)",
+                    len(_restored), _restored_placeholder,
+                )
+        except Exception:
+            logger.warning("[agent] could not restore turn continuation", exc_info=True)
+        if not _restored_placeholder:
+          _append_tool_results(
             messages,
             "",
             [],
@@ -34377,6 +34424,8 @@ async def _stream_agent_loop_impl(
                         authority_gap=_authority_gap,
                     )
                     desc = f"{block.tool_type}: APPROVAL REQUIRED"
+                    _continuation_approval = pending_approval
+                    _continuation_call_id = str(tool_call_id or "")
                     from src.tool_approvals import approval_request_result
                     result = approval_request_result(pending_approval, reason=security_decision.reason,
                                                      client_runtime_context=client_runtime_context)
@@ -36722,6 +36771,9 @@ async def _stream_agent_loop_impl(
                 if block.tool_type == "web_search"
                 else formatted
             )
+            model_formatted = _dedupe_repeated_read_result(
+                block.tool_type, model_formatted, messages, tool_result_texts
+            )
             tool_results.append(formatted)
             tool_result_texts.append(model_formatted)
             _capability_recovery.observe(block.tool_type, result,
@@ -37132,6 +37184,27 @@ async def _stream_agent_loop_impl(
         # arrives as the next message and the agent resumes from there. The
         # question text is already in the streamed response, so it persists.
         if _awaiting_user:
+            if _continuation_approval is not None:
+                # The approval click resumes this turn in a new request built
+                # from chat history, which keeps no tool results. Save what this
+                # turn already read so the resume continues instead of re-exploring.
+                try:
+                    from src.agent_runtime import turn_continuation
+                    _continuation_messages = turn_continuation.turn_work_messages(messages, _last_user)
+                    _append_tool_results(
+                        _continuation_messages, round_response, converted_calls,
+                        tool_results, tool_result_texts, used_native, round_num,
+                        tool_result_records=tool_result_records,
+                        include_reasoning_content=False,
+                        allow_visual_evidence=False,
+                    )
+                    turn_continuation.save(
+                        _continuation_approval.approval_id, owner=owner, session_id=session_id,
+                        messages=_continuation_messages, placeholder_call_id=_continuation_call_id,
+                        expires_at=_continuation_approval.expires_at,
+                    )
+                except Exception:
+                    logger.warning("[agent] could not save turn continuation", exc_info=True)
             break
 
         _failed_tool_completion_decision = None
