@@ -117,9 +117,10 @@ def test_library_question_plans():
     assert game[0]["sort_by"] == "Playtime"
 
 
-def test_no_plan_for_generic_edits_or_web_comparisons():
+def test_no_plan_for_generic_requests_or_edits():
+    # Notes-vs-public comparisons do get a plan (the notes side); see below.
     for text in ("Recommend me a good anime", "Fix the rating in my Berserk note",
-                 "Compare my notes on Berserk with public information about the manga.", "Hey!"):
+                 "Compare Berserk and Vagabond", "Hey!"):
         assert vault_prefetch_requests(text) == []
 
 
@@ -199,3 +200,33 @@ def test_game_recommendations_also_fetch_rated_games():
     plans = vault_prefetch_requests("Recommend me a game based on what I've been playing.")
     assert [p["sort_by"] for p in plans] == ["Playtime", "My Rating"]
     assert plans[1]["property_filters"]["My Rating"] == {">=": 1}
+
+
+@pytest.mark.parametrize("text,topic", [
+    ("Compare my notes on Berserk with public information about the manga.", "Berserk"),
+    ("compare my vault notes about Frieren to what the internet says", "Frieren"),
+    ("Compare my notes on Lessons in Love with public information about the game.", "Lessons in Love"),
+])
+def test_compare_questions_prefetch_the_notes_side(text, topic):
+    from src.agent_runtime.vault_lookup_budget import compare_topic
+    assert compare_topic(text) == topic
+    assert vault_prefetch_requests(text) == [{"query": topic, "top_k": 10}]
+
+
+def test_comparing_two_works_is_not_a_notes_comparison():
+    from src.agent_runtime.vault_lookup_budget import compare_topic
+    assert compare_topic("Compare Berserk and Vagabond") is None
+
+
+def test_compare_turn_gets_the_one_lookup_hint(monkeypatch, tmp_path):
+    global MESSAGE
+    original = MESSAGE
+    MESSAGE = "Compare my notes on Berserk with public information about the manga."
+    try:
+        hit = json.dumps({"matches": [{"note_id": "n-b", "title": "Berserk", "excerpt": "My Rating: 10"}]})
+        _, seen, _ = _run(monkeypatch, tmp_path, capabilities={"workspace_read", "search_browser"},
+                          search_result={"output": hit, "exit_code": 0})
+    finally:
+        MESSAGE = original
+    first = json.dumps(seen[0]["messages"])
+    assert "notes on 'Berserk' are above" in first and "make ONE" in first

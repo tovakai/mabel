@@ -172,6 +172,21 @@ def _library_type(text: str) -> str | None:
     return LIBRARY_TYPES.get(word)
 
 
+_COMPARE = re.compile(
+    r"\bcompare\s+(?:what\s+)?my\s+(?:obsidian\s+)?(?:vault\s+)?(?:notes?|vault)\s+(?:say\s+)?(?:on|about|for|regarding)\s+"
+    r"(?P<topic>[^?!.\n]{2,80}?)\s+(?:with|to|against|and)\s+(?:the\s+)?"
+    r"(?:public|online|official|what\s+(?:the\s+)?(?:internet|web))", re.I)
+
+
+def compare_topic(text: str) -> str | None:
+    """The subject of "compare my notes on X with public information", or None."""
+    match = _COMPARE.search(str(text or ""))
+    if not match:
+        return None
+    topic = match.group("topic").strip()
+    return topic if topic and len(topic.split()) <= 10 else None
+
+
 def vault_prefetch_requests(text: str) -> list[dict]:
     """Obvious first vault queries for a library question, run before round 1.
 
@@ -179,6 +194,9 @@ def vault_prefetch_requests(text: str) -> list[dict]:
     not a simple library question. Never used for edits or web comparisons.
     """
     text = str(text or "").strip()
+    topic = compare_topic(text)
+    if topic:
+        return [{"query": topic, "top_k": 10}]  # the notes side of a notes-vs-public comparison
     if not text or _DEEP.search(text.replace("recommend", "")) or _PUBLIC_WEB_ONLY.search(text):
         return []
     from src.turn_contract import _PERSONAL_LIBRARY_RE

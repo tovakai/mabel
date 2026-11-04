@@ -26368,7 +26368,7 @@ async def _stream_agent_loop_impl(
     # results inject nothing and the model searches itself.
     if exact_approval is None and turn_contract is not None and not guide_only:
         try:
-            from src.agent_runtime.vault_lookup_budget import vault_prefetch_requests
+            from src.agent_runtime.vault_lookup_budget import vault_prefetch_requests, compare_topic
             _prefetch_plans = vault_prefetch_requests(_last_user)
             _prefetch_offered = {s["function"]["name"] for s in turn_contract.schemas()}
         except Exception:
@@ -26465,6 +26465,13 @@ async def _stream_agent_loop_impl(
                     "knowledge of these titles: do not verify every candidate. At most two media_lookup "
                     "calls if a detail is genuinely uncertain; no web_search, and do not search the vault "
                     "again unless something essential is missing."
+                )})
+            elif compare_topic(_last_user):
+                messages.append({"role": "system", "content": (
+                    f"The user's notes on {compare_topic(_last_user)!r} are above. For the public side, make ONE "
+                    "lookup by title: media_lookup (details, query = the title) for anime, manga, visual "
+                    "novels or fan wikis, otherwise one web_search. Then compare and answer; do not "
+                    "re-read the vault or guess ids."
                 )})
             elif _prefetch_empty_topics and len(_prefetch_calls) == len(_prefetch_empty_topics):
                 messages.append({"role": "system", "content": (

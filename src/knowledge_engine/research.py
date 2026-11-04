@@ -495,6 +495,14 @@ async def dispatch(content,ctx):
                     pass
     from .index import now
     result['completed_at']=now()
+    if result.get('findings'):
+        # Findings passed exact-quote checks against the current notes; say so,
+        # so the caller answers from them instead of re-reading the vault.
+        result['how_to_use']=('These findings were verified against the current note text (exact quotes). '
+            'Answer from them; read more only for the gaps listed in unresolved_questions.')
+    logger.info('[dottie] mode=%s status=%s findings=%d unresolved=%d notes=%d reads=%d',
+                worker_mode,result.get('status'),len(result.get('findings') or []),
+                len(result.get('unresolved_questions') or []),len(budget.notes),budget.calls)
     result['worker_execution']={
         'status':('failed' if worker_error else 'completed'),
         'phase':(worker_error['phase'] if worker_error else worker_phase),
