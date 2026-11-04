@@ -456,3 +456,16 @@ def test_verification_reads_do_not_spend_the_evidence_budget():
     assert budget.returned_bytes == 0 and budget.notes['n'] == 'x.md'
     budget.started -= budget.max_seconds + 10  # past the limit, within the verification grace
     budget.claim('vault_read_range', {'note_id': 'n', 'start_line': 1, 'end_line': 200})
+
+
+@pytest.mark.asyncio
+async def test_result_carries_the_note_texts_already_read(environment, monkeypatch):
+    from src.knowledge_engine import research as research_module
+    monkeypatch.setattr(research_module, 'DEFAULT_WORKER_MODE', 'evidence_first')
+
+    async def prose(role, messages, **kwargs):
+        return 'no json'
+    monkeypatch.setattr(roles, 'call', prose)
+    result = await dispatch(environment, {'research_objective': 'tolerans'})
+    assert any(s['rel_path'] == 'Projects/Lid.md' and 'tolerans' in s['text'] for s in result['sources'])
+    assert 'do not re-read' in result['how_to_use']

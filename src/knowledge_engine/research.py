@@ -230,6 +230,7 @@ async def _evidence_first(objective,root,ctx,child,contract,policy,budget,author
         source=json.loads(result['output'])
         evidence.append({k:source.get(k) for k in ('note_id','rel_path','start_line','end_line')}
                         |{'text':str(source.get('text') or '')[:_EVIDENCE_TEXT_CHARS]})
+    budget.source_texts=evidence  # returned to the caller even if synthesis fails
     if not evidence:
         raise ValueError('No vault notes matched the research objective')
     remaining=budget.max_seconds-(time.monotonic()-budget.started)
@@ -567,11 +568,24 @@ async def dispatch(content,ctx):
                     pass
     from .index import now
     result['completed_at']=now()
-    if result.get('findings'):
-        # Findings passed exact-quote checks against the current notes; say so,
-        # so the caller answers from them instead of re-reading the vault.
-        result['how_to_use']=('These findings were verified against the current note text (exact quotes). '
-            'Answer from them; read more only for the gaps listed in unresolved_questions.')
+    sources=[]
+    used=0
+    for item in getattr(budget,'source_texts',None) or []:
+        # The notes already read for this research, so the caller need not re-read them.
+        text=str(item.get('text') or '')
+        if used+len(text)>12000:
+            break
+        used+=len(text)
+        sources.append({'rel_path':item.get('rel_path'),'start_line':item.get('start_line'),
+                        'end_line':item.get('end_line'),'text':text})
+    if sources:
+        result['sources']=sources
+    if result.get('findings') or sources:
+        result['how_to_use']=(
+            ('The findings were verified against the current note text (exact quotes). ' if result.get('findings') else '')
+            + ('sources holds the text of every note this research read: answer from it and do not re-read '
+               'those notes; read further only for notes or gaps it does not cover.' if sources else
+               'Answer from them; read more only for the gaps listed in unresolved_questions.'))
     logger.info('[dottie] mode=%s status=%s findings=%d unresolved=%d notes=%d reads=%d',
                 worker_mode,result.get('status'),len(result.get('findings') or []),
                 len(result.get('unresolved_questions') or []),len(budget.notes),budget.calls)
