@@ -1226,6 +1226,33 @@ async def build_chat_context(
     # stale normal session id. Only the ephemeral incognito transcript is safe.
     messages = preface + (_incognito_messages(session_id) if incognito else sess.get_context_messages())
 
+    # Phase 00.5 episodic recall: a few verified snippets from earlier
+    # conversations, placed just before the latest user turn (like the date
+    # message below) so the stable prompt prefix and its cache are untouched.
+    if mem_enabled and not compare_mode and not incognito:
+        try:
+            from src.episodic_memory.chat_recall import (
+                log_recall, recall_enabled, recall_for_turn, recall_message,
+            )
+            if recall_enabled():
+                from core.database import SessionLocal
+                _db = SessionLocal()
+                try:
+                    _episodes = recall_for_turn(owner=user, session_id=session_id,
+                                                message=context_message, db=_db)
+                finally:
+                    _db.close()
+                _episode_msg = recall_message(_episodes)
+                if _episode_msg is not None:
+                    if messages and messages[-1].get("role") == "user":
+                        messages.insert(len(messages) - 1, _episode_msg)
+                    else:
+                        messages.append(_episode_msg)
+                    log_recall(_episodes, session_id=session_id)
+                    logger.info("[episodic] recalled %d episode(s) for this turn", len(_episodes))
+        except Exception:
+            logger.warning("[episodic] recall failed; continuing without it", exc_info=True)
+
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
     # system prompt. Its text changes every minute, and local OpenAI-compatible
@@ -1740,8 +1767,8 @@ def run_post_response_tasks(
     # extraction job. No foreground endpoint requests and no vault writes.
     # Pilot-only env gate, disabled until operator enables the experiment.
     if allow_episodic_capture and not compare_mode and not incognito and not no_memory:
-        import os
-        if os.getenv("MABEL_EPISODIC_CAPTURE_ENABLED", "").strip().lower() in {"1", "true", "yes"}:
+        from src.episodic_memory.chat_recall import capture_enabled
+        if capture_enabled():
             try:
                 from pathlib import Path
                 from src.constants import DATA_DIR
