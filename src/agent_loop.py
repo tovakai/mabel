@@ -26379,7 +26379,7 @@ async def _stream_agent_loop_impl(
         _prefetch_queue = [("vault_knowledge_search", plan) for plan in _prefetch_plans[:3]]
         _prefetch_empty_topics = []
         _prefetch_index = -1
-        while _prefetch_queue and _prefetch_index < 4:
+        while _prefetch_queue and _prefetch_index < 6:
             _prefetch_index += 1
             _prefetch_tool, _prefetch_plan = _prefetch_queue.pop(0)
             _prefetch_args = json.dumps(_prefetch_plan)
@@ -26437,6 +26437,16 @@ async def _stream_agent_loop_impl(
                 )), None)
                 if _exact is not None:
                     _prefetch_queue.append(("vault_read_range", {"note_id": _exact["note_id"], "start_line": 1, "end_line": 120}))
+                    # Small related notes (e.g. character pages linking to it) are
+                    # read next anyway: read up to three now.
+                    _related = []
+                    for _h in _hits:
+                        _nid = _h.get("note_id") if isinstance(_h, dict) else None
+                        if _nid and _nid != _exact["note_id"] and _nid not in _related:
+                            _related.append(_nid)
+                    if len(_related) <= 3:
+                        _prefetch_queue.extend(("vault_read_range", {"note_id": nid, "start_line": 1, "end_line": 60})
+                                               for nid in _related)
 
         if _prefetch_calls:
             _append_tool_results(
@@ -26447,8 +26457,10 @@ async def _stream_agent_loop_impl(
             if any(p.get("sort_by") for p in _prefetch_plans):
                 messages.append({"role": "system", "content": (
                     "The results above are the user's own library (their ratings or playtime, genres"
-                    + (", and the full list of titles they already have" if len(_prefetch_plans) > 1 else "")
-                    + "). Recommend titles that are NOT already in their library, "
+                    + (", and the full list of titles they already have" if any(p.get("fields") == [] for p in _prefetch_plans) else "")
+                    + "). Recommend titles that are NOT already in their library "
+                    "(to check one candidate, search the vault for its title; never page through the "
+                    "whole library), "
                     "explain each pick by pointing to what they rated highly. Answer now from your own "
                     "knowledge of these titles: do not verify every candidate. At most two media_lookup "
                     "calls if a detail is genuinely uncertain; no web_search, and do not search the vault "

@@ -64,6 +64,9 @@ async def execute(name, content, ctx):
                         value=args.pop(alias)
                         args.setdefault(canonical,value)
                 args.pop('sort_order',None)  # sort_by is always highest first
+                if args.get('mode','hybrid')!='metadata_only':
+                    # fields/sort_by only shape metadata listings; ignore them elsewhere.
+                    args.pop('fields',None); args.pop('sort_by',None)
                 # Clamp an oversized page to its bound rather than failing the
                 # model's call; the index itself keeps rejecting out-of-range pages.
                 if type(args.get('top_k')) is int:

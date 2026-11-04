@@ -187,8 +187,11 @@ def vault_prefetch_requests(text: str) -> list[dict]:
         if not kind:
             return []
         if kind == "Game":
+            # Few games are rated; playtime is the main taste signal, ratings a strong one.
             return [{"mode": "metadata_only", "property_filters": {"Type": kind, PLAYTIME_KEY: {"exists": True}},
-                     "fields": [PLAYTIME_KEY, "Genre"], "sort_by": PLAYTIME_KEY, "top_k": 25}]
+                     "fields": [PLAYTIME_KEY, "Genre"], "sort_by": PLAYTIME_KEY, "top_k": 25},
+                    {"mode": "metadata_only", "property_filters": {"Type": kind, RATING_KEY: {">=": 1}},
+                     "fields": [RATING_KEY, "Genre"], "sort_by": RATING_KEY, "top_k": 25}]
         return [
             {"mode": "metadata_only", "property_filters": {"Type": kind}, "fields": [RATING_KEY, "Genre", "Year"],
              "sort_by": RATING_KEY, "top_k": 40},

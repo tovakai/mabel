@@ -175,3 +175,27 @@ def test_empty_title_lookup_is_injected_with_a_not_found_hint(monkeypatch, tmp_p
     first = json.dumps(seen[0]["messages"])
     assert "has no note matching 'Cowboy Bebop'" in first
     assert "prefetch_vault_0" in first, "the empty result itself is shown to the model"
+
+
+def test_small_related_notes_are_read_with_the_exact_match(monkeypatch, tmp_path):
+    hit = json.dumps({"matches": [
+        {"note_id": "n-lil", "title": "Lessons In Love", "rel_path": "Library/Games/Lessons In Love.md"},
+        {"note_id": "n-sensei", "title": "Sensei"}, {"note_id": "n-maya", "title": "Maya Makinami"},
+        {"note_id": "n-maya", "title": "Maya Makinami"},  # second chunk of the same note
+    ]})
+
+    def handler(block):
+        if block.tool_type == "vault_read_range":
+            return {"output": json.dumps({"text": "body of " + json.loads(block.content)["note_id"]}), "exit_code": 0}
+        return {"output": hit, "exit_code": 0}
+
+    _, seen, executed = _run(monkeypatch, tmp_path, capabilities={"workspace_read"}, search_result=handler)
+    reads = [json.loads(args)["note_id"] for tool, args in executed if tool == "vault_read_range"]
+    assert reads == ["n-lil", "n-sensei", "n-maya"]
+    assert "body of n-maya" in json.dumps(seen[0]["messages"])
+
+
+def test_game_recommendations_also_fetch_rated_games():
+    plans = vault_prefetch_requests("Recommend me a game based on what I've been playing.")
+    assert [p["sort_by"] for p in plans] == ["Playtime", "My Rating"]
+    assert plans[1]["property_filters"]["My Rating"] == {">=": 1}
