@@ -26358,6 +26358,70 @@ async def _stream_agent_loop_impl(
         from src.agent_runtime.edit_exploration_budget import EditExplorationBudget
         _edit_exploration_budget = EditExplorationBudget()
 
+    # "What do my notes say about X?": run the obvious first index search
+    # before round 1 instead of spending a full model round deciding to. Same
+    # executor, authority and policy as a model call; on any failure the
+    # model simply searches itself.
+    if (
+        exact_approval is None
+        and _vault_lookup_budget is not None
+        and turn_contract is not None
+        and not guide_only
+    ):
+        try:
+            from src.agent_runtime.vault_lookup_budget import knowledge_question_topic
+            _prefetch_topic = knowledge_question_topic(_last_user)
+            _prefetch_offered = {s["function"]["name"] for s in turn_contract.schemas()}
+        except Exception:
+            _prefetch_topic, _prefetch_offered = None, set()
+        if _prefetch_topic and "vault_knowledge_search" in _prefetch_offered:
+            _prefetch_args = json.dumps({"query": _prefetch_topic, "top_k": 10})
+            _prefetch_block = ToolBlock("vault_knowledge_search", _prefetch_args)
+            yield "data: " + json.dumps({
+                "type": "tool_start", "tool": "vault_knowledge_search",
+                "command": _prefetch_args, "full_command": _prefetch_args, "round": 0,
+            }) + "\n\n"
+            try:
+                _prefetch_desc, _prefetch_result = await execute_tool_block(
+                    _prefetch_block, session_id=session_id,
+                    disabled_tools=set(disabled_tools) | _caller_hard_denials,
+                    tool_policy=tool_policy, owner=owner, workspace=workspace,
+                    security_context=run_security,
+                    client_runtime_context=client_runtime_context,
+                )
+            except Exception:
+                logger.warning("[agent] vault prefetch failed", exc_info=True)
+                _prefetch_desc, _prefetch_result = "vault_knowledge_search", {"exit_code": 1, "error": "prefetch failed"}
+            _prefetch_output = str(_prefetch_result.get("output") or _prefetch_result.get("error") or "")
+            yield "data: " + json.dumps({
+                "type": "tool_output", "tool": "vault_knowledge_search", "command": _prefetch_args,
+                "output": _truncate(_prefetch_output), "exit_code": _prefetch_result.get("exit_code"),
+            }) + "\n\n"
+            if tool_result_is_successful(_prefetch_result) and '"matches": []' not in _prefetch_output:
+                total_tool_calls += 1
+                _prefetch_text = format_tool_result(_prefetch_desc, _prefetch_result)
+                _prefetch_record = {
+                    "tool_name": "vault_knowledge_search", "content": _prefetch_args,
+                    "result": _prefetch_result, "text": _prefetch_text,
+                }
+                _append_tool_results(
+                    messages, "",
+                    [{"id": "prefetch_vault_search", "name": "vault_knowledge_search", "arguments": _prefetch_args}],
+                    [_prefetch_text], [_prefetch_text], True, 0,
+                    tool_result_records=[_prefetch_record],
+                    include_reasoning_content=False, allow_visual_evidence=False,
+                )
+                run_security.observe_tool_result("vault_knowledge_search", _prefetch_result, _prefetch_args)
+                _vault_lookup_budget.observe([_prefetch_record])
+                tool_events.append({
+                    "round": 0, "tool": "vault_knowledge_search", "desc": _prefetch_desc,
+                    "command": _prefetch_args, "output": _truncate(_prefetch_output),
+                    "exit_code": _prefetch_result.get("exit_code"),
+                })
+                # Round 1 normally reuses a request built before this point.
+                _initial_route_request_messages = _trim_route_request_messages(endpoint_url, model, messages)
+                logger.info("[agent] vault prefetch for %r injected before round 1", _prefetch_topic)
+
     for round_num in (
         count(1) if _round_limit is None else range(1, _round_limit + 1)
     ):

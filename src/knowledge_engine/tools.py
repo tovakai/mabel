@@ -90,8 +90,11 @@ def handler(name):
 def schemas():
     common={'path':{'type':'string','description':'Optional directory within the selected workspace; default is its sealed root.'}}
     def make(name,description,properties,required=()):
+        # A note ID already locates the note; a directory field only invited
+        # models to pass the note's file path there.
+        scoped = {} if name in {'vault_read_range','vault_traverse_graph'} else common
         return {'type':'function','function':{'name':name,'description':description,
-            'parameters':{'type':'object','additionalProperties':False,'properties':{**common,**properties},'required':list(required)}}}
+            'parameters':{'type':'object','additionalProperties':False,'properties':{**scoped,**properties},'required':list(required)}}}
     result = [
         make('vault_knowledge_search','Search Obsidian Markdown knowledge (not passwords). Lexical or typed metadata filters; returns source lines and bounded explicit graph context. Markdown remains unchanged.',
             {'query':{'type':'string','maxLength':500},'mode':{'type':'string','enum':['lexical','metadata_only','semantic','hybrid']},

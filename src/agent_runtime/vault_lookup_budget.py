@@ -101,3 +101,27 @@ class VaultLookupBudget:
         if reason:
             self.stopped = True
         return reason
+
+
+_TOPIC = re.compile(
+    r"\b(?:about|on|regarding|concerning|for)\s+(?:the\s+)?(?P<topic>[^?!.\n]{2,120}?)\s*[?!.]*\s*$",
+    re.I,
+)
+
+
+def knowledge_question_topic(text: str) -> str | None:
+    """The subject of a simple "what do my notes say about X" question, or None.
+
+    Used only to run the obvious first index search before the model's first
+    round; anything unclear returns None and the model searches as before.
+    """
+    text = str(text or "").strip()
+    if not (_KNOWLEDGE_QUESTION.search(text) and simple_vault_lookup(text)):
+        return None
+    match = _TOPIC.search(text)
+    if not match:
+        return None
+    topic = re.sub(r"\s+in\s+my\s+(?:notes?|vault|obsidian)\s*$", "", match.group("topic").strip(), flags=re.I)
+    if not re.search(r"\w", topic) or len(topic.split()) > 12:
+        return None
+    return topic
