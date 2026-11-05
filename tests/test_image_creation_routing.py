@@ -152,7 +152,7 @@ async def test_generation_dispatch_uses_owner_aware_backend(monkeypatch, exit_co
     assert journal.actions[1].execution_id is not None
     assert journal.actions[1].outcome['authoritative'] is (exit_code == 0)
     assert result['image_id'] == 'test'
-    assert calls == [(block.content, {'owner': 'pewds', 'session_id': 'fixture'})]
+    assert calls == [(block.content, {'owner': 'pewds', 'session_id': 'fixture', 'progress_cb': None})]
 
 
 @pytest.mark.asyncio

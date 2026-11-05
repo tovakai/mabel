@@ -105,7 +105,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            resp = await client.post(images_url, json=payload, headers=headers)
+            from src import gpu_swap
+            _swap_service = gpu_swap.manages(images_url)
+            if _swap_service:
+                # Local image model shares the GPU with Mabel's model (src/gpu_swap.py).
+                async with gpu_swap.room(_swap_service):
+                    resp = await client.post(images_url, json=payload, headers=headers)
+            else:
+                resp = await client.post(images_url, json=payload, headers=headers)
 
             if resp.status_code != 200:
                 error_text = resp.text[:500]

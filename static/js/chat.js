@@ -2665,6 +2665,10 @@ import { invalidateSettings } from './appConfig.js';
 	        fd.set('plan_mode', 'false');
 	      }
       fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
+      try {
+        const _imageMode = Storage.loadToggleState().imageMode;
+        fd.append('image_mode', ['auto', 'on', 'off'].includes(_imageMode) ? _imageMode : 'auto');
+      } catch (_) { fd.append('image_mode', 'auto'); }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');

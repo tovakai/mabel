@@ -1183,6 +1183,14 @@ async def _startup_event():
     # GC tasks created with `asyncio.create_task(...)` before they finish.
     _startup_tasks: list[asyncio.Task] = getattr(app.state, "_startup_tasks", [])
     app.state._startup_tasks = _startup_tasks
+    # A GPU swap (image generation) interrupted by a crash leaves Mabel's model stopped:
+    # stop the leftover service and bring her back, off the startup path.
+    try:
+        from src import gpu_swap as _gpu_swap
+        if _gpu_swap.active():
+            _startup_tasks.append(asyncio.create_task(asyncio.to_thread(_gpu_swap.recover)))
+    except Exception as e:
+        logger.warning(f"GPU swap recovery skipped: {e}")
     from src.background_tool_jobs import BackgroundToolJobs
     from routes.chat_routes import _active_streams
     from src import agent_runs

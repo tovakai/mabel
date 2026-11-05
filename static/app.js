@@ -1562,6 +1562,12 @@ function initializeEventListeners() {
       // holds uploads and past images too, so it stays visible regardless;
       // use the `gallery` feature flag to hide the Gallery entirely.
       // Hide TTS overflow button when TTS is disabled or no provider configured
+      const overflowImageMode = el('overflow-image-mode-btn');
+      if (overflowImageMode) {
+        const imagesOff = settings.image_gen_enabled === false;
+        overflowImageMode.hidden = imagesOff;
+        overflowImageMode.style.display = imagesOff ? 'none' : '';
+      }
       const ttsOff = settings.tts_enabled === false || !settings.tts_provider || settings.tts_provider === 'disabled';
       const overflowTts = el('overflow-tts-btn');
       if (overflowTts) {
@@ -2518,6 +2524,46 @@ function initializeEventListeners() {
       ttsBtn.classList.toggle('active', isActive);
       if (window.aiTTSManager) window.aiTTSManager.autoPlay = isActive;
       const s = loadToggleState(); s.ttsMode = isActive; saveToggleState(s);
+      updatePlusDot();
+    });
+  })();
+
+
+  // Image Mode: auto → on → off. "on" turns every message into an image prompt
+  // (sent as image_mode; the server enforces it), "off" disables image tools.
+  (function initImageModeToggle() {
+    const btn = document.getElementById('overflow-image-mode-btn');
+    const label = document.getElementById('overflow-image-mode-label');
+    if (!btn || !label) return;
+    const MODES = ['auto', 'on', 'off'];
+    const TITLES = {
+      auto: 'Images: Auto — she generates an image when you ask for one',
+      on: 'Images: On — every message is an image prompt',
+      off: 'Images: Off — she never generates images',
+    };
+    const input = document.getElementById('message');
+    let basePlaceholder = input ? input.getAttribute('placeholder') : null;
+    function apply(mode) {
+      label.textContent = `Images: ${mode[0].toUpperCase()}${mode.slice(1)}`;
+      btn.title = TITLES[mode];
+      btn.classList.toggle('active', mode === 'on');
+      if (input) {
+        if (mode === 'on') {
+          const current = input.getAttribute('placeholder');
+          if (current && current !== 'Describe an image…') basePlaceholder = current;
+          input.setAttribute('placeholder', 'Describe an image…');
+        } else if (basePlaceholder != null && input.getAttribute('placeholder') === 'Describe an image…') {
+          input.setAttribute('placeholder', basePlaceholder);
+        }
+      }
+    }
+    let mode = 'auto';
+    try { const st = loadToggleState(); if (MODES.includes(st.imageMode)) mode = st.imageMode; } catch (e) {}
+    apply(mode);
+    btn.addEventListener('click', () => {
+      mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+      apply(mode);
+      try { const s = loadToggleState(); s.imageMode = mode; saveToggleState(s); } catch (e) {}
       updatePlusDot();
     });
   })();

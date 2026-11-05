@@ -2417,7 +2417,8 @@ async def _execute_tool_block_impl(
     if tool == "generate_image":
         from src.ai_interaction import do_generate_image
         desc = "generate_image"
-        result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner))
+        result = await dispatched(do_generate_image(content, session_id=session_id, owner=owner,
+                                                              progress_cb=progress_cb))
     elif (tool in NATIVE_FILESYSTEM_TOOLS
           and (active_resource_operation() is not None or tool != "apply_patch"
                or not _tui_host_bridge_patch_url(client_runtime_context))):

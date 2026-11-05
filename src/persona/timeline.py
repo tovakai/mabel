@@ -159,6 +159,14 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         pass
 
     try:
+        dreams = json.loads((data_dir / "persona" / "dreams.json").read_text())
+        for d in dreams.get("history") or []:
+            items.append(_item(d.get("at"), "dream", f"Dreamt about “{d.get('title', 'something')}”",
+                               d.get("first_line", ""), d.get("note")))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    try:
         import yaml
         for path in sorted((Path(__file__).resolve().parents[2] / "journal" / "anthon").glob("*.md"))[-14:]:
             text = path.read_text(encoding="utf-8")

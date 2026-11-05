@@ -50,6 +50,8 @@ and calendar). Everything Odysseus does still works; see
 | **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles + sites, places and steps from Home Assistant) and your journal. Every morning she writes her own account of your day. |
 | **Memory** | Moments from conversations and from your days become memory candidates. You decide what's kept; kept memories are verified against their source every time they're recalled. |
 | **Self-reflection** | Every few days she looks back at her own week and writes about patterns in herself, how she feels, and questions about what she is. Those questions feed her research. |
+| **Images** | She can generate images (a local SDXL model by default). On a single GPU her own model steps aside while it renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off (never). |
+| **Visual dreams** | At most once a day, while you're away, one of Dottie's notes sinks into a dream: she writes a few broken dream fragments, they become a picture, and on waking she looks at it and writes about it. Her self-reflection reads her recent dreams. |
 | **Timeline** | One feed of everything above, so you can see what she's been up to. |
 
 ---
@@ -105,6 +107,7 @@ and calendar). Everything Odysseus does still works; see
 | Daily | Stale-framing check of the notes about Mabel herself | Dottie |
 | 06:00 | Her account of your day (06:00 to 06:00, night-owl friendly) | foreground |
 | Every 3 days | Self-reflection | foreground |
+| Once a day, when you've been away 20 min | A visual dream (fragments, image via the GPU swap, her entry) | foreground + image model |
 | On request | Scout (pre-gathers sources), "Go research something", "Reflect now", "Let her consider now" | varies |
 
 Nothing that needs the foreground model starts while you're chatting or
@@ -216,6 +219,32 @@ Nothing is recorded while the device is idle.
 Daily notes in your source vault's journal folder (default
 `daily life of Anthon`; setting `lifelog_journal_folder`) are read for her
 daily account. They're never used for her research or Dottie's patterns.
+
+### Image generation (and dreams)
+
+Any OpenAI-compatible `/v1/images/generations` endpoint works (Admin → Image Generation).
+For a local model on the same GPU as her chat model, `scripts/diffusion_server.py` plus
+the GPU swap does the juggling:
+
+1. Make a venv with CUDA torch, `diffusers`, `transformers`, `accelerate`, `fastapi`, `uvicorn`
+   (outside the repo, e.g. `~/.local/share/mabel/diffusion/venv`), and put a diffusers model folder next to it.
+2. Describe the swap in `data/gpu_swap.json`: the Strata profile to step aside and the command that starts
+   the image server (any free port; `--prompt-suffix` adds a model's trigger phrase, `--pixelate N`
+   snaps output to a pixel grid):
+   ```json
+   {"strata_profile": "launch-your-profile",
+    "services": {"image": {"url": "http://127.0.0.1:8110", "ready_path": "/v1/models", "ready_timeout": 300,
+      "command": ["<venv>/bin/python", "scripts/diffusion_server.py", "--model", "<model dir>", "--port", "8110",
+                  "--dtype", "float16", "--steps", "25", "--guidance-scale", "7"]}}}
+   ```
+3. Register the endpoint as an image endpoint with model refresh off and the model id pinned, set it as the
+   image model, and turn image generation on.
+
+A request then stops her model (`strata runtime stop`), starts the image server, renders, stops it and
+starts her again (about a minute and a half on a 12 GB card). Bringing her back always runs, and a crash
+mid-swap is repaired on the next app start. Dreams count prompt tokens with CLIP's tokenizer if
+`~/.local/share/mabel/diffusion/models/clip-tokenizer/tokenizer.json` exists (setting `dream_clip_tokenizer`),
+otherwise a cautious estimate; `dreams_enabled` switches them off.
 
 ---
 
@@ -331,6 +360,8 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `src/curiosity/` | Candidates, backlog, research sessions, citation verification, held messages |
 | `src/subconscious/` | Dottie's inbox and loops (archivist, scout, dreamer, stale framing, live facts) |
 | `src/heartbeat/` | Availability signals, wake policy, sleep inhibitor, daemon |
+| `src/gpu_swap.py`, `scripts/diffusion_server.py` | Stepping her model aside for a GPU service; the local image server |
+| `src/persona/dreams.py` | Visual dreams |
 | `src/initiative/` | Outreach (candidates, gates, her review, push, replies) |
 | `src/lifelog/` | Store, summaries, Home Assistant poller, daily account |
 | `src/episodic_memory/` | Memory candidates, verified promotion and recall |
@@ -339,7 +370,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `scripts/lifelog_collector.py`, `scripts/idle_signal.sh` | Device collector, idle hook |
 | `identity/` | Her identity, modes, moods, standing curiosities (private vault) |
 | `knowledge/research/` | Her research articles (private vault) |
-| `journal/anthon/`, `journal/self/`, `journal/curiosity/` | Her accounts of your days, reflections, research journal (private vault) |
+| `journal/anthon/`, `journal/self/`, `journal/curiosity/`, `journal/dreams/` | Her accounts of your days, reflections, research journal, dreams (private vault) |
 | `data/` | Local state: settings, inbox, life log, ledger, queues |
 
 ---
@@ -380,6 +411,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | 05: heartbeat and available-GPU autonomy | ✅ |
 | 06: social initiative (texting your phone) | ✅ |
 | Life log and daily account; self-reflection | ✅ |
+| Image generation (GPU swap), Image Mode, visual dreams | ✅ |
 | 07: self-evolving modules (she proposes and tests her own moods and modes) | ⏸ paused; reflections already collect her ideas |
 
 ---

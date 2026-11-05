@@ -155,7 +155,12 @@ def _resolve_model(spec: str, owner: Optional[str] = None, model_type: Optional[
                 endpoint_reachable = False
                 try:
                     models_url = build_models_url(base)
-                    if models_url:
+                    from src import gpu_swap as _gpu_swap
+                    if _gpu_swap.manages(base):
+                        # Only running during a GPU swap: trust the registered ids.
+                        endpoint_reachable = True
+                        model_ids = _json_list(ep.pinned_models) + _json_list(ep.cached_models)
+                    elif models_url:
                         r = httpx.get(models_url, headers=headers, timeout=5)
                         r.raise_for_status()
                         endpoint_reachable = True
@@ -1155,7 +1160,30 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+_SWAP_PHASE_LABELS = {
+    "stepping_aside": "Stepping aside to make room on the GPU…",
+    "loading": "Loading the image model…",
+    "working": "Painting…",
+    "coming_back": "Coming back…",
+}
+
+
+async def _swap_progress_ticker(progress_cb, interval: float = 2.0) -> None:
+    """While a GPU swap runs, report its phase every few seconds (also keeps the chat stream alive)."""
+    from src import gpu_swap
+    started = time.time()
+    while True:
+        phase = (gpu_swap.active() or {}).get("phase", "stepping_aside")
+        try:
+            await progress_cb({"tool": "generate_image", "message": _SWAP_PHASE_LABELS.get(phase, "Generating image…"),
+                               "elapsed": int(time.time() - started), "phase": phase})
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
+
+
+async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None,
+                            progress_cb=None) -> Dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
@@ -1319,8 +1347,19 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     try:
         # GPT image models can take 30-120s+ depending on quality
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            from src import model_roles
-            if model_roles.configured('image', owner or ''):
+            from src import model_roles, gpu_swap
+            _swap_service = gpu_swap.manages(images_url)
+            if _swap_service:
+                # The local image model shares the GPU with Mabel's own model: she steps
+                # aside while it renders and comes back afterwards (src/gpu_swap.py).
+                _ticker = asyncio.create_task(_swap_progress_ticker(progress_cb)) if progress_cb else None
+                try:
+                    async with gpu_swap.room(_swap_service):
+                        resp = await client.post(images_url, json=payload, headers=headers)
+                finally:
+                    if _ticker:
+                        _ticker.cancel()
+            elif model_roles.configured('image', owner or ''):
                 from src.model_role_adapters import request as role_request
                 resp, used = await role_request('image',payload,suffix='/images/generations',owner=owner or '',
                     primary_route=(images_url,model_id,headers))

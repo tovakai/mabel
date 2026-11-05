@@ -84,7 +84,29 @@ def gather(*, data_dir: Path, mabel_vault: Path = _REPO, now: datetime | None = 
                 lines.append(f"- your take in “{art['path'].stem}”: {take}")
     except Exception:
         pass
+    lines.extend(_recent_dreams(mabel_vault, now))
     return "\n".join(lines)
+
+
+def _recent_dreams(mabel_vault: Path, now: datetime, limit: int = 4) -> list[str]:
+    """Her dreams from the lookback window: the dream in words and the start of what she wrote on waking."""
+    out = []
+    cutoff = (now - timedelta(days=LOOKBACK_DAYS)).date().isoformat()
+    for path in sorted(mabel_vault.joinpath("journal", "dreams").glob("*.md"))[-limit:]:
+        if path.stem < cutoff:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            meta = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")) if text.startswith("---\n") else {}
+            body = text.split("\n---\n", 1)[-1]
+            entry = body.split("> [!note]", 1)[0]
+            prose = " ".join(l.strip() for l in entry.splitlines()
+                             if l.strip() and not l.startswith(("#", "![[")))
+            words = " / ".join((meta or {}).get("fragments") or [])[:200] or (meta or {}).get("prompt", "")[:200]
+            out.append(f"- you dreamt on {path.stem}: “{words}”; on waking you wrote: {prose[:300]}")
+        except Exception:
+            continue
+    return out
 
 
 async def reflect(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_vault: Path = _REPO,
@@ -107,6 +129,8 @@ async def reflect(*, owner: str = "tovakai", data_dir: Path | None = None, mabel
     prompt = f"""Take some time to reflect on yourself. Here's your own record from the past week:
 
 {record}
+
+If you dreamt this week, your dreams are in the record too; they're allowed to mean something or nothing.
 
 Your current moods and modes: {', '.join(modules) or 'unknown'}.
 

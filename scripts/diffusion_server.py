@@ -246,9 +246,28 @@ def _pipeline_call_kwargs(**kwargs) -> dict:
         return {k: v for k, v in kwargs.items() if v is not None}
 
 
+def _with_prompt_suffix(prompt: str) -> str:
+    """Append the model's trigger phrase (e.g. ". in pixel art style") unless it's already there."""
+    suffix = (getattr(_args, "prompt_suffix", "") or "").strip()
+    if suffix and suffix.lower().lstrip(". ") not in (prompt or "").lower():
+        return f"{(prompt or '').rstrip(' .')}{suffix if suffix.startswith(('.', ',')) else ' ' + suffix}"
+    return prompt
+
+
+def _pixelate(img):
+    """Snap to a real pixel grid: shrink N× with nearest neighbour, then scale back up N×."""
+    factor = int(getattr(_args, "pixelate", 0) or 0)
+    if factor < 2:
+        return img
+    from PIL import Image as _PILPix
+    small = img.resize((max(1, img.width // factor), max(1, img.height // factor)), _PILPix.NEAREST)
+    return small.resize((small.width * factor, small.height * factor), _PILPix.NEAREST)
+
+
 def _image_response(images) -> dict:
     data = []
     for img in images:
+        img = _pixelate(img)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         data.append({"b64_json": base64.b64encode(buf.getvalue()).decode()})
@@ -692,6 +711,7 @@ def generate_image(req: ImageRequest):
     if _pipe is None:
         return {"error": "Model not loaded"}
 
+    req.prompt = _with_prompt_suffix(req.prompt)
     width, height = _parse_size(req.size)
     steps = _quality_steps(req.quality)
     request_id = _start_progress(req.request_id, steps * max(1, int(req.n or 1)), req.prompt, "generation")
@@ -1476,6 +1496,8 @@ if __name__ == "__main__":
     parser.add_argument("--guidance-scale", type=float, default=3.5, help="Default classifier-free guidance scale")
     parser.add_argument("--negative-prompt", default="", help="Default negative prompt for pipelines that support it")
     parser.add_argument("--single-file-config", default="", help="Base Diffusers repo/path for single-file checkpoints that need missing components. Comma-separated values are tried in order.")
+    parser.add_argument("--prompt-suffix", default="", help="Trigger phrase appended to every prompt (e.g. '. in pixel art style')")
+    parser.add_argument("--pixelate", type=int, default=0, help="Snap output to a pixel grid N px wide (nearest-neighbour down N×, then up N×)")
     parser.add_argument("--width", type=int, default=1024, help="Default output width")
     parser.add_argument("--height", type=int, default=1024, help="Default output height")
     parser.add_argument("--cpu-offload", action="store_true", help="Enable model CPU offload")

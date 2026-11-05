@@ -148,6 +148,7 @@ def test_heartbeat_wakes_yields_resumes_and_finishes(tmp_path, monkeypatch):
     monkeypatch.setattr(power, "suspend_if_overdue",
                         lambda minutes, idle_at_start=None, run=None: suspended.append((minutes, idle_at_start)))
     monkeypatch.setattr(daemon, "_ledger", lambda kind, sid, decision, code: ledger.append((kind, sid, decision)))
+    monkeypatch.setattr(daemon, "_maybe_start_dream", lambda *a, **k: None)
     finished = {"cs-1": False}
     monkeypatch.setattr(runner, "session_finished", lambda sid: finished.get(sid, False))
 
@@ -209,3 +210,37 @@ def test_presence_via_home_assistant_integration(monkeypatch):
     assert signals.read_presence(get) == ("away", "person.anthon")
     monkeypatch.setattr("src.integrations.load_integrations", lambda: [])
     assert signals.read_presence(get) == ("not_configured", "person.anthon")
+
+
+def test_heartbeat_dreams_only_when_research_may_not_wake(monkeypatch):
+    from src.heartbeat import daemon
+    from src.persona import dreams
+    started = []
+    monkeypatch.setattr(daemon, "_maybe_start_dream", lambda sig, now, research_running: started.append(now))
+    monkeypatch.setattr(daemon, "load_state", lambda: {})
+    monkeypatch.setattr(dreams, "running", lambda: False)
+
+    def decide_with(allow):
+        monkeypatch.setattr(policy, "decide", lambda *a, **k: policy.Decision(allow, ["test"]))
+
+    async def run(allow):
+        decide_with(allow)
+        from src.curiosity import runner
+        monkeypatch.setattr(runner, "is_autonomous_running", lambda: False)
+        monkeypatch.setattr(runner, "status", lambda: {"running": False})
+        monkeypatch.setattr(runner, "start", lambda **k: (_ for _ in ()).throw(runner.AlreadyRunning()))
+        monkeypatch.setattr(power, "hold_sleep", lambda run=None: True)
+        monkeypatch.setattr(power, "release_sleep", lambda run=None: None)
+        await daemon.tick(now=NOW, read=lambda: _sig())
+    asyncio.run(run(True))
+    assert started == []
+    asyncio.run(run(False))
+    assert started == [NOW]
+
+
+def test_heartbeat_decides_nothing_while_dreaming(monkeypatch):
+    from src.heartbeat import daemon
+    from src.persona import dreams
+    monkeypatch.setattr(dreams, "running", lambda: True)
+    out = asyncio.run(daemon.tick(now=NOW, read=lambda: (_ for _ in ()).throw(AssertionError("read signals"))))
+    assert out["dreaming"] is True

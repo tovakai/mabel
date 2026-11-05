@@ -1961,6 +1961,22 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
     return wanted in {str(item).strip() for item in models}
 
 
+IMAGE_MODES = ("auto", "on", "off")
+
+
+def _image_mode_from_request(form_data, body) -> str:
+    """The chat menu's Image Mode for this turn: auto (default), on or off."""
+    value = None
+    try:
+        value = form_data.get("image_mode") if form_data is not None else None
+    except Exception:
+        value = None
+    if value is None and isinstance(body, dict):
+        value = body.get("image_mode")
+    value = str(value or "auto").strip().lower()
+    return value if value in IMAGE_MODES else "auto"
+
+
 def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     """Whether this chat session should bypass text chat and generate images.
 
@@ -3288,6 +3304,13 @@ def setup_chat_routes(
                 logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
         image_generation_session = _is_image_generation_session(sess, owner=effective_user(request))
+        # Image Mode (chat menu): on = this message is an image prompt, straight to the
+        # image model; off = no image tools at all; auto = her normal judgement.
+        image_mode = _image_mode_from_request(form_data, body)
+        forced_image_turn = (image_mode == "on" and not image_generation_session
+                             and not tool_approval_continuation and bool((message or "").strip()))
+        if forced_image_turn:
+            image_generation_session = True
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         # Obsidian Companion sends no_skills as a per-turn form field. Suppress
         # skills-index context for that turn without changing tool permissions.
@@ -3628,6 +3651,8 @@ def setup_chat_routes(
         # explicitly enable it.
         if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
+        if image_mode == "off":
+            disabled_tools.update({"generate_image", "edit_image"})
         _rt.checkpoint_denials("ui_toggle_bash_off", disabled_tools)
         _model_lower = str(getattr(sess, "model", "") or "").lower()
         _qwen_tool_router_selected = (
@@ -4562,7 +4587,11 @@ def setup_chat_routes(
                         progress_callback=_image_progress_callback,
                     ))
                 else:
-                    _img_task = asyncio.create_task(do_generate_image(f"{_user_msg}\n{sess.model}\n512x512", session, owner=_user))
+                    # A forced turn (Image Mode on) runs on her chat model's session, so let the
+                    # configured image model and a full-size canvas apply instead.
+                    _img_spec = json.dumps({"prompt": _user_msg, "size": "1024x1024"}) if forced_image_turn else f"{_user_msg}\n{sess.model}\n512x512"
+                    _img_task = asyncio.create_task(do_generate_image(_img_spec, session, owner=_user,
+                                                                      progress_cb=_image_progress_callback))
                 _img_started = time.time()
                 _img_tick = 0
                 while not _img_task.done():
@@ -4575,6 +4604,8 @@ def setup_chat_routes(
                     _label = "Editing image" if _image_upload else "Generating image"
                     yield ": image generation still running\n\n"
                     _progress_data = {"type": "tool_progress", "tool": _image_tool_name, "message": f"{_label}… {_elapsed}s", "elapsed": _elapsed, "tick": _img_tick}
+                    if isinstance(_progress, dict) and _progress.get("message") and not _progress.get("total"):
+                        _progress_data["message"] = _progress["message"]
                     if isinstance(_progress, dict) and _progress.get("total"):
                         _step = int(_progress.get("step") or 0)
                         _total = int(_progress.get("total") or 0)
