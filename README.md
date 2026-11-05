@@ -47,7 +47,7 @@ and calendar). Everything Odysseus does still works; see
 | **Dottie, her subconscious** | A small background model that tidies (vault typos, stale notes about the stack), scouts sources ahead of time, and notices themes you keep talking about. Suggestions go to a typed inbox; Mabel and you can keep or reject them (a rejected one cools off for a week before it may come back). |
 | **Autonomy** | When you're away from the PC and the GPU is free, she wakes up and researches on her own. She pauses the moment you're back, a chat starts or a game needs the GPU, and picks up where she left off later. |
 | **Reaching out** | Occasionally she texts your phone about something she genuinely wants to share. Choosing silence counts as a good outcome. Tapping the notification opens the chat. |
-| **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles + sites, places and steps from Home Assistant) and your journal. Every morning she writes her own account of your day. |
+| **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles + sites, places and steps from Home Assistant, WhatsApp/Messenger/Discord message previews from your phone's notifications) and your journal. Every morning she writes her own account of your day. |
 | **Memory** | Moments from conversations and from your days become memory candidates. You decide what's kept; kept memories are verified against their source every time they're recalled. |
 | **Self-reflection** | Every few days she looks back at her own week and writes about patterns in herself, how she feels, and questions about what she is. Those questions feed her research. |
 | **Images** | She can generate images (a local SDXL model by default). On a single GPU her own model steps aside while it renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off (never). |
@@ -190,6 +190,13 @@ the PC doesn't suspend mid-thought, then releases it.
    Detected activity, Last used app, Geocoded location, Media session.
 5. Push notifications use your phone's `notify.mobile_app_*` service,
    discovered automatically (or set `initiative_notify_service`).
+6. Messages (optional, Android): enable the Companion app's **Last notification**
+   sensor (it asks for notification access) and add WhatsApp, Messenger and Discord
+   to its allow list. Every notification from them (app, chat/sender, preview text)
+   goes into the life log and her daily account; her poller reads the sensor's
+   history, so none are missed between polls. Other apps can be added with
+   `lifelog_message_apps` (`{"package.name": "Label"}`), and chats can be skipped
+   with `lifelog_exclude_chats`.
 
 ### Opening chats from your phone
 

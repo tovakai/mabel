@@ -6,7 +6,8 @@ id and keep extending the end while it continues, so the server upserts.
 
 Stored only in ``data/lifelog/lifelog.sqlite`` on this PC; raw spans are
 pruned after the retention period (daily summaries live in Mabel's vault).
-Browsing is kept as page title + site, never full URLs.
+Browsing is kept as page title + site, never full URLs. Messages (WhatsApp, Messenger,
+Discord) are the phone's notification previews: app, chat/sender, preview text, time.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-KINDS = ("focus", "browse", "game", "media", "idle", "place", "steps", "phone_app", "activity", "sleep")
+KINDS = ("focus", "browse", "game", "media", "idle", "place", "steps", "phone_app", "activity", "sleep", "message")
 MAX_BATCH = 500
 TEXT_LIMIT = 300
 

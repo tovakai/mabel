@@ -2,7 +2,7 @@
 
 Covers the night-owl day that just ended (06:00 -> 06:00 local). Inputs are
 the deterministic summary of the life log (devices, apps, games, browsing as
-page titles, media, places, steps) and his journal notes from that day in the
+page titles, media, places, steps, message previews) and his journal notes from that day in the
 source vault (read-only). Output: ``journal/anthon/YYYY-MM-DD.md`` in Mabel's
 own vault, with a factual timeline, what stood out to her, and things she's
 curious about (which her outreach can draw on).
@@ -81,6 +81,11 @@ def _facts(summary: dict) -> str:
         lines.append(f"- place: {p['place']} {p['from']}-{p['to']}")
     if summary["steps"]:
         lines.append(f"- steps: {summary['steps']}")
+    for c in summary.get("messages") or []:
+        when = c["from"] if c["from"] == c["to"] else f"{c['from']}-{c['to']}"
+        previews = " | ".join(f"“{p}”" for p in c["previews"])
+        lines.append(f"- messages on {c['app']} with/in {c['chat']}: {c['count']} incoming ({when})"
+                     + (f"; latest previews: {previews}" if previews else ""))
     return "\n".join(lines)
 
 
@@ -98,7 +103,7 @@ async def compose_day(day_start: datetime, *, store=None, ask=None, vault: Path 
     label = day_start.strftime("%A %-d %B")
     prompt = f"""Here is what your devices and Home Assistant recorded about Anthon's day ({label}, {DAY_START_HOUR:02d}:00 to {DAY_START_HOUR:02d}:00 the next morning; he's a night owl), and his own journal notes from it.
 
-Recorded activity:
+Recorded activity (messages are previews of what people sent him, as his phone's notifications showed them):
 {facts or '- (nothing recorded by the devices)'}
 
 His journal:

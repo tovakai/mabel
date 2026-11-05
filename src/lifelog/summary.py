@@ -6,6 +6,8 @@ from datetime import datetime, time, timedelta, timezone
 
 DAY_START_HOUR = 6          # night owl: a "day" runs 06:00 -> 06:00 local
 TOP = 12
+MESSAGE_CHATS = 15          # busiest chats in a day account
+MESSAGE_PREVIEWS = 6        # latest previews per chat
 
 
 def day_bounds(local_moment: datetime, start_hour: int = DAY_START_HOUR) -> tuple[datetime, datetime]:
@@ -34,6 +36,7 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
     places: list[dict] = []
     devices: dict[str, dict] = {}
     steps = 0
+    chats: dict[tuple, dict] = {}
     for s in spans:
         mins = _minutes(s, start, end)
         local_start = datetime.fromisoformat(s["start"]).astimezone()
@@ -64,6 +67,15 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
             places.append({"place": s["title"], "from": local_start.strftime("%H:%M"),
                            "to": datetime.fromisoformat(s["end"]).astimezone().strftime("%H:%M"),
                            "minutes": round(mins)})
+        elif kind == "message":
+            chat = chats.setdefault((s["app"], s["title"]), {"app": s["app"], "chat": s["title"], "count": 0,
+                                                             "first": local_start, "last": local_start, "messages": []})
+            chat["count"] += 1
+            chat["first"], chat["last"] = min(chat["first"], local_start), max(chat["last"], local_start)
+            detail = s.get("detail") or {}
+            if detail.get("text"):
+                who = f"{detail['sender']}: " if detail.get("sender") else ""
+                chat["messages"].append((local_start, f"{who}{detail['text']}"))
         elif kind == "steps":
             try:
                 steps = max(steps, int(float(s["detail"].get("steps", s["title"] or 0))))
@@ -76,5 +88,9 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
         "activity": _top(activity), "sites": [{"name": k, "visits": v} for k, v in
                                                sorted(sites.items(), key=lambda kv: -kv[1])[:TOP]],
         "pages": titles[:40], "places": places[:30], "steps": steps,
+        "messages": [{"app": c["app"], "chat": c["chat"], "count": c["count"], "from": c["first"].strftime("%H:%M"),
+                      "to": c["last"].strftime("%H:%M"),
+                      "previews": [t for _, t in sorted(c["messages"])][-MESSAGE_PREVIEWS:]}
+                     for c in sorted(chats.values(), key=lambda c: -c["count"])[:MESSAGE_CHATS]],
         "span_count": len(spans),
     }
