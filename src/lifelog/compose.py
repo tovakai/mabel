@@ -229,6 +229,8 @@ async def daily_loop(owner: str = "tovakai") -> None:
                     logger.info("[lifelog] day summary %s: %s", result.get("date"), result.get("status"))
                     if result["status"] == "nothing_recorded":
                         skipped.add(result["date"])
+            from src.persona.reflection import maybe_reflect
+            await maybe_reflect(owner)
         except Exception:
             logger.warning("[lifelog] day summary failed", exc_info=True)
         await asyncio.sleep(CHECK_EVERY_S)

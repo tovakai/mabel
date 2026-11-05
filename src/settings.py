@@ -173,6 +173,8 @@ DEFAULT_SETTINGS = {
     "lifelog_exclude_apps": [],
     "lifelog_retention_days": 30,
     "lifelog_journal_folder": "daily life of Anthon",
+    # Self-reflection every few days (src/persona/reflection.py).
+    "reflection_enabled": True,
     # Phase 01 prompt stitching: off | shadow | on (identity/ modules + affect).
     "persona_mode": "off",
     "persona_module_root": "",

@@ -264,3 +264,10 @@ def test_mabel_can_pick_a_dottie_pattern(tmp_path, monkeypatch):
     choice = asyncio.run(session.choose())
     assert choice["kind"] == "dottie" and inbox.get(item["id"])["status"] == "accepted"
     assert inbox.get(item["id"])["decided_by"] == "mabel"
+
+
+def test_private_notes_only_with_an_explicit_allowance(tmp_path):
+    _, db = _vault(tmp_path)
+    assert all("Private" not in h["path"] for h in vault_context(db, "Secret Bar Downtown"))
+    allowed = vault_context(db, "Secret Bar Downtown", allow=("Library/People (Private)/",))
+    assert any("Private" in h["path"] for h in allowed)

@@ -385,3 +385,46 @@ def test_timeline_merges_what_she_did(tmp_path):
     assert "Mood: groggy" in titles and any(t.startswith("You rejected") for t in titles)
     assert any(t.startswith("Dottie's Dreamer found 1 thing") for t in titles)
     assert not any("agent_turn" in t for t in titles)
+
+
+def test_reflection_feeds_research_inbox_and_whisper(tmp_path, monkeypatch):
+    import json as _json
+    from src.persona import reflection
+    data = tmp_path / "data"
+    mabel = tmp_path / "mabel"
+    monkeypatch.setattr(reflection, "gather", lambda **k: "- Wed 12:16: Chose to research Toei Animation (factories)")
+    seen = {}
+
+    async def ask(messages, owner):
+        seen["prompt"] = messages[-1]["content"]
+        return ("# Reflection: Thursday 5 November\n\n## What I've been up to\nStudios, mostly.\n\n"
+                "## Patterns I notice in myself\nI read everything as factories.\n\n## How I feel about it\nAmused.\n\n"
+                "## Questions about myself\n- AI identity: Am I the same Mabel after a restart?\n"
+                "- Memory: Why do I keep the studio stuff and not the chats?\n\n"
+                "## Ideas for who I could become\n- Archivist: a quiet, meticulous mood for tidying the vault.\n")
+    now = datetime(2026, 11, 5, 20, 0, tzinfo=timezone.utc)
+    result = asyncio_run(reflection.reflect(data_dir=data, mabel_vault=mabel, ask=ask, now=now))
+    assert result["status"] == "written" and result["backlog_added"] == 2 and result["proposals"] == 1
+    assert result["whisper"] == "set" and "Chose to research Toei" in seen["prompt"]
+    note = (mabel / "journal" / "self" / "2026-11-05.md").read_text()
+    assert note.startswith("---\ntype: self-reflection") and "AI identity: Am I the same Mabel after a restart?" in note
+    log = _json.loads((data / "curiosity" / "backlog.json").read_text())
+    assert {q["subject"] for q in log["questions"]} == {"AI identity", "Memory"}
+    from src.subconscious.inbox import Inbox
+    proposal = Inbox(data / "subconscious" / "inbox.sqlite").list(kind="module_proposal")[0]
+    assert proposal["title"] == "Mabel's idea: Archivist" and proposal["evidence"][0]["ref"] == "journal/self/2026-11-05.md"
+    whisper = _json.loads((data / "persona" / "whispers.json").read_text())["active"]
+    assert (whisper["origin"], whisper["source"]) == ("self_generated", "self")
+    assert not reflection.due(now + timedelta(days=1), mabel) and reflection.due(now + timedelta(days=3), mabel)
+
+
+def asyncio_run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_self_curiosities_and_project_notes_for_self_research(tmp_path):
+    from src.curiosity.session import self_curiosities
+    path = tmp_path / "curiosities.md"
+    path.write_text("---\nid: curiosities\n---\nIntro text: not a bullet\n- AI identity: Am I the same Mabel?\n- broken line\n")
+    assert self_curiosities(path) == [{"subject": "AI identity", "question": "Am I the same Mabel?"}]

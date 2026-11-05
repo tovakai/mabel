@@ -96,6 +96,10 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+_REPO = Path(__file__).resolve().parents[1]
+_reflect_task: dict = {}
+
+
 def setup_persona_routes() -> APIRouter:
     router = APIRouter(prefix="/api/persona", tags=["persona"])
 
@@ -368,6 +372,46 @@ def setup_persona_routes() -> APIRouter:
         from src.initiative import outreach
         if not outreach.consider_now():
             raise HTTPException(409, "She's already thinking about it")
+        return {"started": True}
+
+    # --- Self-reflection ----------------------------------------------------------------------
+
+    @router.get("/reflections")
+    async def reflections(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona.reflection import EVERY, SELF_DIR, last_reflection
+        folder = _REPO.joinpath(*SELF_DIR)
+        last = last_reflection()
+        return {"can_manage": _is_admin(request), "dates": [p.stem for p in sorted(folder.glob("*.md"), reverse=True)[:30]],
+                "every_days": EVERY.days, "last": last.isoformat() if last else None,
+                "running": bool(_reflect_task.get("task") and not _reflect_task["task"].done()),
+                "last_result": _reflect_task.get("result")}
+
+    @router.get("/reflection/{date}")
+    async def reflection(date: str, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona.reflection import SELF_DIR
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            raise HTTPException(404, "Unknown reflection")
+        path = _REPO.joinpath(*SELF_DIR, f"{date}.md")
+        if not path.is_file():
+            raise HTTPException(404, "Unknown reflection")
+        text = path.read_text(encoding="utf-8")
+        body = text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
+        return {"date": date, "markdown": body}
+
+    @router.post("/reflect")
+    async def reflect_now(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        import asyncio
+        if _reflect_task.get("task") and not _reflect_task["task"].done():
+            raise HTTPException(409, "She's already reflecting")
+
+        async def run():
+            from src.persona.reflection import reflect
+            try:
+                _reflect_task["result"] = await reflect()
+            except Exception as error:
+                _reflect_task["result"] = {"status": "failed", "error": str(error)[:200]}
+        _reflect_task["task"] = asyncio.get_running_loop().create_task(run())
         return {"started": True}
 
     @router.post("/mood-override")

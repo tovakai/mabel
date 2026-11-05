@@ -35,7 +35,7 @@ HISTORY_LIMIT = 20
 ORIGINS = ("user_seeded", "self_generated")
 # Where a whisper came from. Only "manual" is user_seeded; the rest are
 # automatic sources (add a tag here when a new source is wired in).
-SOURCES = ("manual", "research", "calendar", "mail", "conversation")
+SOURCES = ("manual", "research", "calendar", "mail", "conversation", "life", "self")
 AUTO_DAYS = 7
 _STOP = {"the", "and", "for", "with", "about", "into", "from", "that", "this", "how", "what", "why", "its"}
 _LOCK = threading.Lock()

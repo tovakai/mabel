@@ -177,8 +177,9 @@ def candidates(db_path: Path, *, exclude: set[str] = frozenset(), top: int = 5, 
     return chosen
 
 
-def vault_context(db_path: Path, subject: str, *, limit: int = 5, chars: int = 700) -> list[dict]:
-    """Lexical vault context for ``subject`` (non-private notes only): v1 discovery."""
+def vault_context(db_path: Path, subject: str, *, limit: int = 5, chars: int = 700,
+                  allow: tuple[str, ...] = ()) -> list[dict]:
+    """Lexical vault context for ``subject`` (non-private notes only, plus explicitly ``allow``-ed folders)."""
     db = _connect(db_path)
     words = [w for w in re.findall(r"\w+", subject) if len(w) > 1]
     if not words:
@@ -193,7 +194,8 @@ def vault_context(db_path: Path, subject: str, *, limit: int = 5, chars: int = 7
     except sqlite3.OperationalError:
         return []
     for row in rows:
-        if is_private_path(row["path"]) or any(o["path"] == row["path"] for o in out):
+        allowed = any(row["path"].casefold().startswith(prefix.casefold()) for prefix in allow)
+        if (is_private_path(row["path"]) and not allowed) or any(o["path"] == row["path"] for o in out):
             continue
         out.append({"path": row["path"], "heading": row["heading"], "text": " ".join(row["text"].split())[:chars]})
         if len(out) >= limit:

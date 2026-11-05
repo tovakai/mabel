@@ -80,6 +80,32 @@ class Paths:
         self.index = index_db(self.source_vault, self.owner)
 
 
+SELF_NOTES = "Projects/gitprojects/Mabel/"
+
+
+def self_curiosities(path: Path | None = None) -> list[dict]:
+    """Standing questions about herself from identity/curiosities.md ("Topic: question" bullets)."""
+    path = path or (_REPO / "identity" / "curiosities.md")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(("-", "*")) and ":" in line:
+            subject, question = (x.strip() for x in line.lstrip("-* ").split(":", 1))
+            if subject and question:
+                out.append({"subject": subject[:80], "question": question[:300]})
+    return out
+
+
+def _self_curiosity(researched: set[str], seed: int | None) -> dict | None:
+    import random
+    options = [c for c in self_curiosities() if c["subject"].casefold() not in researched]
+    return random.Random(seed).choice(options) if options else None
+
+
 def _dottie_patterns(limit: int = 4) -> list[dict]:
     """Dottie's newest conversation patterns, for Mabel to consider (and keep or reject)."""
     try:
@@ -184,6 +210,10 @@ class Session:
             if item["name"].casefold() not in researched:
                 pool.append(Candidate(item["name"], "spawned", ref=item["id"],
                                       reasons=[f"a link you left in {Path(item['from_article']).stem}"]))
+        mine = _self_curiosity(researched, seed)
+        if mine:
+            pool.append(Candidate(mine["subject"], "self", question=mine["question"],
+                                  reasons=["a standing question about yourself"]))
         for item in _dottie_patterns():
             pool.append(Candidate(item["title"], "dottie", question=item["payload"].get("curiosity") or None,
                                   ref=item["id"], reasons=[f"Dottie noticed: {item['summary']}"[:200]]))
@@ -207,7 +237,8 @@ class Session:
             "You have some free time to research something purely because you want to. Below are things "
             "Anthon's notes link to but nobody has written up yet, a couple of random picks, and any open "
             "questions you left yourself last time. Items marked [dottie] are things Dottie noticed Anthon keeps "
-            "talking about.\n\n" + "\n".join(lines) + "\n\n"
+            "talking about; items marked [self] are questions about yourself (what you are, your memory, "
+            "being an AI).\n\n" + "\n".join(lines) + "\n\n"
             + (f"Already written up (don't pick these): {', '.join(researched)}\n\n" if researched else "")
             + "Pick the one you're genuinely most curious about, or ignore the list and ask an entirely new "
             "question. Turn it into a real question (not just a topic). Be honest about why.\n"
@@ -295,7 +326,10 @@ class Session:
         choice = self.done("choice")
         subject = choice["subject"]
         candidate = choice.get("candidate") or {}
-        vault = vault_context(self.paths.index, candidate.get("name") or subject) or vault_context(self.paths.index, subject)
+        # Research about herself may read the notes about her own project.
+        allow = (SELF_NOTES,) if candidate.get("kind") == "self" or "mabel" in subject.casefold() else ()
+        vault = (vault_context(self.paths.index, candidate.get("name") or subject, allow=allow)
+                 or vault_context(self.paths.index, subject, allow=allow))
         previous = [{"path": str(a["path"].name), "subject": a.get("subject"), "question": a.get("question")}
                     for a in backlog_mod.articles(self.paths.articles)][:10]
         results = []

@@ -184,6 +184,19 @@ def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO
                             "article": f"journal/anthon/{path.name}", "at": meta.get("written")})
     except Exception:
         logger.debug("[outreach] life candidates unavailable", exc_info=True)
+    try:                                                    # questions from her latest reflection
+        import yaml
+        for path in sorted((mabel_vault / "journal" / "self").glob("*.md"))[-1:]:
+            text = path.read_text(encoding="utf-8")
+            meta = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")) if text.startswith("---\n") else {}
+            written = _when((meta or {}).get("written"))
+            if written and now - written <= timedelta(days=3):
+                for i, q in enumerate((meta or {}).get("questions") or []):
+                    out.append({"key": f"self:{path.stem}:{i}", "source": "self", "subject": q.split(":", 1)[0][:80],
+                                "title": "something about yourself", "take": q,
+                                "article": f"journal/self/{path.name}", "at": meta.get("written")})
+    except Exception:
+        logger.debug("[outreach] reflection candidates unavailable", exc_info=True)
     kept = []
     for c in out:
         if c["key"] in shared:

@@ -25,13 +25,15 @@ let outreach = null;      // /api/persona/outreach
 let life = null;          // /api/lifelog/overview
 let lifeDays = [];
 let lifeOpenDay = null;
+let reflections = null;   // /api/persona/reflections
+let reflectionOpen = null;
 let lifeNewToken = null;    // { device, token } shown once, never stored
 let timelineTimer = null;
 const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['research', 'Research'], ['identity', 'Identity']];
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
-  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff' };
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff' };
 let autonomyTimer = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
@@ -415,6 +417,30 @@ async function loadLife() {
   renderLife();
 }
 
+function reflectionsCard() {
+  if (!reflections) return card('Reflections', '<div class="admin-toggle-sub">Loading…</div>');
+  const R = reflections;
+  const links = (R.dates || []).map(d => `<a href="#" data-persona-action="open-reflection" data-day="${esc(d)}" style="font-size:12px;margin-right:8px">${esc(d)}</a>`).join('');
+  const open = reflectionOpen ? `<div style="margin-top:6px;padding:8px 10px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-radius:6px;font-size:13px;max-height:460px;overflow-y:auto">${reflectionOpen.html}</div>` : '';
+  const status = R.running ? '<div style="font-size:12px;margin:4px 0"><strong>Reflecting…</strong></div>'
+    : R.last_result && R.last_result.status === 'failed' ? `<div style="font-size:12px;color:var(--red)">Last reflection failed: ${esc(R.last_result.error || '')}</div>` : '';
+  const button = R.can_manage ? `<div style="margin-top:8px"><button type="button" class="theme-io-btn" data-persona-action="reflect-now" style="height:26px;font-size:12px" ${R.running ? 'disabled' : ''}>Reflect now</button>
+    <span class="admin-toggle-sub" style="margin-left:6px">Uses her model for a minute or two.</span></div>` : '';
+  return card('Reflections', `<div class="admin-toggle-sub" style="margin-top:0">Every ${esc(String(R.every_days))} days she looks back at her own week: what she chose, what she made of it, how she talks to you, and who she is. Her questions about herself (AI identity, memory, being Mabel) join her research; ideas for new moods or ways of working go to Dottie's inbox for you. Standing questions live in <code>identity/curiosities.md</code>.</div>
+    ${status}${links || '<div class="admin-toggle-sub">No reflections yet.</div>'}${open}${button}`);
+}
+
+function renderReflections() {
+  const slot = document.getElementById('persona-reflections');
+  if (slot) slot.innerHTML = reflectionsCard();
+}
+
+async function loadReflections() {
+  try { reflections = await api('/reflections'); } catch (err) { reflections = null; }
+  renderReflections();
+  if (reflections && reflections.running) setTimeout(loadReflections, 10000);
+}
+
 function renderAutonomy() {
   const slot = document.getElementById('persona-autonomy');
   if (slot) slot.innerHTML = autonomyCard();
@@ -473,7 +499,7 @@ function render() {
     + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
     + `<div data-ptab="life"><div id="persona-life">${lifeCard()}</div></div>`
     + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
-    + `<div data-ptab="identity">${modeCard()}${modulesCard()}</div>`;
+    + `<div data-ptab="identity"><div id="persona-reflections">${reflectionsCard()}</div>${modeCard()}${modulesCard()}</div>`;
   applyTab();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
@@ -521,6 +547,21 @@ async function onClick(event) {
       else await api('/outreach', { method: 'PUT', body: JSON.stringify(act === 'outreach-toggle' ? { enabled: !outreach.enabled } : { paused: !outreach.paused }) });
     } catch (err) { toast(`Persona: ${err.message}`); }
     await loadOutreach();
+    return;
+  }
+  if (target.dataset.personaAction === 'open-reflection' || target.dataset.personaAction === 'reflect-now') {
+    event.preventDefault();
+    try {
+      if (target.dataset.personaAction === 'reflect-now') { await api('/reflect', { method: 'POST' }); toast('She\'s reflecting'); }
+      else {
+        const d = target.dataset.day;
+        if (reflectionOpen && reflectionOpen.date === d) reflectionOpen = null;
+        else { const r = await api(`/reflection/${encodeURIComponent(d)}`); reflectionOpen = { date: d, html: mdToHtml(r.markdown || '') }; }
+        renderReflections();
+        return;
+      }
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    await loadReflections();
     return;
   }
   if (target.dataset.personaAction === 'life-token-copy') {
@@ -654,6 +695,7 @@ export function openPersonaModal() {
   loadTimeline();
   loadOutreach();
   loadLife();
+  loadReflections();
 }
 
 function closePersonaModal() {
