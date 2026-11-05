@@ -146,3 +146,77 @@ def test_inbox_routes_admin_only(tmp_path, monkeypatch):
     decided = client.post(f"/api/persona/inbox/{item['id']}/decide", json={"status": "rejected", "reason": "meh"}).json()
     assert decided["status"] == "rejected" and decided["decided_by"] == "user"
     assert client.post("/api/persona/inbox/run").status_code == 409
+
+
+def test_stale_framing_keeps_only_real_quotes_backed_by_real_facts(tmp_path, monkeypatch):
+    from src.subconscious import stale
+    vault = tmp_path / "vault"
+    folder = vault / "Projects" / "gitprojects" / "Mabel"
+    folder.mkdir(parents=True)
+    (folder / "roadmap.md").write_text(
+        "# Roadmap\n\n## Phase 2\n- [ ] Add an optional Curiosity Whisper sourced from a real recent question.\n"
+        "- [ ] Teach Mabel to juggle flaming torches while singing.\n"
+        "The embedding server is the backbone of retrieval and always on.\n" + "Filler text here. " * 10 + "\n")
+    monkeypatch.setattr(stale, "collect", lambda owner="tovakai": [
+        {"id": "F1", "text": "Today is 2026-11-05."},
+        {"id": "F2", "text": "The embedding server (127.0.0.1:8082) is not reachable."},
+        {"id": "F3", "text": "Implemented (git 6836e039, 2026-11-05): feat(persona): Phase 2 mood rhythms and a seeded Curiosity Whisper"}])
+    calls = []
+
+    async def ask(prompt, owner):
+        calls.append(prompt)
+        return json.dumps({"stale": [
+            {"quote": "Add an optional Curiosity Whisper sourced from a real recent question.", "facts": ["F3"],
+             "why": "Built.", "suggestion": "Mark done.", "confidence": 0.9},
+            {"quote": "The embedding server is the backbone of retrieval and always on.", "facts": ["F2"],
+             "why": "It is down.", "suggestion": "Say it is optional.", "confidence": 0.8},
+            {"quote": "Mabel juggles torches daily.", "facts": ["F3"], "why": "invented", "confidence": 0.9},
+            {"quote": "Teach Mabel to juggle flaming torches while singing.", "facts": ["F99"], "why": "no fact", "confidence": 0.9},
+            {"quote": "Teach Mabel to juggle flaming torches while singing.", "facts": ["F3"], "why": "unsure", "confidence": 0.3}]})
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    state = tmp_path / "seen.json"
+    result = asyncio.run(stale.run(inbox, source_vault=vault, state_path=state, ask=ask, now=NOW))
+    items = sorted(inbox.list(kind="stale_framing"), key=lambda i: i["title"])
+    assert [i["title"] for i in items] == ["Add an optional Curiosity Whisper sourced from a real recent question.",
+                                           "The embedding server is the backbone of retrieval and always on."]
+    assert result["dropped"] == 3
+    whisper = items[0]
+    assert whisper["evidence"][0]["ref"] == "Projects/gitprojects/Mabel/roadmap.md#L4"
+    assert whisper["evidence"][1]["ref"] == "fact:F3" and whisper["payload"]["suggestion"] == "Mark done."
+    assert "[[" not in whisper["title"] and (vault / "Projects/gitprojects/Mabel/roadmap.md").read_text().count("- [ ]") == 2
+    again = asyncio.run(stale.run(inbox, source_vault=vault, state_path=state, ask=ask, now=NOW))
+    assert again["sections_checked"] == 0 and len(calls) == result["sections_checked"], "unchanged sections are skipped"
+
+
+def test_stale_framing_rejects_facts_about_something_else():
+    from src.subconscious.stale import relevant_facts, supports
+    fact = "Implemented (git 6bbc9646, 2026-11-05): feat(curiosity): Mabel reviews Dottie's inbox when she chooses what to research"
+    assert not supports("Check that the cited upstream code has not changed before porting behavior.", [fact])
+    assert supports("Add an optional Curiosity Whisper sourced from a real question.",
+                    ["Implemented (git 6836e039): feat(persona): Phase 2 mood rhythms and a seeded Curiosity Whisper"])
+    facts = [{"id": "F1", "text": "Today is 2026-11-05."}, {"id": "F2", "text": fact},
+             {"id": "F3", "text": "Implemented (git a): feat(persona): seeded Curiosity Whisper"}]
+    assert [f["id"] for f in relevant_facts(facts, "- [ ] Add an optional Curiosity Whisper")] == ["F1", "F3"]
+
+
+def test_stale_framing_drops_principles_and_shotgun_citations(tmp_path, monkeypatch):
+    from src.subconscious import stale
+    vault = tmp_path / "vault"
+    folder = vault / "Projects" / "gitprojects" / "Mabel"
+    folder.mkdir(parents=True)
+    (folder / "phase.md").write_text("# Phase\nFuture prompt stitching must be additive, observable and removable.\n"
+                                     "- [ ] Inspect the existing task subsystem before implementing a queue.\n"
+                                     + "More filler words here. " * 8 + "\n")
+    facts = [{"id": "F1", "text": "Today is 2026-11-05."},
+             {"id": "F2", "text": "Prompt stitching (persona_mode) is on."}] + [
+        {"id": f"F{i}", "text": f"Implemented (git x{i}): feat(task): existing subsystem queue work {i}"} for i in range(3, 9)]
+    monkeypatch.setattr(stale, "collect", lambda owner="tovakai": facts)
+
+    async def ask(prompt, owner):
+        return json.dumps({"stale": [
+            {"quote": "Future prompt stitching must be additive, observable and removable.", "facts": ["F2"], "confidence": 1},
+            {"quote": "- [ ] Inspect the existing task subsystem before implementing a queue.",
+             "facts": ["F3", "F4", "F5", "F6"], "confidence": 1}]})
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    result = asyncio.run(stale.run(inbox, source_vault=vault, state_path=tmp_path / "s.json", ask=ask, now=NOW))
+    assert inbox.list(kind="stale_framing") == [] and result["dropped"] == 2

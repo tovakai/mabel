@@ -21,7 +21,8 @@ let research = null;      // /api/persona/research
 let inbox = null;         // /api/persona/inbox
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
-  dreamer: 'Things you keep talking about (Dreamer)', sentinel: 'Changes (Sentinel)' };
+  dreamer: 'Things you keep talking about (Dreamer)', sentinel: 'Changes (Sentinel)',
+  stale: 'Out-of-date notes about Mabel (Archivist)' };
 let openArticle = null;   // { file, html }
 let pollTimer = null;
 const STEP_LABELS = { candidates: 'looking at what your notes link to', choice: 'choosing what to research',
@@ -212,7 +213,7 @@ function evidenceList(item) {
 function inboxCard() {
   if (!inbox) return card("Dottie's inbox", '<div class="admin-toggle-sub">Loading…</div>');
   const groups = {};
-  inbox.items.forEach(item => { (groups[item.loop] = groups[item.loop] || []).push(item); });
+  inbox.items.forEach(item => { const g = item.kind === 'stale_framing' ? 'stale' : item.loop; (groups[g] = groups[g] || []).push(item); });
   const runs = Object.entries(inbox.last_runs || {}).map(([name, r]) => `${name} ${when(r.at)}`).join(' · ');
   const button = inbox.can_manage
     ? `<button type="button" class="theme-io-btn" data-persona-action="inbox-run" ${inbox.running ? 'disabled' : ''} style="height:26px;font-size:12px">${inbox.running ? 'Dottie is looking around…' : 'Let Dottie look around'}</button>
@@ -223,6 +224,7 @@ function inboxCard() {
       <summary style="cursor:pointer;font-size:12px">${esc(item.title)} <span style="opacity:0.55;font-size:11px">${Math.round(item.confidence * 100)}% · ${esc(item.verification.replace('_', ' '))}</span></summary>
       ${item.summary ? `<div class="admin-toggle-sub" style="margin:2px 0">${esc(item.summary)}</div>` : ''}
       ${item.payload && item.payload.curiosity ? `<div style="font-size:12px;font-style:italic;margin:2px 0">${esc(item.payload.curiosity)}</div>` : ''}
+      ${item.payload && item.payload.suggestion ? `<div style="font-size:12px;margin:2px 0">Suggested: ${esc(item.payload.suggestion)}</div>` : ''}
       ${evidenceList(item)}
       ${inbox.can_manage ? `<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px">
         <button type="button" class="theme-io-btn" data-persona-action="inbox-accept" data-item="${esc(item.id)}" style="height:24px;font-size:11px">Keep</button>

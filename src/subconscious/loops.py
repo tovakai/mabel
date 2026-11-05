@@ -3,6 +3,7 @@
 - archivist: rule-based, cheap; safe to run often.
 - scout: a few web searches and page fetches.
 - dreamer: one call to Dottie's small model.
+- stale: Archivist's stale-framing check of the notes about Mabel (Dottie's model; unchanged sections skipped).
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from pathlib import Path
 from .inbox import default_inbox
 
 logger = logging.getLogger(__name__)
-LOOPS = ("archivist", "scout", "dreamer")
+LOOPS = ("archivist", "scout", "dreamer", "stale")
 _last: dict = {}
 
 
@@ -33,6 +34,10 @@ async def run(names=LOOPS, *, inbox=None, paths=None) -> dict:
             elif name == "dreamer":
                 from . import dreamer
                 results[name] = await dreamer.run(inbox, owner=paths.owner)
+            elif name == "stale":
+                from . import stale
+                results[name] = await stale.run(inbox, source_vault=paths.source_vault, owner=paths.owner,
+                                                state_path=paths.data.parent / "subconscious" / "stale_seen.json")
             else:
                 raise ValueError(f"unknown loop {name}")
         except Exception as error:
@@ -51,7 +56,7 @@ def last_runs() -> dict:
 import asyncio  # noqa: E402
 
 _task: asyncio.Task | None = None
-AUTO_SCHEDULE = {"archivist": 6 * 3600, "dreamer": 24 * 3600}   # scout only on request (web searches)
+AUTO_SCHEDULE = {"archivist": 6 * 3600, "dreamer": 24 * 3600, "stale": 24 * 3600}   # scout only on request (web searches)
 FIRST_DELAY_S = 600
 
 
