@@ -30,6 +30,13 @@ class ModuleBody(BaseModel):
     text: str = Field(max_length=12000)
 
 
+class WhisperBody(BaseModel):
+    topic: str = Field(max_length=200)
+    thought: str = Field(max_length=1000)
+    reference: str = Field(default="", max_length=600)
+    days: float = Field(default=14, gt=0, le=90)
+
+
 class OverrideBody(BaseModel):
     mood: str
     hours: float = Field(default=2.0, gt=0, le=24)
@@ -83,7 +90,9 @@ def setup_persona_routes() -> APIRouter:
     @router.get("")
     async def overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
         from src.persona import current_mode
+        from src.persona import affect as affect_mod
         from src.persona.affect import SCHEDULE, scheduled_mood
+        from src.persona.whisper import COOLDOWN_HOURS
         comp = _composer()
         local = _now()
         projection, state = comp.affect.project(local)
@@ -116,6 +125,17 @@ def setup_persona_routes() -> APIRouter:
                      "local_time": local.strftime("%H:%M"),
                      "schedule": [{"from": f"{int(h):02d}:{int(round((h % 1) * 60)):02d}", "mood": m}
                                   for h, m in SCHEDULE]},
+            "activity": {
+                "conversation_tokens": round(state["activity"].get("conversation", 0)),
+                "background_tokens": round(state["activity"].get("background", 0)),
+                "last_interaction_at": state.get("last_interaction_at"),
+                "gap_hours": round(projection.gap_hours, 1) if projection.gap_hours is not None else None,
+                "rules": {"warm_up": affect_mod.WARM_UP_TOKENS, "lively": affect_mod.LIVELY_TOKENS,
+                          "busy_background": affect_mod.BUSY_BACKGROUND_TOKENS},
+            },
+            "whisper": comp.whispers.active(local),
+            "whisper_servable": comp.whispers.servable(local) is not None,
+            "whisper_cooldown_hours": COOLDOWN_HOURS,
             "last_composition": comp.last.summary() if comp.last else None,
             "modules": modules,
             "errors": library.errors,
@@ -152,6 +172,22 @@ def setup_persona_routes() -> APIRouter:
             raise HTTPException(422, "refusing to write through a symlink")
         _atomic_write(path, body.text if body.text.endswith("\n") else body.text + "\n")
         return {"ref": module.ref, "version": module.version}
+
+    @router.put("/whisper")
+    async def seed_whisper(body: WhisperBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona.whisper import WhisperError
+        try:
+            return _composer().whispers.seed(body.topic, body.thought, reference=body.reference,
+                                             days=body.days, now=_now())
+        except WhisperError as error:
+            raise HTTPException(422, str(error)) from None
+
+    @router.delete("/whisper")
+    async def retire_whisper(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        _composer().whispers.retire(_now())
+        return {"retired": True}
 
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:

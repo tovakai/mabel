@@ -42,7 +42,14 @@ function card(title, inner) {
 function statusCard() {
   const m = data.mood;
   const source = { time_of_day: 'from the time of day', hysteresis: 'holding briefly before changing',
+    conversation_warmup: 'woken up by chatting', conversation_lively: 'a lively conversation',
+    background_busy: 'busy with background work',
     manual: `pinned until ${when(m.manual_until)}` }[m.source] || m.source;
+  const a = data.activity || {};
+  const r = a.rules || {};
+  const gap = a.gap_hours == null ? 'no conversation recorded yet'
+    : a.gap_hours < 1 ? 'last talked just now' : `last talked ${a.gap_hours} h ago`;
+  const activity = `Recent chat ≈${a.conversation_tokens || 0} tokens (warm-up ${r.warm_up}, lively ${r.lively}) · background ≈${a.background_tokens || 0} (busy ${r.busy_background}) · ${esc(gap)}`;
   const schedule = m.schedule.map(s =>
     `<span style="${s.mood === m.scheduled ? 'font-weight:600' : 'opacity:0.65'}">${esc(s.from)} ${esc(s.mood)}</span>`,
   ).join(' · ');
@@ -69,9 +76,34 @@ function statusCard() {
     <div style="font-size:13px">Mood: <strong>${esc(m.current)}</strong> <span style="opacity:0.65">(${esc(source)}, since ${esc(when(m.since))})</span></div>
     <div style="font-size:12px;opacity:0.8;margin-top:2px">Energy ${Math.round(m.energy * 100)}% · local time ${esc(m.local_time)}</div>
     <div style="font-size:12px;margin-top:6px">Night-owl schedule: ${schedule}</div>
+    <div style="font-size:12px;margin-top:4px;opacity:0.85">${activity}</div>
     <div style="font-size:12px;margin-top:6px;opacity:0.85">${lastLine}</div>
     ${pin}
     <div style="margin-top:8px"><button type="button" class="theme-io-btn" data-persona-action="diagnostics" style="height:24px;font-size:11px">Copy diagnostics</button></div>`);
+}
+
+function whisperCard() {
+  const w = data.whisper;
+  let current = '<div class="admin-toggle-sub">No whisper right now.</div>';
+  if (w) {
+    const status = data.whisper_servable ? 'can come up in casual chat'
+      : `came up ${when(w.last_discussed_at)}; quiet for ${data.whisper_cooldown_hours} h`;
+    current = `<div style="font-size:13px"><strong>${esc(w.topic)}</strong> <span style="opacity:0.65;font-size:11px">${esc(w.origin)} · ${esc(status)} · expires ${esc(new Date(w.expires_at).toLocaleDateString())}</span></div>
+      <div style="font-size:12px;margin-top:4px;font-style:italic">${esc(w.thought)}</div>
+      ${w.reference ? `<div class="admin-toggle-sub">Ref: ${esc(w.reference)}</div>` : ''}
+      ${data.can_manage ? '<div style="display:flex;justify-content:flex-end;margin-top:4px"><button type="button" class="theme-io-btn" data-persona-action="retire-whisper" style="height:24px;font-size:11px">Retire</button></div>' : ''}`;
+  }
+  const field = 'width:100%;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid color-mix(in srgb, var(--fg) 20%, transparent);border-radius:6px;padding:5px;font-size:12px';
+  const form = data.can_manage ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">${w ? 'Replace with a new thought' : 'Seed a thought'}</summary>
+      <input id="persona-whisper-topic" maxlength="80" placeholder="Topic, e.g. Serial Experiments Lain" style="${field};margin-top:6px">
+      <textarea id="persona-whisper-thought" maxlength="400" rows="3" placeholder="In her words: I've been thinking about how Lain portrays artificial identity…" style="${field};margin-top:4px"></textarea>
+      <input id="persona-whisper-ref" maxlength="300" placeholder="Optional reference (note or URL)" style="${field};margin-top:4px">
+      <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;margin-top:4px">
+        <span style="font-size:12px">keep for</span>
+        <select id="persona-whisper-days" class="memory-edit-cat-select"><option value="3">3 days</option><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select>
+        <button type="button" class="theme-io-btn" data-persona-action="seed-whisper" style="height:26px;font-size:12px">Save</button>
+      </div></details>` : '';
+  return card('Curiosity whisper', `<div class="admin-toggle-sub" style="margin-top:0">One continuing thought she may mention in casual chat if it naturally connects. After it comes up it stays quiet for a while.</div>${current}${form}`);
 }
 
 function modeCard() {
@@ -121,7 +153,7 @@ function render() {
   if (!body) return;
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
-  body.innerHTML = statusCard() + modeCard() + modulesCard();
+  body.innerHTML = statusCard() + whisperCard() + modeCard() + modulesCard();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
   });
@@ -156,11 +188,20 @@ async function onClick(event) {
       const hours = Number(document.getElementById('persona-pin-hours')?.value || 2);
       await api('/mood-override', { method: 'POST', body: JSON.stringify({ mood, hours }) });
       toast(`Mood pinned: ${mood}`);
+    } else if (target.dataset.personaAction === 'seed-whisper') {
+      const value = (id) => document.getElementById(id)?.value || '';
+      await api('/whisper', { method: 'PUT', body: JSON.stringify({
+        topic: value('persona-whisper-topic'), thought: value('persona-whisper-thought'),
+        reference: value('persona-whisper-ref'), days: Number(value('persona-whisper-days') || 14) }) });
+      toast('Whisper saved');
+    } else if (target.dataset.personaAction === 'retire-whisper') {
+      await api('/whisper', { method: 'DELETE' });
+      toast('Whisper retired');
     } else if (target.dataset.personaAction === 'unpin') {
       await api('/mood-override', { method: 'DELETE' });
       toast('Mood follows the schedule again');
     } else if (target.dataset.personaAction === 'diagnostics') {
-      const diag = { mode: data.mode, mood: data.mood, last_composition: data.last_composition,
+      const diag = { mode: data.mode, mood: data.mood, activity: data.activity, last_composition: data.last_composition,
         modules: data.modules.map(m => m.ref), errors: data.errors };
       await navigator.clipboard.writeText(JSON.stringify(diag, null, 2));
       toast('Diagnostics copied');

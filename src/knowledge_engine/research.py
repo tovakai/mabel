@@ -590,6 +590,13 @@ async def dispatch(content,ctx):
             + ('sources holds the text of every note this research read: answer from it and do not re-read '
                'those notes; read further only for notes or gaps it does not cover.' if sources else
                'Answer from them; read more only for the gaps listed in unresolved_questions.'))
+    try:
+        from src.persona.activity import estimate_tokens,note_background_work
+        note_background_work(estimate_tokens(*(str(i.get('text','') if isinstance(i,dict) else i)
+                                               for i in (getattr(budget,'source_texts',None) or [])),
+                                             json.dumps(result.get('findings') or [],default=str)))
+    except Exception:
+        logger.debug('[dottie] background activity not recorded',exc_info=True)
     logger.info('[dottie] mode=%s status=%s findings=%d unresolved=%d notes=%d reads=%d',
                 worker_mode,result.get('status'),len(result.get('findings') or []),
                 len(result.get('unresolved_questions') or []),len(budget.notes),budget.calls)

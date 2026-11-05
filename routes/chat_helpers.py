@@ -1847,6 +1847,12 @@ def run_post_response_tasks(
                 # observation fails. Trace the failure for the operator.
                 logger.warning("[episodic] completed-turn capture failed", exc_info=True)
 
+    # Phase 2 mood rhythms: conversation activity and the Curiosity Whisper
+    # cool-off. Deterministic bookkeeping; no model call.
+    if not compare_mode and not incognito and full_response:
+        from src.persona.activity import note_completed_turn
+        note_completed_turn(message, full_response)
+
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
