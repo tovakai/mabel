@@ -242,3 +242,25 @@ def test_dreamer_can_cite_the_life_log(tmp_path, monkeypatch):
     assert [p["theme"] for p in result["patterns"]] == ["Hades II"]
     item = inbox.list(kind="pattern")[0]
     assert [e["ref"] for e in item["evidence"]] == ["lifelog:desktop:game:1", "lifelog:laptop:browse:2"]
+
+
+def test_embed_loop_reconciles_then_embeds(monkeypatch):
+    from types import SimpleNamespace
+    from src.subconscious import loops
+    calls = []
+
+    class FakeIndex:
+        def __init__(self, root, owner):
+            calls.append(("index", str(root), owner))
+        def needs_reconcile(self):
+            return True
+        def reconcile(self):
+            calls.append(("reconcile",))
+    async def fake_embed(index, *, owner, limit):
+        calls.append(("embed", owner, limit))
+        return {"generated": 3, "coverage": [{"embedded": 10, "total_chunks": 10}]}
+    monkeypatch.setattr("src.knowledge_engine.index.VaultIndex", FakeIndex)
+    monkeypatch.setattr("src.knowledge_engine.maintenance.embed_pending", fake_embed)
+    result = asyncio.run(loops.embed_vault(SimpleNamespace(source_vault="/vault", owner="alice")))
+    assert result["generated"] == 3 and [c[0] for c in calls] == ["index", "reconcile", "embed"]
+    assert "embed" in loops.LOOPS and loops.AUTO_SCHEDULE["embed"] == 6 * 3600

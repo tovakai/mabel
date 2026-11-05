@@ -4,6 +4,8 @@
 - scout: a few web searches and page fetches.
 - dreamer: one call to Dottie's small model.
 - stale: Archivist's stale-framing check of the notes about Mabel (Dottie's model; unchanged sections skipped).
+- embed: refresh the vault index and embed missing/stale chunks with the Knowledge embeddings role
+  (bge-m3 on Dottie's machine), so new notes become searchable by meaning too.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from pathlib import Path
 from .inbox import default_inbox
 
 logger = logging.getLogger(__name__)
-LOOPS = ("archivist", "scout", "dreamer", "stale")
+LOOPS = ("archivist", "scout", "dreamer", "stale", "embed")
 _last: dict = {}
 
 
@@ -34,6 +36,8 @@ async def run(names=LOOPS, *, inbox=None, paths=None) -> dict:
             elif name == "dreamer":
                 from . import dreamer
                 results[name] = await dreamer.run(inbox, owner=paths.owner)
+            elif name == "embed":
+                results[name] = await embed_vault(paths)
             elif name == "stale":
                 from . import stale
                 results[name] = await stale.run(inbox, source_vault=paths.source_vault, owner=paths.owner,
@@ -47,6 +51,21 @@ async def run(names=LOOPS, *, inbox=None, paths=None) -> dict:
     return results
 
 
+EMBED_LIMIT = 1000
+
+
+async def embed_vault(paths) -> dict:
+    """Reconcile the vault index if notes changed, then embed what's missing (remote embedder only)."""
+    import asyncio as _asyncio
+    from src.knowledge_engine.index import VaultIndex
+    from src.knowledge_engine.maintenance import embed_pending
+    index = VaultIndex(paths.source_vault, owner=paths.owner)
+    if index.needs_reconcile():
+        await _asyncio.to_thread(index.reconcile)
+    result = await embed_pending(index, owner=paths.owner, limit=EMBED_LIMIT)
+    return {"generated": result["generated"], "coverage": result["coverage"]}
+
+
 def last_runs() -> dict:
     return dict(_last)
 
@@ -56,7 +75,7 @@ def last_runs() -> dict:
 import asyncio  # noqa: E402
 
 _task: asyncio.Task | None = None
-AUTO_SCHEDULE = {"archivist": 6 * 3600, "dreamer": 24 * 3600, "stale": 24 * 3600}   # scout only on request (web searches)
+AUTO_SCHEDULE = {"archivist": 6 * 3600, "embed": 6 * 3600, "dreamer": 24 * 3600, "stale": 24 * 3600}   # scout only on request (web searches)
 FIRST_DELAY_S = 600
 
 
