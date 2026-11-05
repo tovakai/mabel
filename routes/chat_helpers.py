@@ -1885,6 +1885,11 @@ def run_post_response_tasks(
     if not compare_mode and not incognito and full_response:
         from src.persona.activity import note_completed_turn
         note_completed_turn(message, full_response)
+        try:
+            from src.initiative.outreach import note_reply
+            note_reply(session_id)          # a reply to something she reached out about
+        except Exception:
+            logger.debug("[outreach] reply not recorded", exc_info=True)
 
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0

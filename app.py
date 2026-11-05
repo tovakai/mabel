@@ -1194,6 +1194,12 @@ async def _startup_event():
     _startup_tasks.append(app.state.background_tool_delivery_task)
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
+    # Phase 6: social initiative (Mabel may message your phone; gates in src/initiative).
+    try:
+        from src.initiative.outreach import loop as _outreach_loop
+        _startup_tasks.append(asyncio.create_task(_outreach_loop()))
+    except Exception as _e:
+        logger.warning("Failed to start the outreach loop: %s", _e)
     # Phase 5: heartbeat (autonomous research only when idle + GPU free).
     try:
         from src.heartbeat.daemon import heartbeat as _heartbeat

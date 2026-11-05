@@ -43,6 +43,11 @@ class AutonomyBody(BaseModel):
     presence_entity: str | None = Field(default=None, max_length=120)
 
 
+class OutreachBody(BaseModel):
+    enabled: bool | None = None
+    paused: bool | None = None
+
+
 class DecisionBody(BaseModel):
     status: str
     reason: str = Field(default="", max_length=300)
@@ -321,6 +326,49 @@ def setup_persona_routes() -> APIRouter:
         from src.persona.timeline import build
         items = await asyncio.to_thread(build, data_dir=Path(DATA_DIR), days=max(1, min(int(days), 30)))
         return {"items": items}
+
+    # --- Reaching out (Phase 6) ---------------------------------------------------------------
+
+    @router.get("/outreach")
+    async def outreach_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        import asyncio
+        from src.curiosity import runner
+        from src.heartbeat import signals
+        from src.initiative import outreach
+        from src.settings import get_setting
+        data = outreach.default_store().load()
+        model_free = (not signals.any_chat_active() and not runner.status().get("running")
+                      and await asyncio.to_thread(signals.strata_up))
+        has_phone = bool(outreach.home_assistant())
+        blocked = outreach.gates(data, now=datetime.now().astimezone(), enabled=bool(get_setting("initiative_enabled", True)),
+                                 paused=bool(get_setting("initiative_paused", False)), model_free=model_free,
+                                 has_phone=has_phone)
+        return {"can_manage": _is_admin(request), "enabled": bool(get_setting("initiative_enabled", True)),
+                "paused": bool(get_setting("initiative_paused", False)), "gates": blocked,
+                "limits": {"max_per_day": outreach.MAX_PER_DAY, "min_gap_hours": outreach.MIN_GAP.total_seconds() / 3600,
+                           "cooldown_hours": outreach.COOLDOWN.total_seconds() / 3600},
+                "sent": data["sent"][-10:][::-1], "reviews": data["reviews"][-10:][::-1],
+                "last_result": outreach.last_result, "has_phone": has_phone}
+
+    @router.put("/outreach")
+    async def outreach_update(body: OutreachBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.settings import load_settings, save_settings
+        current = dict(load_settings())
+        if body.enabled is not None:
+            current["initiative_enabled"] = body.enabled
+        if body.paused is not None:
+            current["initiative_paused"] = body.paused
+        save_settings(current)
+        return {"enabled": current.get("initiative_enabled", True), "paused": current.get("initiative_paused", False)}
+
+    @router.post("/outreach/consider")
+    async def outreach_consider(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.initiative import outreach
+        if not outreach.consider_now():
+            raise HTTPException(409, "She's already thinking about it")
+        return {"started": True}
 
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:

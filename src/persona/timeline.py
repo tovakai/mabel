@@ -143,6 +143,21 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
     except (OSError, ValueError, AttributeError):
         pass
 
+    try:
+        outreach = json.loads((data_dir / "initiative" / "outreach.json").read_text())
+        for sent in outreach.get("sent") or []:
+            how = "on your phone" if sent.get("status") in ("sent", "answered") else "in a chat (the phone notification failed)"
+            items.append(_item(sent.get("at"), "outreach", f"Messaged you {how} about {sent.get('subject')}",
+                               f"“{sent.get('message', '')}” Why: {sent.get('why', '')}", sent.get("session_id")))
+            if sent.get("answered_at"):
+                items.append(_item(sent["answered_at"], "outreach_reply", f"You replied about {sent.get('subject')}", ""))
+        for review in outreach.get("reviews") or []:
+            if review.get("decision") == "silence":
+                items.append(_item(review.get("at"), "silence", "Thought about messaging you, and chose not to",
+                                   review.get("why", "")))
+    except (OSError, ValueError):
+        pass
+
     items = [i for i in items if i and _when(i["at"]) >= since]
     items.sort(key=lambda i: i["at"], reverse=True)
     return items[:limit]

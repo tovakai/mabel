@@ -161,6 +161,11 @@ DEFAULT_SETTINGS = {
     "autonomy_enabled": True,
     "autonomy_paused": False,
     "heartbeat_presence_entity": "",
+    # Phase 6 social initiative: Mabel may message your phone (src/initiative).
+    "initiative_enabled": True,
+    "initiative_paused": False,
+    "initiative_notify_service": "",
+    "initiative_public_url": "",
     # Phase 01 prompt stitching: off | shadow | on (identity/ modules + affect).
     "persona_mode": "off",
     "persona_module_root": "",

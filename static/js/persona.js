@@ -21,11 +21,13 @@ let research = null;      // /api/persona/research
 let inbox = null;         // /api/persona/inbox
 let autonomy = null;      // /api/persona/autonomy
 let timeline = null;      // /api/persona/timeline
+let outreach = null;      // /api/persona/outreach
 let timelineTimer = null;
 const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['research', 'Research'], ['identity', 'Identity']];
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
-  article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040' };
+  article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb' };
 let autonomyTimer = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
@@ -320,6 +322,36 @@ function tabBar() {
     `<button type="button" class="memory-tab${id === activeTab ? ' active' : ''}" data-persona-tab="${id}">${esc(label)}</button>`).join('')}</div>`;
 }
 
+function outreachCard() {
+  if (!outreach) return card('Reaching out', '<div class="admin-toggle-sub">Loading…</div>');
+  const o = outreach, lim = o.limits || {};
+  const today = (o.sent || []).filter(x => new Date(x.at).toDateString() === new Date().toDateString()).length;
+  const state = !o.enabled ? 'Off' : o.paused ? 'Paused' : 'On';
+  const now = (o.gates || []).length ? `Not right now: ${esc(o.gates.join('; '))}` : 'Free to reach out if something feels worth it (checked every 20 min).';
+  const last = o.last_result && o.last_result.status ? `<div class="admin-toggle-sub">Last check: ${esc({ gated: 'held back by the rules', nothing_to_share: 'nothing to share', already_considered: 'nothing new since she last thought about it', silence: `chose silence (${o.last_result.why || ''})`, sent: 'sent a message', in_app_only: 'left a message in a chat (phone notification failed)' }[o.last_result.status] || o.last_result.status)}</div>` : '';
+  const sent = (o.sent || []).length ? '<div style="font-size:12px;font-weight:600;margin-top:8px">Recent messages</div>' + o.sent.slice(0, 5).map(m => `
+    <div style="margin:4px 0;font-size:12px"><a href="#${esc(m.session_id)}" data-persona-action="open-chat">${esc(m.subject || '')}</a>
+      <span style="opacity:0.6;font-size:11px">${esc(when(m.at))} · ${m.answered_at ? 'you replied' : m.status === 'in_app_only' ? 'chat only' : 'unanswered'}</span>
+      <div class="admin-toggle-sub" style="margin:1px 0 0">“${esc(m.message || '')}”</div></div>`).join('') : '<div class="admin-toggle-sub">She hasn\'t reached out yet.</div>';
+  const controls = o.can_manage ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <button type="button" class="theme-io-btn" data-persona-action="outreach-toggle" style="height:26px;font-size:12px">${o.enabled ? 'Turn off' : 'Turn on'}</button>
+      <button type="button" class="theme-io-btn" data-persona-action="outreach-pause" style="height:26px;font-size:12px" ${o.enabled ? '' : 'disabled'}>${o.paused ? 'Resume' : 'Pause'}</button>
+      <button type="button" class="theme-io-btn" data-persona-action="outreach-consider" style="height:26px;font-size:12px" ${(o.gates || []).length ? 'disabled' : ''}>Let her consider now</button></div>` : '';
+  return card('Reaching out', `<div class="admin-toggle-sub" style="margin-top:0">Now and then she may message your phone about something she wants to share. She can always choose silence. At most ${lim.max_per_day} a day, ${lim.min_gap_hours} h apart; after an unanswered message she waits ${lim.cooldown_hours} h. Tapping the notification opens the chat.</div>
+    <div style="font-size:12px;margin:4px 0"><strong>${state}</strong> · today ${today}/${lim.max_per_day}${o.has_phone ? '' : ' · <span style="color:var(--red)">no phone connected</span>'}</div>
+    <div style="font-size:12px">${now}</div>${last}${sent}${controls}`);
+}
+
+function renderOutreach() {
+  const slot = document.getElementById('persona-outreach');
+  if (slot) slot.innerHTML = outreachCard();
+}
+
+async function loadOutreach() {
+  try { outreach = await api('/outreach'); } catch (err) { outreach = null; }
+  renderOutreach();
+}
+
 function renderAutonomy() {
   const slot = document.getElementById('persona-autonomy');
   if (slot) slot.innerHTML = autonomyCard();
@@ -374,7 +406,7 @@ function render() {
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
   body.innerHTML = tabBar()
-    + `<div data-ptab="now">${statusCard()}<div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
+    + `<div data-ptab="now">${statusCard()}<div id="persona-outreach">${outreachCard()}</div><div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
     + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
     + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
     + `<div data-ptab="identity">${modeCard()}${modulesCard()}</div>`;
@@ -417,6 +449,19 @@ async function onClick(event) {
     } catch (err) { toast(`Persona: ${err.message}`); }
     renderResearch();
     return;
+  }
+  if (['outreach-toggle', 'outreach-pause', 'outreach-consider'].includes(target.dataset.personaAction)) {
+    const act = target.dataset.personaAction;
+    try {
+      if (act === 'outreach-consider') { await api('/outreach/consider', { method: 'POST' }); toast('She\'s thinking about whether to message you'); setTimeout(loadOutreach, 30000); }
+      else await api('/outreach', { method: 'PUT', body: JSON.stringify(act === 'outreach-toggle' ? { enabled: !outreach.enabled } : { paused: !outreach.paused }) });
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    await loadOutreach();
+    return;
+  }
+  if (target.dataset.personaAction === 'open-chat') {
+    closePersonaModal();
+    return;   // the link's #session-id opens the chat
   }
   if (['autonomy-toggle', 'autonomy-pause', 'autonomy-presence'].includes(target.dataset.personaAction)) {
     const act = target.dataset.personaAction;
@@ -504,6 +549,7 @@ export function openPersonaModal() {
   loadInbox();
   loadAutonomy();
   loadTimeline();
+  loadOutreach();
 }
 
 function closePersonaModal() {
