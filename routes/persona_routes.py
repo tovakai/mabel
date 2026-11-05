@@ -1,0 +1,172 @@
+"""Persona sidebar: view and edit Mabel's Phase 01 identity modules and mood.
+
+Reading is for any signed-in user. Changing the stitching mode, editing a
+module or pinning a mood is admin-only (single-user installs count as admin).
+Module edits are validated with the same parser that serves them, so an edit
+the composer would reject is refused here (422) instead of being saved.
+"""
+from __future__ import annotations
+
+import os
+import re
+import tempfile
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from src.auth_helpers import get_current_user, require_user
+
+_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
+
+
+class ModeBody(BaseModel):
+    mode: str
+
+
+class ModuleBody(BaseModel):
+    text: str = Field(max_length=12000)
+
+
+class OverrideBody(BaseModel):
+    mood: str
+    hours: float = Field(default=2.0, gt=0, le=24)
+
+
+def _is_admin(request: Request) -> bool:
+    from src.tool_security import owner_is_admin_or_single_user
+    return bool(owner_is_admin_or_single_user(get_current_user(request)))
+
+
+def _require_admin(request: Request) -> None:
+    if not _is_admin(request):
+        raise HTTPException(403, "Only an admin can change Mabel's persona")
+
+
+def _now() -> datetime:
+    from src.user_time import user_timezone
+    return datetime.now(user_timezone())
+
+
+def _module_path(root: Path, kind: str, name: str) -> Path:
+    if kind == "core":
+        if name != "core":
+            raise HTTPException(404, "Unknown module")
+        return root / "core.md"
+    folder = {"function": "functions", "mood": "moods"}.get(kind)
+    if not folder or not _NAME.fullmatch(name):
+        raise HTTPException(404, "Unknown module")
+    return root / folder / f"{name}.md"
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def setup_persona_routes() -> APIRouter:
+    router = APIRouter(prefix="/api/persona", tags=["persona"])
+
+    def _composer():
+        from src.persona import composer
+        return composer()
+
+    @router.get("")
+    async def overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona import current_mode
+        from src.persona.affect import SCHEDULE, scheduled_mood
+        comp = _composer()
+        local = _now()
+        projection, state = comp.affect.project(local)
+        library = comp.modules.load()
+        root = comp.modules.root
+
+        def entry(module, kind):
+            path = Path(module.path)
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            return {"id": module.id, "kind": kind, "name": module.id.split(".", 1)[-1],
+                    "version": module.version, "sha": module.sha[:12], "ref": module.ref,
+                    "mood_influence": module.meta.get("mood_influence"), "text": text}
+
+        modules = []
+        if library.core:
+            modules.append(entry(library.core, "core"))
+        modules += [entry(m, "function") for m in library.functions.values()]
+        modules += [entry(m, "mood") for m in library.moods.values()]
+        current = state.get("projection") or {}
+        return {
+            "mode": current_mode(),
+            "can_manage": _is_admin(request),
+            "module_root": str(root),
+            "mood": {"current": projection.mood, "source": projection.source, "since": projection.since,
+                     "energy": projection.energy, "scheduled": scheduled_mood(local),
+                     "manual_until": current.get("manual_until") if projection.source == "manual" else None,
+                     "local_time": local.strftime("%H:%M"),
+                     "schedule": [{"from": f"{int(h):02d}:{int(round((h % 1) * 60)):02d}", "mood": m}
+                                  for h, m in SCHEDULE]},
+            "last_composition": comp.last.summary() if comp.last else None,
+            "modules": modules,
+            "errors": library.errors,
+        }
+
+    @router.put("/mode")
+    async def set_mode(body: ModeBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona.composer import MODES
+        mode = body.mode.strip().lower()
+        if mode not in MODES:
+            raise HTTPException(422, f"mode must be one of {', '.join(MODES)}")
+        from src.settings import load_settings, save_settings
+        current = dict(load_settings())
+        current["persona_mode"] = mode
+        save_settings(current)
+        return {"mode": mode}
+
+    @router.put("/modules/{kind}/{name}")
+    async def save_module(kind: str, name: str, body: ModuleBody, request: Request,
+                          _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona.modules import ModuleError, parse_module
+        root = _composer().modules.root
+        path = _module_path(root, kind, name)
+        expected_id = "core" if kind == "core" else f"{kind}.{name}"
+        try:
+            module = parse_module(body.text, kind=kind, path=str(path))
+        except ModuleError as error:
+            raise HTTPException(422, str(error)) from None
+        if module.id != expected_id:
+            raise HTTPException(422, f"id must be {expected_id}")
+        if path.is_symlink():
+            raise HTTPException(422, "refusing to write through a symlink")
+        _atomic_write(path, body.text if body.text.endswith("\n") else body.text + "\n")
+        return {"ref": module.ref, "version": module.version}
+
+    @router.post("/mood-override")
+    async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        comp = _composer()
+        if body.mood not in comp.modules.load().moods:
+            raise HTTPException(422, "Unknown mood")
+        local = _now()
+        projection = comp.affect.set_override(body.mood, local + timedelta(hours=body.hours), local)
+        return {"mood": projection.mood, "source": projection.source}
+
+    @router.delete("/mood-override")
+    async def clear_mood(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        projection = _composer().affect.clear_override(_now())
+        return {"mood": projection.mood, "source": projection.source}
+
+    return router

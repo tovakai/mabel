@@ -31,6 +31,7 @@ import chatRenderer from './js/chatRenderer.js?v=20261028agentapprovals1';
 import sessionModule from './js/sessions.js';
 import { startBackgroundToolJobs } from './js/backgroundToolJobs.js';
 import memoryModule from './js/memory.js';
+import './js/persona.js?v=20261105persona1';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js?v=20260910promptcopy1';
@@ -3840,6 +3841,7 @@ function startOdysseusApp() {
     'rail-gallery':   'tool-gallery-btn',
     'rail-archive':   'tool-library-btn',
     'rail-memory':    'tool-memory-btn',
+    'rail-persona':   'tool-persona-btn',
     'rail-notes':     'tool-notes-btn',
     'rail-skills':    'tool-skills-btn',
     'rail-tasks':     'tool-tasks-btn',

@@ -738,6 +738,8 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 # Episodes tab first: memory routes also define /api/memory/{memory_id}.
 from routes.memory.episodic_routes import setup_episodic_routes
 app.include_router(setup_episodic_routes())
+from routes.persona_routes import setup_persona_routes
+app.include_router(setup_persona_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)

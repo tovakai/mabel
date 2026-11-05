@@ -140,3 +140,23 @@ class AffectStore:
             self.write(state)
         return Projection(target, energy_for(local_now), "time_of_day",
                           state["projection"]["since"], changed), state
+
+    def set_override(self, mood: str, until: datetime, local_now: datetime) -> Projection:
+        """Pin ``mood`` until ``until`` (both timezone-aware); the schedule resumes afterwards."""
+        now = local_now.astimezone(timezone.utc)
+        state = self.read(now)
+        state["projection"] = {"mood": mood, "since": now.isoformat(), "energy": energy_for(local_now),
+                               "source": "manual", "manual_until": until.astimezone(timezone.utc).isoformat()}
+        state["residue"] = (state.get("residue") or [])[-(RESIDUE_LIMIT - 1):] + [
+            {"at": now.isoformat(), "source": "manual", "mood": mood}]
+        self.write(state)
+        return Projection(mood, energy_for(local_now), "manual", now.isoformat(), True)
+
+    def clear_override(self, local_now: datetime) -> Projection:
+        """Drop a manual mood immediately (no hysteresis hold) and return the scheduled one."""
+        now = local_now.astimezone(timezone.utc)
+        state = self.read(now)
+        if state["projection"].get("source") == "manual":
+            state["projection"] = {"mood": None, "since": None, "energy": None, "source": None}
+            self.write(state)
+        return self.project(local_now)[0]
