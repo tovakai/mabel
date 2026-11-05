@@ -25,6 +25,7 @@ let outreach = null;      // /api/persona/outreach
 let life = null;          // /api/lifelog/overview
 let lifeDays = [];
 let lifeOpenDay = null;
+let lifeNewToken = null;    // { device, token } shown once, never stored
 let timelineTimer = null;
 const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['research', 'Research'], ['identity', 'Identity']];
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
@@ -376,11 +377,20 @@ function lifeCard() {
       <textarea id="life-exclude-sites" rows="3" style="${field};margin-top:4px" placeholder="sites">${esc((L.exclude_sites || []).join('\n'))}</textarea>
       <textarea id="life-exclude-apps" rows="2" style="${field};margin-top:4px" placeholder="apps">${esc((L.exclude_apps || []).join('\n'))}</textarea>
       <div style="display:flex;justify-content:flex-end;margin-top:4px"><button type="button" class="theme-io-btn" data-persona-action="life-exclude" style="height:26px;font-size:12px">Save</button></div></details>
-    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Add a device</summary>
-      <div class="admin-toggle-sub">1. Settings → API tokens: create a token with the <code>lifelog_collector</code> profile, one per device.<br>
-      2. On the device (Linux, incl. SteamOS), run, replacing NAME:<br>
-      <code style="user-select:all">read -rsp 'token: ' MABEL_COLLECTOR_TOKEN; echo; export MABEL_COLLECTOR_TOKEN; curl -fsSL -H "Authorization: Bearer $MABEL_COLLECTOR_TOKEN" ${esc(origin)}/api/lifelog/collector.py -o /tmp/mabel-collector.py && python3 /tmp/mabel-collector.py install --url ${esc(origin)} --device NAME; unset MABEL_COLLECTOR_TOKEN</code><br>
-      You paste the token once (hidden); it installs a user service. Your phone comes in through Home Assistant: enable the Companion app sensors (steps, detected activity, last used app, geocoded location, media session).</div></details>` : '';
+    <details style="margin-top:8px" ${lifeNewToken ? 'open' : ''}><summary style="cursor:pointer;font-size:12px">Add a device</summary>
+      <div class="admin-toggle-sub">Each computer (desktop, laptop, Steam Frame) gets its own collector token. Your phone needs none: it comes through Home Assistant.</div>
+      <div style="display:flex;gap:6px;margin-top:4px"><input id="life-device-name" placeholder="device name, e.g. laptop" value="${esc(lifeNewToken ? lifeNewToken.device : '')}" style="${field};flex:1">
+        <button type="button" class="theme-io-btn" data-persona-action="life-token" style="height:26px;font-size:12px">Create token</button></div>
+      ${lifeNewToken ? `<div style="margin-top:6px;padding:6px 8px;border:1px solid var(--accent, var(--red));border-radius:6px;font-size:12px">
+        <div><strong>Token for ${esc(lifeNewToken.device)}</strong> (shown only now; copy it):</div>
+        <code style="user-select:all;word-break:break-all">${esc(lifeNewToken.token)}</code>
+        <button type="button" class="theme-io-btn" data-persona-action="life-token-copy" style="height:22px;font-size:11px;margin-left:6px">Copy</button>
+        <div style="margin-top:6px">On <strong>this PC</strong> (the desktop), in a terminal in the Mabel folder:</div>
+        <code style="user-select:all;word-break:break-all">read -rsp 'token: ' MABEL_COLLECTOR_TOKEN; echo; MABEL_COLLECTOR_TOKEN=$MABEL_COLLECTOR_TOKEN python3 scripts/lifelog_collector.py install --url http://127.0.0.1:7000 --device ${esc(lifeNewToken.device)}</code>
+        <div style="margin-top:6px">On <strong>another device</strong> (laptop, Steam Frame), in a terminal:</div>
+        <code style="user-select:all;word-break:break-all">read -rsp 'token: ' MABEL_COLLECTOR_TOKEN; echo; export MABEL_COLLECTOR_TOKEN; curl -fsSL -H "Authorization: Bearer $MABEL_COLLECTOR_TOKEN" ${esc(origin)}/api/lifelog/collector.py -o /tmp/mabel-collector.py && python3 /tmp/mabel-collector.py install --url ${esc(origin)} --device ${esc(lifeNewToken.device)}; unset MABEL_COLLECTOR_TOKEN</code>
+        <div class="admin-toggle-sub">Paste the token at the hidden "token:" prompt. Tokens can only send activity; nothing else.</div></div>` : ''}
+      <div class="admin-toggle-sub" style="margin-top:6px">Phone: in the Home Assistant Companion app, enable the sensors Steps, Detected activity, Last used app, Geocoded location and Media session.</div></details>` : '';
   return card('Life log', `<div class="admin-toggle-sub" style="margin-top:0">What your devices tell Mabel (stored only on this PC; browsing as page titles + sites; raw data kept ${esc(String(L.retention_days || 30))} days). Every morning at 06:00 she writes her own account of your day.</div>
     <div style="font-size:12px;margin:4px 0"><strong>${L.enabled ? (L.paused ? 'Paused' : 'Recording') : 'Off'}</strong></div>
     ${devices}
@@ -513,6 +523,23 @@ async function onClick(event) {
     await loadOutreach();
     return;
   }
+  if (target.dataset.personaAction === 'life-token-copy') {
+    try { await navigator.clipboard.writeText(lifeNewToken.token); toast('Token copied'); } catch { toast('Select the token and copy it'); }
+    return;
+  }
+  if (target.dataset.personaAction === 'life-token') {
+    const device = (document.getElementById('life-device-name')?.value || '').toLowerCase().trim().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!device) { toast('Give the device a name first'); return; }
+    try {
+      const fd = new FormData(); fd.append('name', `lifelog: ${device}`); fd.append('profile', 'lifelog_collector');
+      const r = await fetch(`${window.location.origin}/api/tokens`, { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+      lifeNewToken = { device, token: data.token };
+    } catch (err) { toast(`Life log: ${err.message}`); }
+    renderLife();
+    return;
+  }
   if (['life-pause', 'life-exclude', 'open-day'].includes(target.dataset.personaAction)) {
     event.preventDefault();
     const act = target.dataset.personaAction;
@@ -634,6 +661,7 @@ function closePersonaModal() {
   clearTimeout(inboxTimer);
   clearTimeout(autonomyTimer);
   clearTimeout(timelineTimer);
+  lifeNewToken = null;               // a shown token never outlives the panel
   const modal = document.getElementById('persona-modal');
   if (modal) modal.classList.add('hidden');
 }
