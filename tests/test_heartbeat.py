@@ -173,5 +173,8 @@ def test_presence_via_home_assistant_integration(monkeypatch):
         return SimpleNamespace(status_code=200, json=lambda: {"state": "not_home"})
     assert signals.read_presence(get) == ("away", "person.anthon")
     assert seen["url"] == "http://homeassistant.lan:8123/api/states/person.anthon" and seen["auth"] == "Bearer secret"
+    monkeypatch.setattr("src.integrations.load_integrations", lambda: [   # added by hand, no preset
+        {"name": "Home Assistant", "enabled": True, "base_url": "http://homeassistant.lan", "api_key": "secret"}])
+    assert signals.read_presence(get) == ("away", "person.anthon")
     monkeypatch.setattr("src.integrations.load_integrations", lambda: [])
     assert signals.read_presence(get) == ("not_configured", "person.anthon")

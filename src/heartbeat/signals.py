@@ -115,7 +115,9 @@ def read_presence(get=None) -> tuple[str, str]:
         from src.integrations import load_integrations
         from src.settings import get_setting
         entity = str(get_setting("heartbeat_presence_entity", "") or "").strip()
-        ha = next((i for i in load_integrations() if i.get("preset") == "homeassistant" and i.get("enabled")), None)
+        ha = next((i for i in load_integrations() if i.get("enabled") and (
+            i.get("preset") == "homeassistant"
+            or re.sub(r"[^a-z]", "", str(i.get("name") or "").lower()) in ("homeassistant", "hassio", "hass"))), None)
     except Exception:
         return "unknown", ""
     if not entity or not ha or not ha.get("base_url") or not ha.get("api_key"):
