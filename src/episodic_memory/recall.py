@@ -128,6 +128,26 @@ def search_verified_episodes(
     matches = []
     skipped_invalid = 0
     for candidate in page:
+        if str(candidate.get("source_ref") or "").startswith("lifelog:day:"):
+            # A kept moment from Mabel's account of his day: re-verify it against the day note.
+            from .promotion import _verified_day_moment
+            note = _verified_episode_path(parent, candidate["id"], candidate["decision_reason"])
+            try:
+                date, moment = _verified_day_moment(candidate, vault_root) if note else (None, None)
+            except CandidateAdmissionError:
+                note = None
+            current = queue.get(candidate["id"]) if note else None
+            if not note or current is None or current["state"] != "promoted" \
+                    or current["decision_reason"] != candidate["decision_reason"]:
+                skipped_invalid += 1
+                continue
+            score = 2 * len(query_tokens.intersection(_tokens(moment)))
+            if score:
+                matches.append({"candidate_id": candidate["id"], "source_ref": candidate["source_ref"],
+                                "evidence_status": "day_note_verified", "note_path": note, "occurred_at": date,
+                                "lexical_score": score, "user_excerpt": f"(from his day, {date}) {moment}",
+                                "assistant_excerpt": ""})
+            continue
         if (
             candidate["source_kind"] != "conversation"
             or candidate["kind"] != "experience"

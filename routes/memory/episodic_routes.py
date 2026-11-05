@@ -28,7 +28,16 @@ class EpisodicSettings(BaseModel):
     recall_enabled: Optional[bool] = None
 
 
+_DAY = re.compile(r"^lifelog:day:(?P<date>\d{4}-\d{2}-\d{2})$")
+
+
 def _item(row: dict) -> dict:
+    day = _DAY.match(str(row.get("source_ref") or ""))
+    if day:      # a moment from Mabel's account of his day
+        return {"id": row["id"], "kind": row.get("kind"), "state": row.get("state"),
+                "created_at": row.get("created_at"), "updated_at": row.get("updated_at"), "session_id": None,
+                "source_label": f"From your day, {day.group('date')}", "user_excerpt": str(row.get("summary") or ""),
+                "assistant_excerpt": "", "interpretation": row.get("interpretation") or ""}
     match = _SUMMARY.match(str(row.get("summary") or ""))
     source = _SOURCE.match(str(row.get("source_ref") or ""))
     return {
@@ -78,7 +87,7 @@ def setup_episodic_routes() -> APIRouter:
         from routes.prefs_routes import _load_for_user
         from src.episodic_memory import CandidateAdmissionError, CapturePolicy
         from src.episodic_memory.chat_recall import capture_enabled, vault_paths
-        from src.episodic_memory.promotion import promote_verified_conversation
+        from src.episodic_memory.promotion import promote_verified
         queue = _queue(request)
         if not capture_enabled():
             raise HTTPException(409, "Episodic memory is turned off")
@@ -86,7 +95,7 @@ def setup_episodic_routes() -> APIRouter:
         vault_root, protected = vault_paths()
         try:
             with SessionLocal() as db:
-                saved = promote_verified_conversation(
+                saved = promote_verified(
                     queue, candidate_id, db=db, vault_root=vault_root, protected_roots=protected,
                     policy=CapturePolicy(episodic_enabled=True,
                                          memory_enabled=bool(prefs.get("memory_enabled", True))),

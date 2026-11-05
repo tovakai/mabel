@@ -114,8 +114,14 @@ A short factual run-through in time order, using only what's recorded above (app
 ## What stood out to me
 A few honest observations: patterns, moods, what he seemed into. Your take, kind and curious, not judgmental; no lecturing about screen time or sleep.
 
+## Moments worth remembering
+One to three concrete moments from this day that would be worth remembering a month from now, one sentence each, as a bullet list. Only from what's recorded or in his journal.
+
 ## Things I'm curious about
-One to three things you'd genuinely like to ask him about, as a bullet list."""
+One to three things you'd genuinely like to ask him about, as a bullet list.
+
+## Things I might look into
+Zero to two things from his day you'd like to research for yourself (a game, a show, a place, an idea), as bullets in the form "Subject: the question you'd want answered". Leave the list empty if nothing grabs you."""
     system = "You are Mabel."
     try:
         from src.persona import composer
@@ -136,11 +142,64 @@ One to three things you'd genuinely like to ask him about, as a bullet list."""
             "devices": [d["device"] for d in summary["devices"]],
             "top_games": [g["name"] for g in summary["games"][:3]], "journal_notes": [n["note"] for n in journal],
             "curious": curious, "written": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    from src.episodic_memory.promotion import day_moments
+    research = []
+    block = re.search(r"## Things I might look into\s*(.*?)(?=\n## |\Z)", text, re.S)
+    for line in (block.group(1).splitlines() if block else []):
+        line = re.sub(r"^[-*\d.)\s]+", "", line).strip()
+        if ":" in line:
+            subject, question = (x.strip() for x in line.split(":", 1))
+            if subject and question:
+                research.append({"subject": subject[:80], "question": question[:300]})
+    meta["moments"] = day_moments(text)[:3]
+    meta["look_into"] = research[:2]
     path = mabel_vault / "journal" / "anthon" / f"{meta['date']}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000) + "---\n" + text + "\n",
                     encoding="utf-8")
-    return {"status": "written", "date": meta["date"], "path": str(path.relative_to(mabel_vault)), "curious": curious}
+    rel = str(path.relative_to(mabel_vault))
+    return {"status": "written", "date": meta["date"], "path": rel, "curious": curious,
+            "memories": _propose_memories(meta["date"], meta["moments"], owner),
+            "research": _propose_research(rel, meta["look_into"])}
+
+
+def _propose_memories(date: str, moments: list[str], owner: str) -> int:
+    """Each moment becomes an episodic memory candidate; he decides in Memory -> Episodes."""
+    try:
+        from src.constants import DATA_DIR
+        from src.episodic_memory import CandidateQueue, CapturePolicy
+        from src.episodic_memory.candidates import CandidateDraft
+        from src.episodic_memory.chat_recall import capture_enabled, vault_paths
+        if not capture_enabled():
+            return 0
+        _root, protected = vault_paths()
+        queue = CandidateQueue(Path(DATA_DIR) / "episodic_candidates", owner=owner, protected_roots=protected)
+        made = 0
+        import hashlib
+        for moment in moments:
+            row = queue.propose(CandidateDraft(
+                kind="experience", actor="mabel", source_kind="tool_observation", source_ref=f"lifelog:day:{date}",
+                source_event_id=f"moment:{hashlib.sha256(moment.encode()).hexdigest()[:16]}",
+                origin="daily_life_account", summary=moment[:1200]),
+                policy=CapturePolicy(episodic_enabled=True, memory_enabled=True))
+            made += bool(row.get("created"))
+        return made
+    except Exception:
+        logger.warning("[lifelog] memory candidates not proposed", exc_info=True)
+        return 0
+
+
+def _propose_research(article: str, items: list[dict]) -> int:
+    """Things she wants to look into join her curiosity backlog (cooling off like any new branch)."""
+    try:
+        from src.constants import DATA_DIR
+        from src.curiosity.backlog import Backlog
+        log = Backlog(Path(DATA_DIR) / "curiosity" / "backlog.json")
+        return sum(log.add_from_article(article=article, subject=i["subject"], questions=[i["question"]],
+                                        links=[])["questions"] for i in items)
+    except Exception:
+        logger.warning("[lifelog] research candidates not added", exc_info=True)
+        return 0
 
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:

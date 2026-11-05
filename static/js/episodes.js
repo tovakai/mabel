@@ -30,8 +30,10 @@ function card(item, actions) {
   return `
     <div class="memory-item episode-item" data-episode-id="${esc(item.id)}" style="flex-direction:column;max-height:none;gap:6px">
       <div class="admin-toggle-sub" style="margin:0;opacity:0.6">${esc(when(item.created_at))}</div>
-      <div style="font-size:12px"><strong>You said:</strong> ${esc(excerpt(item.user_excerpt))}</div>
-      <div style="font-size:12px"><strong>Mabel replied:</strong> ${esc(excerpt(item.assistant_excerpt))}</div>
+      ${item.source_label
+        ? `<div style="font-size:12px"><strong>${esc(item.source_label)}:</strong> ${esc(excerpt(item.user_excerpt))}</div>`
+        : `<div style="font-size:12px"><strong>You said:</strong> ${esc(excerpt(item.user_excerpt))}</div>
+      <div style="font-size:12px"><strong>Mabel replied:</strong> ${esc(excerpt(item.assistant_excerpt))}</div>`}
       ${buttons ? `<div style="display:flex;gap:6px;justify-content:flex-end">${buttons}</div>` : ''}
     </div>`;
 }

@@ -189,17 +189,18 @@ def _write_once(path: Path, content: bytes) -> None:
             Path(temp_name).unlink(missing_ok=True)
 
 
-def promote_verified_conversation(
+def _promote(
     queue: CandidateQueue,
     candidate_id: str,
     *,
-    db,
     vault_root: str | Path,
     protected_roots: tuple[str | Path, ...],
     policy: CapturePolicy,
-    approved: bool = False,
+    approved: bool,
+    build,
+    evidence: str,
 ) -> dict:
-    """Explicit operator-reviewed promotion; no automatic calls are permitted.
+    """Shared promotion core: ``build(row)`` verifies the source and returns the note text.
 
     Stage a stable digest in the local queue before creating the Markdown file.
     If the process crashes after creation but before finalization, a retry with
@@ -223,8 +224,7 @@ def promote_verified_conversation(
             raise CandidateAdmissionError("Promoted episode missing or changed")
         return {**row, "changed": False, "episode_path": str(path)}
 
-    user, assistant = _verified_transcript(queue, row, db)
-    body = _episode_markdown(row, user, assistant).encode("utf-8")
+    body = build(row).encode("utf-8")
     digest = sha256(body).hexdigest()
     path = _target(queue, candidate_id, vault_root, protected_roots)
     with queue._connect() as conn:
@@ -265,9 +265,9 @@ def promote_verified_conversation(
         if current["state"] != "promoting" or current["decision_reason"] != digest:
             raise CandidateAdmissionError("Promotion intent changed unexpectedly")
         conn.execute(
-            "UPDATE candidates SET state='promoted', evidence_status='transcript_verified', "
+            "UPDATE candidates SET state='promoted', evidence_status=?, "
             "updated_at=? WHERE owner=? AND id=?",
-            (_now(), queue.owner, candidate_id),
+            (evidence, _now(), queue.owner, candidate_id),
         )
         conn.execute(
             "INSERT INTO event_outbox(id,candidate_id,kind,payload,created_at) "
@@ -280,3 +280,97 @@ def promote_verified_conversation(
         )
         final = conn.execute("SELECT * FROM candidates WHERE id=?", (candidate_id,)).fetchone()
         return {**dict(final), "changed": True, "episode_path": str(path)}
+
+
+def promote_verified_conversation(
+    queue: CandidateQueue,
+    candidate_id: str,
+    *,
+    db,
+    vault_root: str | Path,
+    protected_roots: tuple[str | Path, ...],
+    policy: CapturePolicy,
+    approved: bool = False,
+) -> dict:
+    """Explicit operator-reviewed promotion of a persisted conversation turn."""
+    return _promote(queue, candidate_id, vault_root=vault_root, protected_roots=protected_roots, policy=policy,
+                    approved=approved, evidence="transcript_verified",
+                    build=lambda row: _episode_markdown(row, *_verified_transcript(queue, row, db)))
+
+
+# --- moments from Mabel's daily account of Anthon's day (src/lifelog) ------------------------
+
+_DAY_SOURCE = re.compile(r"lifelog:day:(?P<date>\d{4}-\d{2}-\d{2})")
+DAY_DIR = ("journal", "anthon")
+MOMENTS_HEADING = "Moments worth remembering"
+
+
+def day_moments(text: str) -> list[str]:
+    """The bullets under "Moments worth remembering" in a day note."""
+    match = re.search(rf"^##\s+{re.escape(MOMENTS_HEADING)}\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    if not match:
+        return []
+    return [" ".join(re.sub(r"^[-*\d.)\s]+", "", line).split())
+            for line in match.group(1).splitlines() if line.strip().startswith(("-", "*"))]
+
+
+def _verified_day_moment(candidate: dict, vault_root: str | Path) -> tuple[str, str]:
+    """Prove the moment still appears in Mabel's day note; returns (date, moment)."""
+    match = _DAY_SOURCE.fullmatch(str(candidate.get("source_ref") or ""))
+    if candidate.get("source_kind") != "tool_observation" or candidate.get("kind") != "experience" or not match:
+        raise CandidateAdmissionError("Not a moment from a daily account")
+    path = Path(vault_root).expanduser().joinpath(*DAY_DIR, f"{match.group('date')}.md")
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+        raise CandidateAdmissionError("The daily account this moment came from is missing")
+    moment = " ".join(str(candidate.get("summary") or "").split())
+    if moment not in day_moments(path.read_text(encoding="utf-8")):
+        raise CandidateAdmissionError("The daily account no longer contains this moment")
+    return match.group("date"), moment
+
+
+def _day_moment_markdown(candidate: dict, date: str, moment: str) -> str:
+    return (
+        "---\n"
+        f"id: episode_{candidate['id']}\n"
+        "type: episodic\n"
+        "actor: mabel\n"
+        f"owner: {json.dumps(candidate['owner'])}\n"
+        f"source_kind: {json.dumps(candidate['source_kind'])}\n"
+        f"source_ref: {json.dumps(candidate['source_ref'])}\n"
+        f"source_event_id: {json.dumps(candidate['source_event_id'])}\n"
+        f"occurred_at: {json.dumps(date)}\n"
+        "evidence_status: day_note_verified\n"
+        "status: active\n"
+        "---\n\n"
+        f"# A moment from Anthon's day ({date})\n\n"
+        "This note verifies that the moment appears in Mabel's own account of that day "
+        f"(journal/anthon/{date}.md), which she wrote from recorded activity and his journal. "
+        "It is her recollection, not independent proof that it happened exactly so.\n\n"
+        "## Moment\n\n" + _fenced(moment)
+    )
+
+
+def promote_verified_day_moment(
+    queue: CandidateQueue,
+    candidate_id: str,
+    *,
+    vault_root: str | Path,
+    protected_roots: tuple[str | Path, ...],
+    policy: CapturePolicy,
+    approved: bool = False,
+) -> dict:
+    """Explicit operator-reviewed promotion of a moment from a daily account."""
+    return _promote(queue, candidate_id, vault_root=vault_root, protected_roots=protected_roots, policy=policy,
+                    approved=approved, evidence="day_note_verified",
+                    build=lambda row: _day_moment_markdown(row, *_verified_day_moment(row, vault_root)))
+
+
+def promote_verified(queue: CandidateQueue, candidate_id: str, *, db, vault_root, protected_roots,
+                     policy: CapturePolicy, approved: bool = False) -> dict:
+    """Promote whichever kind of candidate this is (conversation turn or day moment)."""
+    row = queue.get(candidate_id)
+    if row is not None and str(row.get("source_ref") or "").startswith("lifelog:day:"):
+        return promote_verified_day_moment(queue, candidate_id, vault_root=vault_root,
+                                           protected_roots=protected_roots, policy=policy, approved=approved)
+    return promote_verified_conversation(queue, candidate_id, db=db, vault_root=vault_root,
+                                         protected_roots=protected_roots, policy=policy, approved=approved)

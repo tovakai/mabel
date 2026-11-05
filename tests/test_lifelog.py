@@ -105,7 +105,7 @@ def test_collector_spans_names_and_browser_privacy(tmp_path, monkeypatch):
     assert c.browser_visits(cursors) == [], "the cursor prevents re-sending"
 
 
-def test_compose_day_writes_her_account(tmp_path):
+def test_compose_day_writes_her_account(tmp_path, monkeypatch):
     from src.lifelog.compose import compose_day, journal_for
     store = Store(tmp_path / "l.sqlite")
     day = datetime(2026, 11, 5, 6, 0, tzinfo=TZ)
@@ -120,9 +120,18 @@ def test_compose_day_writes_her_account(tmp_path):
     async def ask(messages, owner):
         seen["prompt"] = messages[-1]["content"]
         return ("# Anthon's day: Thursday 5 November\n\n## Timeline\n- 22:00 SomeGameVR for an hour.\n\n"
-                "## What stood out to me\nA calm day.\n\n## Things I'm curious about\n- What did you buy at the shop?\n")
+                "## What stood out to me\nA calm day.\n\n## Moments worth remembering\n- He went to the shop and felt good.\n\n"
+                "## Things I'm curious about\n- What did you buy at the shop?\n\n"
+                "## Things I might look into\n- Some Game: how did its VR mode change the game?\n")
     mabel = tmp_path / "mabel"
+    proposed = {}
+    import src.lifelog.compose as compose_mod
+    monkeypatch.setattr(compose_mod, "_propose_memories", lambda date, moments, owner: proposed.update(m=(date, moments)) or 1)
+    monkeypatch.setattr(compose_mod, "_propose_research", lambda article, items: proposed.update(r=(article, items)) or 1)
     result = asyncio.run(compose_day(day, store=store, ask=ask, vault=vault, mabel_vault=mabel))
+    assert proposed["m"] == ("2026-11-05", ["He went to the shop and felt good."])
+    assert proposed["r"] == ("journal/anthon/2026-11-05.md",
+                             [{"subject": "Some Game", "question": "how did its VR mode change the game?"}])
     assert result["status"] == "written" and result["curious"] == ["What did you buy at the shop?"]
     assert "SomeGameVR (60 min)" in seen["prompt"] and "Went to the shop" in seen["prompt"]
     written = (mabel / "journal" / "anthon" / "2026-11-05.md").read_text()
@@ -159,3 +168,40 @@ def test_ingest_requires_the_lifelog_scope(tmp_path, monkeypatch):
     assert client.post("/api/lifelog/ingest", json=body).json() == {"stored": 1, "skipped": 0}
     assert store.devices()[0]["token_id"] == "tok1"
     assert "lifelog_collector" in client.get("/api/lifelog/collector.py").text
+
+
+def test_day_moment_promotion_and_recall_are_verified_against_the_day_note(tmp_path):
+    from src.episodic_memory import CandidateQueue, CapturePolicy
+    from src.episodic_memory.candidates import CandidateDraft, CandidateAdmissionError
+    from src.episodic_memory.promotion import promote_verified
+    from src.episodic_memory.recall import search_verified_episodes
+    mabel = tmp_path / "mabel"
+    (mabel / "journal" / "anthon").mkdir(parents=True)
+    note = mabel / "journal" / "anthon" / "2026-11-05.md"
+    note.write_text("# Anthon's day\n\n## Moments worth remembering\n- He finally beat the boss in Hades.\n\n## Timeline\n- x\n")
+    queue = CandidateQueue(tmp_path / "q", owner="alice", protected_roots=(tmp_path / "source",))
+    policy = CapturePolicy(episodic_enabled=True, memory_enabled=True)
+    row = queue.propose(CandidateDraft(kind="experience", actor="mabel", source_kind="tool_observation",
+                                       source_ref="lifelog:day:2026-11-05", source_event_id="moment:abc",
+                                       origin="daily_life_account", summary="He finally beat the boss in Hades."),
+                        policy=policy)
+    saved = promote_verified(queue, row["id"], db=None, vault_root=mabel, protected_roots=(tmp_path / "source",),
+                             policy=policy, approved=True)
+    assert saved["state"] == "promoted" and saved["evidence_status"] == "day_note_verified"
+    episode = Path(saved["episode_path"]).read_text()
+    assert "He finally beat the boss in Hades." in episode and "day_note_verified" in episode
+    hits = search_verified_episodes(queue, "did I beat the Hades boss?", db=None, vault_root=mabel,
+                                    protected_roots=(tmp_path / "source",), policy=policy, approved=True)
+    found = hits["results"]
+    assert found and "beat the boss in Hades" in found[0]["user_excerpt"]
+    other = queue.propose(CandidateDraft(kind="experience", actor="mabel", source_kind="tool_observation",
+                                         source_ref="lifelog:day:2026-11-05", source_event_id="moment:def",
+                                         origin="daily_life_account", summary="Something that was never written."),
+                          policy=policy)
+    with pytest.raises(CandidateAdmissionError):
+        promote_verified(queue, other["id"], db=None, vault_root=mabel, protected_roots=(tmp_path / "source",),
+                         policy=policy, approved=True)
+    note.write_text("# Anthon's day\n\n## Moments worth remembering\n- Edited away.\n")
+    gone = search_verified_episodes(queue, "did I beat the Hades boss?", db=None, vault_root=mabel,
+                                    protected_roots=(tmp_path / "source",), policy=policy, approved=True)
+    assert not (gone["results"]), "a moment edited out of the note isn't recalled"

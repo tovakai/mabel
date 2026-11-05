@@ -177,7 +177,9 @@ class Session:
                 cand.reasons.append(f"Dottie already gathered {len(urls)} sources for it")
         for item in self.backlog.eligible_questions()[:3]:
             pool.append(Candidate(item["subject"], "open_question", question=item["question"], ref=item["id"],
-                                  reasons=[f"your open question from {Path(item['from_article']).stem}"]))
+                                  reasons=[f"something from Anthon's day ({Path(item['from_article']).stem})"
+                                           if str(item.get("from_article", "")).startswith("journal/anthon/")
+                                           else f"your open question from {Path(item['from_article']).stem}"]))
         for item in self.backlog.eligible_spawned()[:2]:
             if item["name"].casefold() not in researched:
                 pool.append(Candidate(item["name"], "spawned", ref=item["id"],
