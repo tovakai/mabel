@@ -28,7 +28,7 @@ import httpx
 BASE = "http://127.0.0.1:7000"
 MODEL = "qwen3.8-flash-next-gyro-gyro-s"
 ENDPOINT_ID = "0ed87a9e"
-VAULT_LIBRARY = Path("/home/user/Documents/core of truth/Library")
+VAULT_LIBRARY = Path(json.loads((Path(__file__).resolve().parents[1] / "data" / "vault_target.json").read_text())["path"]).expanduser() / "Library"
 
 VAULT_TOOLS = {"vault_knowledge_search", "vault_read_range", "vault_traverse_graph",
                "vault_retrieve_batch", "vault_index_status", "read_file", "grep", "glob", "ls",

@@ -395,7 +395,7 @@ def send_notification(message: str, link: str, tag: str, post=None) -> bool:
 
 
 def chat_link(session_id: str) -> str:
-    base = str(_setting("initiative_public_url", "") or "").strip().rstrip("/") or "https://mabel.example.ts.net"
+    base = str(_setting("initiative_public_url", "") or "").strip().rstrip("/") or "http://localhost:7000"
     return f"{base}/#{session_id}"
 
 

@@ -96,7 +96,7 @@ def test_run_once_sends_with_context_and_reply_marks_answered(tmp_path, monkeypa
     async def ask(messages, owner):
         return json.dumps({"send": True, "pick": 1, "message": "Toei was basically an anime factory. Thoughts?", "why": "it stuck"})
     result = asyncio.run(outreach.run_once(owner="a", now=NOW, ask=ask, model_free=True, store=store, mabel_vault=vault))
-    assert result["status"] == "sent" and notified["link"] == "https://mabel.example.ts.net/#sess-1"
+    assert result["status"] == "sent" and notified["link"] == "http://localhost:7000/#sess-1"
     assert created["title"] == "💭 Toei" and created["metadata"]["background_tool_result"]["report"].startswith("# Toei")
     assert ledger == ["outreach.reviewed", "outreach.sent"]
     again = asyncio.run(outreach.run_once(owner="a", now=NOW + timedelta(minutes=30), ask=ask, model_free=True,
