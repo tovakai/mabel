@@ -1,7 +1,13 @@
 """Phase 2: one Curiosity Whisper, a continuing thought Mabel may bring up.
 
-Manually seeded for now (origin ``user_seeded``); later Dottie suggests and
-Mabel selects (``self_generated``). It is served only in social turns, as an
+Two origins: ``user_seeded`` (typed in the Persona sidebar) and
+``self_generated`` (proposed automatically by one of her curiosity sources).
+Every whisper also records its ``source``: ``manual`` for the sidebar, and a
+source tag for automatic ones (``research`` today; calendar, mail and
+conversation topics are reserved for later). Automatic sources go through
+``WhisperStore.propose``, which applies one shared rule: a whisper the user
+seeded is never replaced automatically; an automatic one is replaced by a
+newer automatic proposal. It is served only in social turns, as an
 optional thought she can mention if the conversation naturally connects, and
 it cools off after it has come up so it cannot take over every chat.
 
@@ -27,6 +33,10 @@ DEFAULT_DAYS = 14
 COOLDOWN_HOURS = 12        # after it comes up, stay quiet this long
 HISTORY_LIMIT = 20
 ORIGINS = ("user_seeded", "self_generated")
+# Where a whisper came from. Only "manual" is user_seeded; the rest are
+# automatic sources (add a tag here when a new source is wired in).
+SOURCES = ("manual", "research", "calendar", "mail", "conversation")
+AUTO_DAYS = 7
 _STOP = {"the", "and", "for", "with", "about", "into", "from", "that", "this", "how", "what", "why", "its"}
 _LOCK = threading.Lock()
 
@@ -111,9 +121,11 @@ class WhisperStore:
         return whisper
 
     def seed(self, topic: str, thought: str, *, now: datetime, reference: str = "",
-             days: float = DEFAULT_DAYS, origin: str = "user_seeded") -> dict:
+             days: float = DEFAULT_DAYS, origin: str = "user_seeded", source: str = "manual") -> dict:
         if origin not in ORIGINS:
             raise WhisperError("unknown origin")
+        if source not in SOURCES or (source == "manual") != (origin == "user_seeded"):
+            raise WhisperError("unknown source, or source does not match origin")
         if not 0 < float(days) <= 90:
             raise WhisperError("days must be between 0 and 90")
         now = now.astimezone(timezone.utc)
@@ -123,6 +135,7 @@ class WhisperStore:
             "thought": _clean(thought, THOUGHT_LIMIT, "thought"),
             "reference": _clean(reference, REFERENCE_LIMIT, "reference") if str(reference or "").strip() else "",
             "origin": origin,
+            "source": source,
             "created_at": now.isoformat(),
             "expires_at": (now + timedelta(days=float(days))).isoformat(),
             "last_discussed_at": None,
@@ -135,6 +148,18 @@ class WhisperStore:
             data["active"] = whisper
             self._write(data)
         return whisper
+
+    def propose(self, source: str, topic: str, thought: str, *, now: datetime, reference: str = "",
+                days: float = AUTO_DAYS) -> tuple[dict | None, str]:
+        """An automatic curiosity source offers a whisper. Returns (whisper or None, reason)."""
+        if source == "manual" or source not in SOURCES:
+            raise WhisperError("automatic proposals need an automatic source")
+        active = self.active(now)
+        if active and active.get("origin") == "user_seeded":
+            return None, "kept_user_seeded"
+        whisper = self.seed(topic, thought, now=now, reference=reference, days=days,
+                            origin="self_generated", source=source)
+        return whisper, "replaced_automatic" if active else "set"
 
     def retire(self, now: datetime, reason: str = "retired") -> None:
         with _LOCK:

@@ -397,14 +397,32 @@ Give at least one quote for every source you cite; quotes must be copied exactly
                                               links=fresh)
         if (choice.get("candidate") or {}).get("ref"):
             self.backlog.mark(choice["candidate"]["ref"], "done")
+        whisper_outcome = self._propose_whisper(choice, draft.whisper, rel, check["status"])
         self._journal(choice, rel, check, draft)
         result = {"article": rel, "status": check["status"], "problems": check["problems"],
                   "verified": check["verified"], "cited": check["cited"], "questions": draft.questions,
-                  "links": draft.links, "whisper": draft.whisper, "backlog_added": added}
+                  "links": draft.links, "whisper": draft.whisper, "whisper_outcome": whisper_outcome,
+                  "backlog_added": added}
         self._checkpoint("write", result)
         self.backlog.record_session({"id": self.id, "started_at": self.state["started_at"], "subject": choice["subject"],
                                      "article": rel, "status": check["status"]})
         return result
+
+    def _propose_whisper(self, choice: dict, thought: str, article: str, status: str) -> str:
+        """Her "what stuck with me" line becomes her whisper (research source), unless the user seeded one."""
+        if not thought:
+            return "no_thought"
+        if status != "verified":
+            return "article_needs_review"
+        try:
+            from src.persona.whisper import WhisperStore
+            store = WhisperStore(self.paths.data.parent / "persona" / "whispers.json")
+            _whisper, reason = store.propose("research", choice["subject"][:80], thought, now=_now(),
+                                             reference=article)
+            return reason
+        except Exception as error:
+            logger.warning("[curiosity] whisper proposal failed: %s", error)
+            return "failed"
 
     def _journal(self, choice: dict, article: str, check: dict, draft) -> None:
         day = _now().astimezone()

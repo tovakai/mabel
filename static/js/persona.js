@@ -88,7 +88,7 @@ function whisperCard() {
   if (w) {
     const status = data.whisper_servable ? 'can come up in casual chat'
       : `came up ${when(w.last_discussed_at)}; quiet for ${data.whisper_cooldown_hours} h`;
-    current = `<div style="font-size:13px"><strong>${esc(w.topic)}</strong> <span style="opacity:0.65;font-size:11px">${esc(w.origin)} · ${esc(status)} · expires ${esc(new Date(w.expires_at).toLocaleDateString())}</span></div>
+    current = `<div style="font-size:13px"><strong>${esc(w.topic)}</strong> <span style="opacity:0.65;font-size:11px">${esc(w.origin === 'user_seeded' ? 'seeded by you' : `her own (${w.source || 'auto'})`)} · ${esc(status)} · expires ${esc(new Date(w.expires_at).toLocaleDateString())}</span></div>
       <div style="font-size:12px;margin-top:4px;font-style:italic">${esc(w.thought)}</div>
       ${w.reference ? `<div class="admin-toggle-sub">Ref: ${esc(w.reference)}</div>` : ''}
       ${data.can_manage ? '<div style="display:flex;justify-content:flex-end;margin-top:4px"><button type="button" class="theme-io-btn" data-persona-action="retire-whisper" style="height:24px;font-size:11px">Retire</button></div>' : ''}`;
@@ -103,7 +103,7 @@ function whisperCard() {
         <select id="persona-whisper-days" class="memory-edit-cat-select"><option value="3">3 days</option><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select>
         <button type="button" class="theme-io-btn" data-persona-action="seed-whisper" style="height:26px;font-size:12px">Save</button>
       </div></details>` : '';
-  return card('Curiosity whisper', `<div class="admin-toggle-sub" style="margin-top:0">One continuing thought she may mention in casual chat if it naturally connects. After it comes up it stays quiet for a while.</div>${current}${form}`);
+  return card('Curiosity whisper', `<div class="admin-toggle-sub" style="margin-top:0">One continuing thought she may mention in casual chat if it naturally connects. After it comes up it stays quiet for a while. Her own research can set it automatically, but never replaces one you seeded.</div>${current}${form}`);
 }
 
 function modeCard() {

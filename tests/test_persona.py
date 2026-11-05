@@ -331,3 +331,22 @@ def test_whisper_api_seed_and_retire(monkeypatch, tmp_path):
     assert data["activity"]["rules"]["warm_up"] == 1500
     assert client.delete("/api/persona/whisper").json() == {"retired": True}
     assert client.get("/api/persona").json()["whisper"] is None
+
+
+def test_automatic_sources_never_replace_a_user_seeded_whisper(tmp_path):
+    store = WhisperStore(tmp_path / "whispers.json")
+    now = datetime(2026, 11, 5, 20, 0, tzinfo=TZ)
+    first, reason = store.propose("research", "Kondo", "Kondo stuck with me.", now=now, reference="knowledge/research/K.md")
+    assert reason == "set" and (first["origin"], first["source"]) == ("self_generated", "research")
+    second, reason = store.propose("research", "Lain", "Lain again.", now=now)
+    assert reason == "replaced_automatic" and store.active(now)["id"] == second["id"]
+    mine = store.seed("Concerts", "My own thought.", now=now)
+    assert mine["source"] == "manual"
+    assert store.propose("calendar", "Gig", "A gig!", now=now) == (None, "kept_user_seeded")
+    assert store.active(now)["id"] == mine["id"]
+    with pytest.raises(WhisperError):
+        store.propose("manual", "x", "y", now=now)
+    with pytest.raises(WhisperError):
+        store.propose("telepathy", "x", "y", now=now)
+    with pytest.raises(WhisperError):
+        store.seed("x", "y", now=now, origin="self_generated", source="manual")

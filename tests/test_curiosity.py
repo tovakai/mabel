@@ -144,3 +144,7 @@ def test_session_writes_only_into_mabels_vault(tmp_path, monkeypatch):
     log = json.loads((tmp_path / "data" / "curiosity" / "backlog.json").read_text())
     assert [s["name"] for s in log["spawned"]] == ["Whisper of the Heart", "Hiroyuki Morita"]
     assert "madhouse" in backlog_mod.researched_subjects(mabel / "knowledge" / "research")
+    whisper = json.loads((tmp_path / "data" / "persona" / "whispers.json").read_text())["active"]
+    assert result["whisper_outcome"] == "set"
+    assert (whisper["origin"], whisper["source"], whisper["thought"]) == ("self_generated", "research", "Madhouse stuck with me.")
+    assert whisper["reference"] == result["article"]
