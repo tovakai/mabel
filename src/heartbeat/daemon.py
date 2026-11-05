@@ -111,7 +111,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         state["active_session"] = None
         power.release_sleep()
         if sig.idle == "idle" and not sig.chat_active:
-            power.suspend_if_overdue(sig.idle_minutes)
+            power.suspend_if_overdue(sig.idle_minutes, active.get("idle_at_start"))
         save_state(state)
 
     decision = policy.decide(sig, state, now=now, enabled=bool(_setting("autonomy_enabled", True)),
@@ -130,7 +130,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         if not decision.resume:
             state["starts"] = (state.get("starts") or [])[-20:] + [now.isoformat()]
         state["active_session"] = {"session": sid, "started": now.isoformat(), "resumed": bool(decision.resume),
-                                   "sleep_held": held}
+                                   "sleep_held": held, "idle_at_start": sig.idle_minutes}
         save_state(state)
         _ledger("job.claimed", sid, "resumed" if decision.resume else "started",
                 f"idle_{int(sig.idle_minutes or 0)}m")

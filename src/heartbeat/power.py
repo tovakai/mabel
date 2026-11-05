@@ -66,9 +66,55 @@ def suspend_timeout_s(conf: Path = HYPRIDLE_CONF) -> int | None:
     return None
 
 
-def suspend_if_overdue(idle_minutes: float | None, run=subprocess.run) -> bool:
+def _others_block_sleep(run=subprocess.run) -> bool:
+    """Someone other than Mabel holds a blocking sleep inhibitor (unknown counts as yes)."""
+    try:
+        out = run(["systemd-inhibit", "--list", "--no-pager", "--no-legend"], capture_output=True, text=True,
+                  timeout=10, env=_env())
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if out.returncode:
+        return True
+    for line in out.stdout.splitlines():
+        fields = line.split()
+        if fields and fields[0] != "Mabel" and "sleep" in line and line.rstrip().endswith("block"):
+            return True
+    return False
+
+
+def _remote_sessions(run=subprocess.run) -> bool:
+    """Any remote (e.g. SSH) login session; suspending would cut it off (unknown counts as yes)."""
+    try:
+        out = run(["loginctl", "list-sessions", "--no-legend"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if out.returncode:
+        return True
+    for sid in [line.split()[0] for line in out.stdout.splitlines() if line.strip()]:
+        try:
+            show = run(["loginctl", "show-session", sid, "-p", "Remote", "-p", "Active"],
+                       capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return True
+        if "Remote=yes" in show and "Active=yes" in show:
+            return True
+    return False
+
+
+def suspend_if_overdue(idle_minutes: float | None, idle_at_start: float | None = None,
+                       run=subprocess.run) -> bool:
+    """Suspend only when Mabel's own inhibitor swallowed hypridle's one suspend attempt.
+
+    Required: the suspend time was crossed *during* her session, nobody else
+    blocks sleep, and no remote session is logged in. Otherwise whatever kept
+    the PC awake did so on purpose, and that is left alone.
+    """
     timeout = suspend_timeout_s()
     if timeout is None or idle_minutes is None or idle_minutes * 60 < timeout:
+        return False
+    if idle_at_start is None or idle_at_start * 60 >= timeout:
+        return False                 # already past it when she started: not her doing
+    if _others_block_sleep(run) or _remote_sessions(run):
         return False
     logger.info("[heartbeat] still away after %.0f min; suspending as hypridle would have", idle_minutes)
     return _run(["systemd-run", "--user", "--collect", "--quiet", "--", "systemctl", "suspend"], run)

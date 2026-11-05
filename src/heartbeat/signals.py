@@ -24,7 +24,10 @@ IDLE_FILE = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/stat
 # Processes that are always on the GPU and don't mean "Anthon is using it".
 GPU_IGNORE = re.compile(r"(?:^|/)(?:strata|steam|steamwebhelper|xwayland|hyprland|qs|quickshell|"
                         r"firefox|chrom(?:e|ium)|electron|code|discord|obs-?studio-?browser)$", re.I)
-GPU_BUSY_NAMES = re.compile(r"steamapps/common/|vrserver|vrcompositor|wine|proton|gamescope", re.I)
+# SteamVR left open with the headset idle is not "in use": its own processes never count.
+STEAMVR = re.compile(r"steamapps/common/SteamVR/|(?:^|/)(?:vrserver|vrcompositor|vrmonitor|vrdashboard|vrstartup|"
+                     r"vrwebhelper|vrlink\S*)$", re.I)
+GPU_BUSY_NAMES = re.compile(r"steamapps/common/|wine|proton|gamescope", re.I)   # games, incl. VR games
 GPU_BUSY_MIB = 400
 GPU_BUSY_UTIL = 50
 STRATA = ("127.0.0.1", 8080)
@@ -61,20 +64,37 @@ def read_idle(path: Path = IDLE_FILE, now: float | None = None) -> tuple[str, fl
 
 
 def read_gpu(run=subprocess.run) -> tuple[str, str]:
+    """free | busy | unknown, and why.
+
+    A wireless headset (Steam Link) is "in use" exactly when the GPU's video
+    encoder is streaming to it; Mabel's model never uses the encoder, so this
+    also works while her own session keeps the GPU busy.
+    """
     try:
         apps = run(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
                     "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10)
-        util = run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
-                   capture_output=True, text=True, timeout=10)
+        gpu = run(["nvidia-smi", "--query-gpu=utilization.gpu,encoder.stats.sessionCount,utilization.encoder",
+                   "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return "unknown", "nvidia-smi unavailable"
-    if apps.returncode or util.returncode:
+    if apps.returncode or gpu.returncode:
         return "unknown", "nvidia-smi failed"
+    try:
+        fields = [f.strip() for f in gpu.stdout.strip().splitlines()[0].split(",")]
+        load = int(fields[0])
+        sessions = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
+        encoder = int(fields[2]) if len(fields) > 2 and fields[2].isdigit() else 0
+    except (ValueError, IndexError):
+        return "unknown", "unreadable GPU state"
+    if sessions > 0 or encoder > 5:
+        return "busy", "headset streaming (video encoder in use)"
     for line in apps.stdout.splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 3:
             continue
         name = parts[1]
+        if STEAMVR.search(name):
+            continue
         try:
             mib = float(parts[2])
         except ValueError:
@@ -83,10 +103,6 @@ def read_gpu(run=subprocess.run) -> tuple[str, str]:
             return "busy", Path(name).name
         if not GPU_IGNORE.search(name) and mib >= GPU_BUSY_MIB:
             return "busy", f"{Path(name).name} ({int(mib)} MiB)"
-    try:
-        load = int(util.stdout.strip().splitlines()[0])
-    except (ValueError, IndexError):
-        return "unknown", "unreadable GPU load"
     if load >= GPU_BUSY_UTIL:
         return "busy", f"GPU load {load}%"
     return "free", ""

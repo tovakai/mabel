@@ -29,19 +29,27 @@ def test_idle_file(tmp_path):
     assert signals.read_idle(f)[0] == "unknown"
 
 
-def _smi(apps, util="3"):
+def _smi(apps, util="3", sessions="0", encoder="0"):
     def run(args, **kw):
-        out = apps if "--query-compute-apps=pid,process_name,used_memory" in args else util
+        out = apps if "--query-compute-apps=pid,process_name,used_memory" in args else f"{util}, {sessions}, {encoder}"
         return SimpleNamespace(returncode=0, stdout=out)
     return run
+
+
+STEAMVR_IDLE = ("54373, ./vrwebhelper, 62\n"
+                "54359, /home/user/.local/share/Steam/steamapps/common/SteamVR/bin/linux64/vrserver, 258\n"
+                "54594, /home/user/.local/share/Steam/steamapps/common/SteamVR/bin/linux64/vrcompositor, 907\n")
 
 
 def test_gpu_signal_ignores_the_usual_suspects():
     idle_apps = ("3240, /home/user/.local/share/Steam/ubuntu12_32/steam, 86\n"
                  "56215, ./steamwebhelper, 298\n517369, /x/strata/engine/strata, 8704\n")
     assert signals.read_gpu(_smi(idle_apps)) == ("free", "")
-    vr = idle_apps + "54594, /home/user/.local/share/Steam/steamapps/common/SteamVR/bin/linux64/vrcompositor, 907\n"
-    assert signals.read_gpu(_smi(vr))[0] == "busy"
+    assert signals.read_gpu(_smi(idle_apps + STEAMVR_IDLE)) == ("free", ""), "SteamVR open, headset idle"
+    assert signals.read_gpu(_smi(idle_apps + STEAMVR_IDLE, sessions="1")) == \
+        ("busy", "headset streaming (video encoder in use)")
+    game = idle_apps + STEAMVR_IDLE + "777, /home/user/.local/share/Steam/steamapps/common/Some Game/SomeGameVR.exe, 1500\n"
+    assert signals.read_gpu(_smi(game))[0] == "busy", "a VR game counts"
     assert signals.read_gpu(_smi(idle_apps + "999, /opt/blender/blender, 2400\n")) == ("busy", "blender (2400 MiB)")
     assert signals.read_gpu(_smi(idle_apps, util="87")) == ("busy", "GPU load 87%")
 
@@ -83,6 +91,8 @@ def test_should_yield_ignores_her_own_gpu_load():
     started = NOW - timedelta(minutes=2)
     assert policy.should_yield(_sig(gpu="busy", gpu_reason="GPU load 95%"), started=started, now=NOW) is None
     assert policy.should_yield(_sig(gpu="busy", gpu_reason="vrcompositor"), started=started, now=NOW) == "GPU needed: vrcompositor"
+    assert policy.should_yield(_sig(gpu="busy", gpu_reason="headset streaming (video encoder in use)"),
+                               started=started, now=NOW).startswith("GPU needed: headset")
     assert policy.should_yield(_sig(idle="active", idle_minutes=0.0), started=started, now=NOW) == "you came back"
     assert policy.should_yield(_sig(chat_active=True), started=started, now=NOW) == "a chat started"
     assert policy.should_yield(_sig(), started=NOW - timedelta(minutes=21), now=NOW) == "session time cap reached"
@@ -103,8 +113,28 @@ def test_power_commands_and_overdue_suspend(tmp_path, monkeypatch):
     monkeypatch.setattr(power, "HYPRIDLE_CONF", conf)
     assert power.suspend_timeout_s() == 900
     calls.clear()
-    assert not power.suspend_if_overdue(10.0, run) and not calls
-    assert power.suspend_if_overdue(16.0, run) and calls[-1][-2:] == ["systemctl", "suspend"]
+    assert not power.suspend_if_overdue(10.0, 6.0, run) and not calls
+
+    def quiet(args, **kw):           # no other inhibitors, no remote sessions
+        calls.append(args)
+        out = "2 1000 zum seat0 1780 user tty1 no -\n" if args[:2] == ["loginctl", "list-sessions"] else (
+            "Remote=no\nActive=yes\n" if args[:2] == ["loginctl", "show-session"] else "")
+        return SimpleNamespace(returncode=0, stdout=out)
+    assert power.suspend_if_overdue(16.0, 6.0, quiet) and calls[-1][-2:] == ["systemctl", "suspend"]
+    assert not power.suspend_if_overdue(21.0, 16.0, quiet), "already past suspend time at start: not her doing"
+    assert not power.suspend_if_overdue(16.0, None, quiet)
+
+    def remote(args, **kw):
+        out = "10 1000 zum - 485913 user pts/2 no -\n" if args[:2] == ["loginctl", "list-sessions"] else (
+            "Remote=yes\nActive=yes\n" if args[:2] == ["loginctl", "show-session"] else "")
+        return SimpleNamespace(returncode=0, stdout=out)
+    assert not power.suspend_if_overdue(16.0, 6.0, remote), "never cut off a remote session"
+
+    def other_inhibitor(args, **kw):
+        out = ("hypridle 1000 zum 1974 hypridle sleep Hypridle wants to delay sleep block\n"
+               if args[0] == "systemd-inhibit" else "")
+        return SimpleNamespace(returncode=0, stdout=out)
+    assert not power.suspend_if_overdue(16.0, 6.0, other_inhibitor), "someone else keeps it awake on purpose"
 
 
 def test_heartbeat_wakes_yields_resumes_and_finishes(tmp_path, monkeypatch):
@@ -115,7 +145,8 @@ def test_heartbeat_wakes_yields_resumes_and_finishes(tmp_path, monkeypatch):
     monkeypatch.setattr(power, "hold_sleep", lambda run=None: True)
     released, suspended, ledger = [], [], []
     monkeypatch.setattr(power, "release_sleep", lambda run=None: released.append(1))
-    monkeypatch.setattr(power, "suspend_if_overdue", lambda minutes, run=None: suspended.append(minutes))
+    monkeypatch.setattr(power, "suspend_if_overdue",
+                        lambda minutes, idle_at_start=None, run=None: suspended.append((minutes, idle_at_start)))
     monkeypatch.setattr(daemon, "_ledger", lambda kind, sid, decision, code: ledger.append((kind, sid, decision)))
     finished = {"cs-1": False}
     monkeypatch.setattr(runner, "session_finished", lambda sid: finished.get(sid, False))
@@ -154,7 +185,7 @@ def test_heartbeat_wakes_yields_resumes_and_finishes(tmp_path, monkeypatch):
         await asyncio.sleep(0)
         await daemon.tick(now=NOW + timedelta(minutes=40), read=lambda: _sig(idle_minutes=20.0))
         assert ("job.completed", "cs-1", "completed") in ledger and daemon.load_state()["yielded"] is None
-        assert suspended == [20.0], "still away past the suspend time -> suspend as hypridle would have"
+        assert suspended == [(20.0, 8.0)], "passes the idle time at (re)start so power can tell if it was her"
     try:
         asyncio.run(scenario())
     finally:
