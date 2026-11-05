@@ -59,6 +59,8 @@ DEFAULT_SETTINGS = {
     "tts_model": "tts-1",
     "tts_voice": "alloy",
     "tts_speed": "1",
+    # Optional language/phonemizer code passed to the TTS endpoint (Kokoro: "a" = American English).
+    "tts_lang_code": "",
     "stt_enabled": False,
     "stt_provider": "disabled",
     "stt_model": "base",

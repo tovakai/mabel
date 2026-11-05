@@ -40,7 +40,8 @@ def audio(role,*,owner='',primary_route=None,text='',audio_bytes=b'',voice='allo
             return value
         kwargs={'headers':route.headers,'timeout':roles.get_policy(role,owner)['timeout'],'follow_redirects':False}
         if role=='tts':
-            kwargs['json']={'model':route.assignment.model,'input':text,'voice':voice,'speed':speed,'response_format':'mp3'}
+            kwargs['json']={'model':route.assignment.model,'input':text,'voice':voice,'speed':speed,'response_format':'mp3',
+                            **({'lang_code':language} if language else {})}
         else:
             kwargs['data']={'model':route.assignment.model,**({'language':language} if language else {})}
             kwargs['files']={'file':('audio.webm',audio_bytes,'audio/webm')}

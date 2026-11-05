@@ -59,6 +59,7 @@ class TTSService:
             "tts_model": saved.get("tts_model", "tts-1"),
             "tts_voice": saved.get("tts_voice", "alloy"),
             "tts_speed": saved.get("tts_speed", "1"),
+            "tts_lang_code": str(saved.get("tts_lang_code", "") or "").strip()[:16],
         }
 
     @property
@@ -158,7 +159,8 @@ class TTSService:
 
     # ── API endpoint ──
 
-    def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> Optional[bytes]:
+    def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0,
+                        lang: str = "") -> Optional[bytes]:
         from src.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
@@ -184,6 +186,8 @@ class TTSService:
             "response_format": "mp3",
             "speed": speed,
         }
+        if lang:
+            payload["lang_code"] = lang   # e.g. Kokoro: phonemize as English with a non-English voice
 
         try:
             r = httpx.post(url, json=payload, headers=headers, timeout=60)
@@ -204,6 +208,9 @@ class TTSService:
         model = settings["tts_model"]
         voice = settings["tts_voice"]
         speed = _safe_speed(settings.get("tts_speed", "1"))
+        lang = settings.get("tts_lang_code", "")
+        # The language changes the audio, so it's part of the cache identity.
+        voice_key = f"{voice}|{lang}" if lang else voice
 
         if provider in ("disabled", "browser"):
             return None
@@ -212,7 +219,7 @@ class TTSService:
             text = text[:5000]
 
         if use_cache:
-            key = self._cache_key(text, provider, model, voice, speed)
+            key = self._cache_key(text, provider, model, voice_key, speed)
             cached = self._get_cached(key)
             if cached:
                 logger.info(f"TTS cache hit ({len(text)} chars)")
@@ -232,7 +239,7 @@ class TTSService:
                         kokoro=self._get_kokoro()
                         return kokoro.synthesize_raw(text,voice) if kokoro and kokoro.available else None
                     primary_route=('local://tts','kokoro-82m',{})
-                audio_data = audio('tts',owner=role_owner,text=text,voice=voice,speed=speed,
+                audio_data = audio('tts',owner=role_owner,text=text,voice=voice,speed=speed,language=lang,
                     local_primary=local_primary,primary_route=primary_route)
             except (model_roles.RoleUnavailable, httpx.HTTPError, RuntimeError):
                 return None
@@ -245,13 +252,13 @@ class TTSService:
                 return None
         elif provider.startswith("endpoint:"):
             endpoint_id = provider.split(":", 1)[1]
-            audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
+            audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed, lang)
         else:
             logger.error(f"Unknown TTS provider: {provider}")
             return None
 
         if audio_data and use_cache:
-            key = self._cache_key(text, provider, model, voice, speed)
+            key = self._cache_key(text, provider, model, voice_key, speed)
             self._put_cache(key, audio_data)
 
         return audio_data

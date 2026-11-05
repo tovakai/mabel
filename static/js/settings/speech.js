@@ -20,6 +20,29 @@ export async function initTtsSettings() {
   var ttsEnabledToggle = el('set-ttsEnabledToggle');
   var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
 
+  // Optional language/phonemizer code for endpoints that support it (Kokoro's
+  // lang_code, e.g. "a" for American English with a Japanese voice).
+  var langRow = el('set-ttsLangRow');
+  if (!langRow && speedRow) {
+    langRow = document.createElement('div');
+    langRow.id = 'set-ttsLangRow';
+    langRow.style.cssText = speedRow.style.cssText;
+    langRow.className = speedRow.className;
+    langRow.innerHTML = '<label for="set-ttsLangInput" style="font-size:12px;min-width:90px">Language</label>' +
+      '<input id="set-ttsLangInput" class="settings-select" placeholder="auto (Kokoro: a = American English)" ' +
+      'style="flex:1;font-size:12px" maxlength="16">';
+    speedRow.parentNode.insertBefore(langRow, speedRow.nextSibling);
+  }
+  var langInput = el('set-ttsLangInput');
+
+  // Endpoint voices/models are a fixed list of OpenAI names; keep a saved value that isn't one of them.
+  function ensureOption(select, value) {
+    if (!select || !value) return;
+    if (!Array.from(select.options).some(function(o) { return o.value === value; })) {
+      var opt = document.createElement('option'); opt.value = value; opt.textContent = value; select.appendChild(opt);
+    }
+  }
+
   function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
   function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
   function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
@@ -29,6 +52,7 @@ export async function initTtsSettings() {
     modelRow.style.display = prov.startsWith('endpoint:') ? 'flex' : 'none';
     voiceRow.style.display = prov === 'disabled' ? 'none' : 'flex';
     speedRow.style.display = prov === 'disabled' ? 'none' : 'flex';
+    if (langRow) langRow.style.display = isEndpoint() ? 'flex' : 'none';
     if (isEndpoint()) {
       modelSelect.style.display = ''; modelInput.style.display = 'none';
       voiceSelect.style.display = ''; voiceInput.style.display = 'none';
@@ -54,8 +78,11 @@ export async function initTtsSettings() {
     var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await settingsRes.json();
     if (settings.tts_provider) provSel.value = settings.tts_provider;
+    ensureOption(modelSelect, settings.tts_model);
+    ensureOption(voiceSelect, settings.tts_voice);
     if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
     if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
+    if (langInput) langInput.value = settings.tts_lang_code || '';
     if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
     if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
   } catch (e) { console.warn('Failed to load TTS settings', e); }
@@ -71,7 +98,7 @@ export async function initTtsSettings() {
 
   async function saveTTS() {
     try {
-      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
+      await _postSettings({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1', tts_lang_code: langInput ? langInput.value.trim() : '' });
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = e.status === 403 ? 'Admin access is required to change these settings.' : 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -95,6 +122,7 @@ export async function initTtsSettings() {
   voiceSelect.addEventListener('change', saveAndClearCache);
   voiceInput.addEventListener('change', saveTTS);
   speedSelect.addEventListener('change', saveAndClearCache);
+  if (langInput) langInput.addEventListener('change', saveAndClearCache);
   if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
 
   // Preview / test button
