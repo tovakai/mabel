@@ -76,6 +76,7 @@ def setup_lifelog_routes() -> APIRouter:
                 "exclude_apps": _setting("lifelog_exclude_apps", []) or [],
                 "today": summarize(store.spans(start, end), start=start, end=end),
                 "retention_days": int(_setting("lifelog_retention_days", 30) or 30),
+                "collector_path": str(_REPO / "scripts" / "lifelog_collector.py"),
                 "day_start": start.isoformat()}
 
     @router.get("/days")
