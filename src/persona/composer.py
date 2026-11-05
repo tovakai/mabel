@@ -83,6 +83,23 @@ def _gap_text(hours: float) -> str:
     return f"about {round(hours / 24)} days"
 
 
+def recent_life_minutes(local_now: datetime, window_minutes: int = 90) -> float | None:
+    """Minutes Anthon spent actively on his devices (focused apps, games) in the last ``window_minutes``."""
+    try:
+        from datetime import timedelta, timezone
+        from src.lifelog.store import default_store
+        end = local_now.astimezone(timezone.utc)
+        start = end - timedelta(minutes=window_minutes)
+        total = 0.0
+        for s in default_store().spans(start, end, kinds=["focus", "game"]):
+            a = max(datetime.fromisoformat(s["start"]), start)
+            b = min(datetime.fromisoformat(s["end"]), end)
+            total += max(0.0, (b - a).total_seconds() / 60)
+        return round(total, 1)
+    except Exception:
+        return None
+
+
 def _first_sentence(text: str) -> str:
     match = re.match(r"(.+?[.!?])(?:\s|$)", " ".join(text.split()))
     return match.group(1) if match else text[:160]
@@ -103,7 +120,7 @@ class Composer:
                 local_now: datetime, mode: str) -> Composition:
         library: Library = self.modules.load()
         function, reason = self.router.select(message, set(families or ()), session_id)
-        projection, _state = self.affect.project(local_now)
+        projection, _state = self.affect.project(local_now, life_minutes=recent_life_minutes(local_now))
         comp = Composition(mode, function, reason, projection.mood, projection.source,
                            None, None, errors=list(library.errors))
         if library.core is None:

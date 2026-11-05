@@ -57,6 +57,7 @@ SCHEDULE = (
 WARM_UP_TOKENS = 1500      # groggy -> relaxed
 LIVELY_TOKENS = 5000       # relaxed -> playful
 BUSY_BACKGROUND_TOKENS = 4000  # quiet groggy/relaxed -> restless while background work piles up
+UP_WITH_HIM_MINUTES = 45       # he's been active on his devices recently: she's still up too
 
 _LOCK = threading.Lock()
 
@@ -78,10 +79,12 @@ def scheduled_mood(local: datetime) -> str:
     return mood
 
 
-def select_mood(scheduled: str, activity: dict) -> tuple[str, str]:
-    """(mood, source): the schedule, adjusted by recent activity."""
+def select_mood(scheduled: str, activity: dict, life_minutes: float | None = None) -> tuple[str, str]:
+    """(mood, source): the schedule, adjusted by recent activity (and his, from the life log)."""
     conversation = float(activity.get("conversation") or 0)
     background = float(activity.get("background") or 0)
+    if scheduled in ("tired", "groggy") and (life_minutes or 0) >= UP_WITH_HIM_MINUTES:
+        return "restless", "up_with_anthon"            # he's still up, so she is too
     if scheduled == "groggy" and conversation >= WARM_UP_TOKENS:
         return "relaxed", "conversation_warmup"
     if scheduled == "relaxed" and conversation >= LIVELY_TOKENS:
@@ -183,7 +186,7 @@ class AffectStore:
             self.write(state)
         return state
 
-    def project(self, local_now: datetime) -> tuple[Projection, dict]:
+    def project(self, local_now: datetime, life_minutes: float | None = None) -> tuple[Projection, dict]:
         """Select the mood for ``local_now`` (timezone-aware); persists only on change."""
         now = local_now.astimezone(timezone.utc)
         with _LOCK:
@@ -191,7 +194,7 @@ class AffectStore:
             gap = self._gap_hours(state, now)
             current = state["projection"]
             scheduled = scheduled_mood(local_now)
-            target, source = select_mood(scheduled, state["activity"])
+            target, source = select_mood(scheduled, state["activity"], life_minutes)
             since = current.get("since")
             try:
                 held = now - datetime.fromisoformat(since) if since else None

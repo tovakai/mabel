@@ -220,3 +220,25 @@ def test_stale_framing_drops_principles_and_shotgun_citations(tmp_path, monkeypa
     inbox = Inbox(tmp_path / "inbox.sqlite")
     result = asyncio.run(stale.run(inbox, source_vault=vault, state_path=tmp_path / "s.json", ask=ask, now=NOW))
     assert inbox.list(kind="stale_framing") == [] and result["dropped"] == 2
+
+
+def test_dreamer_can_cite_the_life_log(tmp_path, monkeypatch):
+    from src.subconscious import dreamer
+    monkeypatch.setattr(dreamer, "recent_messages", lambda owner, now=None: [])
+    monkeypatch.setattr(dreamer, "_maybe_whisper", lambda kept, now: "skipped")
+    monkeypatch.setattr(dreamer, "life_items", lambda now: [
+        {"kind": "game", "text": "Hades II", "minutes": 300, "count": 4, "ref": "lifelog:desktop:game:1"},
+        {"kind": "browse", "text": "Hades II build guide - Reddit", "minutes": 0, "count": 3, "ref": "lifelog:laptop:browse:2"},
+        {"kind": "media", "text": "Some Artist – Song", "minutes": 40, "count": 2, "ref": "lifelog:phone:media:3"}])
+
+    async def ask(prompt, owner):
+        assert "l1: [game] Hades II (300 min, 4x)" in prompt
+        return json.dumps({"patterns": [
+            {"theme": "Hades II", "observation": "He's deep into Hades II.", "evidence": ["l1", "l2"],
+             "curiosity": "I keep wondering which build he runs.", "confidence": 0.8},
+            {"theme": "Knitting", "observation": "Invented.", "evidence": ["l1", "l3"], "curiosity": "?", "confidence": 0.9}]})
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    result = asyncio.run(dreamer.run(inbox, owner="alice", ask=ask, now=NOW))
+    assert [p["theme"] for p in result["patterns"]] == ["Hades II"]
+    item = inbox.list(kind="pattern")[0]
+    assert [e["ref"] for e in item["evidence"]] == ["lifelog:desktop:game:1", "lifelog:laptop:browse:2"]

@@ -128,7 +128,7 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         affect = json.loads((data_dir / "persona" / "affect.json").read_text())
         for r in affect.get("residue") or []:
             source = {"time_of_day": "time of day", "conversation_warmup": "warmed up by chatting",
-                      "conversation_lively": "a lively conversation", "background_busy": "busy background work",
+                      "conversation_lively": "a lively conversation", "background_busy": "busy background work", "up_with_anthon": "you were still up, so she was too",
                       "manual": "pinned by you"}.get(r.get("source"), r.get("source", ""))
             if (_when(r.get("at")) or since) >= since:
                 items.append(_item(r.get("at"), "mood", f"Mood: {r.get('mood')}", source))

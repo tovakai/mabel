@@ -71,7 +71,7 @@ function statusCard() {
   const m = data.mood;
   const source = { time_of_day: 'from the time of day', hysteresis: 'holding briefly before changing',
     conversation_warmup: 'woken up by chatting', conversation_lively: 'a lively conversation',
-    background_busy: 'busy with background work',
+    background_busy: 'busy with background work', up_with_anthon: "you're still up, so she is too",
     manual: `pinned until ${when(m.manual_until)}` }[m.source] || m.source;
   const a = data.activity || {};
   const r = a.rules || {};

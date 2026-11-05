@@ -9,7 +9,9 @@
 4. If Mabel has no whisper right now, the strongest pattern can become one
    (source ``conversation``), through the shared whisper rule.
 
-Chats with memory extraction switched off are never read.
+Chats with memory extraction switched off are never read. The life log (what
+he's been doing on his devices: games, media, apps, page titles) is offered
+alongside the chats; a pattern may cite either, but always two real items.
 """
 from __future__ import annotations
 
@@ -75,11 +77,38 @@ def recurring_terms(messages: list[dict]) -> list[dict]:
             for t in terms[:TOP_TERMS]]
 
 
+LIFE_ITEMS = 25
+
+
+def life_items(*, now: datetime, days: int = WINDOW_DAYS, store=None) -> list[dict]:
+    """The week's most time-consuming games/media/apps and some page titles, as citable items."""
+    try:
+        from src.lifelog.store import default_store
+        store = store or default_store()
+        spans = store.spans(now - timedelta(days=days), now, kinds=["game", "media", "focus", "browse", "phone_app"])
+    except Exception:
+        return []
+    totals: dict[tuple, dict] = {}
+    for s in spans:
+        label = s["title"] if s["kind"] in ("game", "media", "browse", "phone_app") else s["app"]
+        if not label:
+            continue
+        key = (s["kind"], label)
+        start, end = datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"])
+        item = totals.setdefault(key, {"kind": s["kind"], "text": label[:200], "minutes": 0.0, "count": 0,
+                                       "ref": f"lifelog:{s['device']}:{s['span_id']}"})
+        item["minutes"] += max(0.0, (end - start).total_seconds() / 60)
+        item["count"] += 1
+    ranked = sorted(totals.values(), key=lambda i: (-(i["minutes"] + 2 * i["count"])))
+    return ranked[:LIFE_ITEMS]
+
+
 async def run(inbox, *, owner: str, now: datetime | None = None, ask=None) -> dict:
     now = now or datetime.now(timezone.utc)
     messages = recent_messages(owner, now=now)
     terms = recurring_terms(messages)
-    if not terms:
+    life = life_items(now=now)
+    if not terms and not life:
         return {"messages": len(messages), "terms": 0, "patterns": []}
     ids: dict[str, dict] = {}
     lines = []
@@ -89,14 +118,21 @@ async def run(inbox, *, owner: str, now: datetime | None = None, ask=None) -> di
             mid = ids.setdefault(m["id"], {"label": f"m{len(ids) + 1}", **m})["label"]
             refs.append(mid)
         lines.append(f"- {t['term']} (in {t['chats']} chats): {', '.join(refs)}")
+    life_lines = []
+    for i, item in enumerate(life, 1):
+        label = f"l{i}"
+        ids[label] = {"label": label, "id": label, "session": None, "text": item["text"], "at": "",
+                      "life_ref": item["ref"], "kind": item["kind"]}
+        life_lines.append(f"{label}: [{item['kind']}] {item['text']} ({round(item['minutes'])} min, {item['count']}x)")
     by_label = {v["label"]: v for v in ids.values()}
-    snippets = "\n".join(f"{v['label']}: {v['text'][:300]}" for v in ids.values())
+    snippets = "\n".join(f"{v['label']}: {v['text'][:300]}" for v in ids.values() if not v.get("life_ref"))
     prompt = (
-        "Below are words that keep coming up in Anthon's recent chats with Mabel, and the messages they "
-        "come from. Find up to 4 genuine recurring themes (things he cares about or keeps returning to), not "
+        "Below are words that keep coming up in Anthon's recent chats with Mabel, the messages they come "
+        "from, and what he's been doing on his devices. Find up to 4 genuine recurring themes (things he cares about or keeps returning to), not "
         "filler words. For each, cite the message labels it comes from (at least two), and write one question "
         "Mabel might honestly wonder about it, in her own first-person voice (casual, curious, not nosy).\n\n"
-        f"Recurring words:\n{chr(10).join(lines)}\n\nMessages:\n{snippets}\n\n"
+        f"Recurring words:\n{chr(10).join(lines) or '(none)'}\n\nMessages:\n{snippets or '(none)'}\n\n"
+        f"What he's been doing on his devices this week (life log; cite as l-labels):\n{chr(10).join(life_lines) or '(nothing recorded)'}\n\n"
         'Reply with only JSON: {"patterns": [{"theme": "short name", "observation": "one sentence", '
         '"evidence": ["m1", "m4"], "curiosity": "I keep wondering ...", "confidence": 0.0}]}')
     reply = await (ask or _ask_dottie)(prompt, owner)
@@ -113,7 +149,9 @@ async def run(inbox, *, owner: str, now: datetime | None = None, ask=None) -> di
             confidence = max(0.0, min(1.0, float(p.get("confidence") or 0.5)))
         except (TypeError, ValueError):
             confidence = 0.5
-        evidence = [{"ref": f"chat:{m['session']}/{m['id']}", "kind": "chat", "context": m["text"][:160],
+        evidence = [{"ref": m["life_ref"], "kind": "lifelog", "context": m["text"][:160], "at": ""}
+                    if m.get("life_ref") else
+                    {"ref": f"chat:{m['session']}/{m['id']}", "kind": "chat", "context": m["text"][:160],
                      "at": m["at"]} for m in supporting[:6]]
         curiosity = " ".join(str(p.get("curiosity") or "").split())[:300]
         item, outcome = inbox.add(

@@ -428,3 +428,12 @@ def test_self_curiosities_and_project_notes_for_self_research(tmp_path):
     path = tmp_path / "curiosities.md"
     path.write_text("---\nid: curiosities\n---\nIntro text: not a bullet\n- AI identity: Am I the same Mabel?\n- broken line\n")
     assert self_curiosities(path) == [{"subject": "AI identity", "question": "Am I the same Mabel?"}]
+
+
+def test_she_stays_up_when_he_does():
+    from src.persona.affect import select_mood
+    assert select_mood("tired", {}, life_minutes=60) == ("restless", "up_with_anthon")
+    assert select_mood("groggy", {}, life_minutes=50) == ("restless", "up_with_anthon")
+    assert select_mood("tired", {}, life_minutes=10) == ("tired", "time_of_day")
+    assert select_mood("relaxed", {}, life_minutes=120) == ("relaxed", "time_of_day"), "only in her sleepy hours"
+    assert select_mood("tired", {}, life_minutes=None) == ("tired", "time_of_day")
