@@ -3,7 +3,8 @@
 Not a stream of guesses: every item has a kind, evidence pointers, a
 verification status, confidence, a deduplication key, priority, expiry and the
 loop (and job) that produced it. Deciding on an item never deletes it, so a
-rejection keeps its origin, and a rejected suggestion is never re-suggested.
+rejection keeps its origin. A rejected suggestion cools off for a week
+(REJECT_COOLDOWN) before it may come back; kept/done items stay settled.
 
 Stored locally in ``data/subconscious/inbox.sqlite`` (never in a synced folder).
 """
@@ -22,6 +23,14 @@ VERIFICATION = ("unverified", "source_checked", "verified")
 STATUSES = ("new", "accepted", "rejected", "expired", "done")
 DECIDERS = ("user", "mabel", "system")
 MAX_LIST = 200
+REJECT_COOLDOWN = timedelta(days=7)
+_STOPWORDS = {"with", "that", "this", "from", "about", "their", "they", "your", "what", "when", "into", "mabel",
+              "mabels", "anthon", "anthons", "keeps", "keep"}
+
+
+def _theme_words(text: str) -> set[str]:
+    import re
+    return {w for w in re.findall(r"[a-z0-9]+", str(text).lower()) if len(w) >= 4 and w not in _STOPWORDS}
 
 
 def _now() -> datetime:
@@ -79,16 +88,31 @@ class Inbox:
                       job_id=job_id, payload=json.dumps(payload or {}, ensure_ascii=False))
         with self._db() as db:
             existing = db.execute("SELECT * FROM items WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
-            if existing and existing["status"] in ("rejected", "accepted", "done"):
-                return self._row(existing), "kept_decision"     # never re-suggest a decided item
+            if existing and existing["status"] in ("accepted", "done"):
+                return self._row(existing), "kept_decision"     # settled for good
+            if existing and existing["status"] == "rejected":
+                decided = existing["decided_at"] or ""
+                if decided > (now - REJECT_COOLDOWN).isoformat():
+                    return self._row(existing), "kept_decision"  # still cooling off
+                # The week is up: it may come back, remembering the earlier rejection.
+                previous = json.loads(values["payload"])
+                previous["previous_rejection"] = {"by": existing["decided_by"], "at": decided,
+                                                  "reason": existing["decision_reason"] or ""}
+                values["payload"] = json.dumps(previous, ensure_ascii=False)
             if existing:
-                db.execute(f"UPDATE items SET {', '.join(f'{k} = ?' for k in values)}, status = 'new' WHERE id = ?",
+                db.execute(f"UPDATE items SET {', '.join(f'{k} = ?' for k in values)}, status = 'new', "
+                           "decided_by = NULL, decided_at = NULL, decision_reason = NULL WHERE id = ?",
                            (*values.values(), existing["id"]))
-                return self.get(existing["id"]), "refreshed"
-            item_id = f"in-{secrets.token_hex(6)}"
-            db.execute(f"INSERT INTO items(id, dedupe_key, created_at, {', '.join(values)}) "
-                       f"VALUES (?, ?, ?, {', '.join('?' * len(values))})",
-                       (item_id, dedupe_key, now.isoformat(), *values.values()))
+                refreshed = existing["id"]
+            else:
+                refreshed = None
+                item_id = f"in-{secrets.token_hex(6)}"
+                db.execute(f"INSERT INTO items(id, dedupe_key, created_at, {', '.join(values)}) "
+                           f"VALUES (?, ?, ?, {', '.join('?' * len(values))})",
+                           (item_id, dedupe_key, now.isoformat(), *values.values()))
+        # Read back only after the transaction above has committed.
+        if refreshed:
+            return self.get(refreshed), "refreshed"
         self._ledger("inbox.item_created", item_id, loop, kind)
         return self.get(item_id), "created"
 
@@ -115,6 +139,23 @@ class Inbox:
         args.append(min(int(limit), MAX_LIST))
         with self._db() as db:
             return [self._row(r) for r in db.execute(query, args)]
+
+    def recently_rejected_similar(self, kind: str, title: str, *, now: datetime | None = None) -> dict | None:
+        """A rejected item of ``kind`` from the last week whose title clearly overlaps ``title``
+        (half of the smaller set of distinctive words), so a reworded suggestion cools off too."""
+        words = _theme_words(title)
+        if not words:
+            return None
+        cutoff = ((now or _now()) - REJECT_COOLDOWN).isoformat()
+        with self._db() as db:
+            rows = db.execute("SELECT * FROM items WHERE kind = ? AND status = 'rejected' AND decided_at > ?",
+                              (kind, cutoff)).fetchall()
+        for row in rows:
+            other = _theme_words(row["title"])
+            shared = words & other
+            if other and shared and len(shared) / min(len(words), len(other)) >= 0.5:
+                return self._row(row)
+        return None
 
     def find(self, dedupe_key: str) -> dict | None:
         with self._db() as db:

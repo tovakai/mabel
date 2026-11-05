@@ -19,11 +19,29 @@ def test_inbox_dedupes_and_never_resuggests_a_rejection(tmp_path):
     assert outcome == "created" and item["status"] == "new"
     assert inbox.add(kind="duplicate", loop="archivist", title="x2", dedupe_key="k", evidence=EV, now=NOW)[1] == "refreshed"
     inbox.decide(item["id"], "rejected", by="user", reason="not the same thing")
-    again, outcome = inbox.add(kind="duplicate", loop="archivist", title="x3", dedupe_key="k", evidence=EV, now=NOW)
-    assert outcome == "kept_decision" and again["status"] == "rejected"
+    rejected_at = datetime.fromisoformat(inbox.get(item["id"])["decided_at"])
+    again, outcome = inbox.add(kind="duplicate", loop="archivist", title="x3", dedupe_key="k", evidence=EV,
+                               now=rejected_at + timedelta(days=2))
+    assert outcome == "kept_decision" and again["status"] == "rejected", "cooling off for a week"
     kept = inbox.get(item["id"])
     assert (kept["loop"], kept["decided_by"], kept["decision_reason"]) == ("archivist", "user", "not the same thing")
     assert inbox.list() == []
+    back, outcome = inbox.add(kind="duplicate", loop="archivist", title="x4", dedupe_key="k", evidence=EV,
+                              now=rejected_at + timedelta(days=8))
+    assert outcome == "refreshed" and back["status"] == "new" and back["decided_by"] is None
+    assert back["payload"]["previous_rejection"]["reason"] == "not the same thing"
+
+
+def test_reworded_rejections_cool_off_too(tmp_path):
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    item, _ = inbox.add(kind="pattern", loop="dreamer", title="documentation", dedupe_key="p1", evidence=EV)
+    inbox.decide(item["id"], "rejected", by="mabel", reason="he's testing me")
+    decided = datetime.fromisoformat(inbox.get(item["id"])["decided_at"])
+    assert inbox.recently_rejected_similar("pattern", "Mabel's documentation", now=decided + timedelta(days=1))
+    assert inbox.recently_rejected_similar("pattern", "Documentation & Vault", now=decided + timedelta(days=1))
+    assert not inbox.recently_rejected_similar("pattern", "Hades II", now=decided + timedelta(days=1))
+    assert not inbox.recently_rejected_similar("pattern", "Mabel's documentation", now=decided + timedelta(days=8))
+    assert not inbox.recently_rejected_similar("duplicate", "documentation", now=decided + timedelta(days=1))
 
 
 def test_inbox_validates_and_expires(tmp_path):

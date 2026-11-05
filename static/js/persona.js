@@ -248,7 +248,7 @@ function inboxCard() {
     </details>`).join('')}`).join('') : '<div class="admin-toggle-sub">Nothing waiting.</div>';
   const decided = (inbox.decided || []).length ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Decided (${inbox.decided.length})</summary>
     <ul style="margin:4px 0 0 16px;padding:0;font-size:11px">${inbox.decided.map(i => `<li>${esc(i.status)} by ${esc(i.decided_by || '?')}: ${esc(i.title)}${i.decision_reason ? ` <span style="opacity:0.6">(${esc(i.decision_reason)})</span>` : ''}</li>`).join('')}</ul></details>` : '';
-  return card("Dottie's inbox", `<div class="admin-toggle-sub" style="margin-top:0">Suggestions from Dottie's background loops. Rejecting keeps the item (and where it came from) so it isn't suggested again. Nothing here changes your notes.</div>
+  return card("Dottie's inbox", `<div class="admin-toggle-sub" style="margin-top:0">Suggestions from Dottie's background loops. Rejecting keeps the item (and where it came from); it can come back after a week. Nothing here changes your notes.</div>
     ${button}${runs ? `<div class="admin-toggle-sub">Last runs: ${esc(runs)}</div>` : ''}${body}${decided}`);
 }
 

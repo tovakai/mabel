@@ -145,6 +145,8 @@ async def run(inbox, *, owner: str, now: datetime | None = None, ask=None) -> di
         supporting = [m for m in refs if any(w in fold(m["text"]) for w in words)]
         if not theme or len({m["id"] for m in supporting}) < 2:
             continue                       # unsupported themes are dropped, not stored
+        if inbox.recently_rejected_similar("pattern", theme, now=now):
+            continue                       # a reworded version of something rejected this week
         try:
             confidence = max(0.0, min(1.0, float(p.get("confidence") or 0.5)))
         except (TypeError, ValueError):
