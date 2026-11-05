@@ -124,6 +124,35 @@ _PERSONAL_TOOL_CONTEXT_RE = re.compile(
 )
 
 
+_INFO_REQUEST_RE = re.compile(
+    r"\?|\b(?:tell\s+me|explain|describe|summari[sz]e|look\s+up|find|search|google|check|"
+    r"what|who|whom|whose|when|where|why|how|which|wonder|curious|any\s+idea|do\s+you\s+know|"
+    r"is\s+there|are\s+there|latest|newest|news|price|cost|release[ds]?|weather|score|update)\b",
+    re.IGNORECASE,
+)
+
+
+_SOCIAL_PHRASE_RE = re.compile(
+    r"\b(?:how\s+(?:are|r)\s+(?:you|u|ya)|how'?s\s+(?:it\s+going|life|your\s+(?:day|night|evening|morning|week))|"
+    r"how\s+(?:was|is)\s+your\s+(?:day|night|evening|morning|week)|how\s+have\s+you\s+been|"
+    r"what'?s\s+up|wh?at\s+are\s+you\s+(?:up\s+to|doing)|how\s+do\s+you\s+feel)\b\s*\??",
+    re.IGNORECASE,
+)
+
+
+def _conversational_statement(text: str) -> bool:
+    """A remark rather than a request: no question, no information-request wording,
+    and nothing the turn contract would route to tools (e.g. "work was so long today")."""
+    s = _SOCIAL_PHRASE_RE.sub(" ", str(text or "")).strip()
+    if not str(text or "").strip() or _INFO_REQUEST_RE.search(s):
+        return False
+    try:
+        from src.turn_contract import requested_capabilities
+        return not requested_capabilities(s)
+    except Exception:
+        return False
+
+
 def _is_casual_low_signal(text: str) -> bool:
     """Short greetings/slang should not pull memory, skills, RAG, or docs."""
     s = str(text or "").strip()
@@ -1146,6 +1175,10 @@ async def build_chat_context(
         or not allow_tool_preprocessing
         or casual_low_signal
         or bool(agent_mode and _PERSONAL_TOOL_CONTEXT_RE.search(context_message or ""))
+        # Agent turns keep web_search as a tool; pre-searching a plain remark
+        # ("ESP32s are cluttering my workshop") cost a model call plus a search
+        # before the reply even started.
+        or bool(agent_mode and use_web_val and _conversational_statement(context_message))
     )
 
     # Build context preface
