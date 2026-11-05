@@ -314,6 +314,14 @@ def setup_persona_routes() -> APIRouter:
         return {"enabled": current.get("autonomy_enabled", True), "paused": current.get("autonomy_paused", False),
                 "presence_entity": current.get("heartbeat_presence_entity", "")}
 
+    @router.get("/timeline")
+    async def timeline(request: Request, days: int = 7, _user: str = Depends(require_user)) -> dict[str, Any]:
+        import asyncio
+        from src.constants import DATA_DIR
+        from src.persona.timeline import build
+        items = await asyncio.to_thread(build, data_dir=Path(DATA_DIR), days=max(1, min(int(days), 30)))
+        return {"items": items}
+
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
         _require_admin(request)

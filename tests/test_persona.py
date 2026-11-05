@@ -350,3 +350,38 @@ def test_automatic_sources_never_replace_a_user_seeded_whisper(tmp_path):
         store.propose("telepathy", "x", "y", now=now)
     with pytest.raises(WhisperError):
         store.seed("x", "y", now=now, origin="self_generated", source="manual")
+
+
+def test_timeline_merges_what_she_did(tmp_path):
+    import json as _json
+    from src.persona.timeline import build
+    from src.subconscious.inbox import Inbox
+    now = datetime(2026, 11, 5, 12, 30, tzinfo=timezone.utc)
+    sessions = tmp_path / "curiosity" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "cs-1.json").write_text(_json.dumps({"id": "cs-1", "updated_at": "2026-11-05T11:20:00+00:00", "steps": {
+        "choice": {"chosen_at": "2026-11-05T11:16:00+00:00", "kind": "graph", "subject": "Toei Animation",
+                   "question": "How?", "why": "Sailor Moon.",
+                   "dottie_decisions": [{"title": "Vault Organization", "decision": "reject", "reason": "not researchable"}]},
+        "write": {"article": "knowledge/research/Toei.md", "status": "verified", "verified": ["S1"], "cited": ["S1"],
+                  "whisper_outcome": "set"}}}))
+    (tmp_path / "phase0").mkdir()
+    (tmp_path / "phase0" / "events.jsonl").write_text("\n".join(_json.dumps(e) for e in [
+        {"occurred_at": "2026-11-05T11:15:00+00:00", "kind": "job.claimed", "decision": "started",
+         "rationale_code": "idle_24m", "job_id": "cs-1"},
+        {"occurred_at": "2026-11-05T11:21:00+00:00", "kind": "job.completed", "job_id": "cs-1"},
+        {"occurred_at": "2026-11-05T11:00:00+00:00", "kind": "runtime.agent_turn"}]))
+    inbox = Inbox(tmp_path / "subconscious" / "inbox.sqlite")
+    item, _ = inbox.add(kind="pattern", loop="dreamer", title="ESP32", dedupe_key="p",
+                        evidence=[{"ref": "chat:a/b", "kind": "chat"}], now=now - timedelta(hours=2))
+    inbox.decide(item["id"], "rejected", by="user", reason="meh")
+    (tmp_path / "persona").mkdir()
+    (tmp_path / "persona" / "affect.json").write_text(_json.dumps({"residue": [
+        {"at": "2026-11-05T11:04:00+00:00", "source": "time_of_day", "mood": "groggy"}]}))
+    titles = [i["title"] for i in build(data_dir=tmp_path, now=now)]
+    assert titles[0] == "Finished her session and went back to sleep"
+    assert "Wrote “Toei”" in titles and "Chose to research Toei Animation" in titles
+    assert "Woke up on her own" in titles and "Went through Dottie's suggestions" in titles
+    assert "Mood: groggy" in titles and any(t.startswith("You rejected") for t in titles)
+    assert any(t.startswith("Dottie's Dreamer found 1 thing") for t in titles)
+    assert not any("agent_turn" in t for t in titles)

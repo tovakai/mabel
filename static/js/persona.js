@@ -20,6 +20,12 @@ let data = null;
 let research = null;      // /api/persona/research
 let inbox = null;         // /api/persona/inbox
 let autonomy = null;      // /api/persona/autonomy
+let timeline = null;      // /api/persona/timeline
+let timelineTimer = null;
+const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['research', 'Research'], ['identity', 'Identity']];
+let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
+const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
+  article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040' };
 let autonomyTimer = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
@@ -266,6 +272,54 @@ function autonomyCard() {
     ${now}${y}${controls}`);
 }
 
+function timelineCard() {
+  if (!timeline) return card('Timeline', '<div class="admin-toggle-sub">Loading…</div>');
+  if (!timeline.length) return card('Timeline', '<div class="admin-toggle-sub">Nothing yet this week.</div>');
+  const dayLabel = (d) => {
+    const today = new Date(); const y = new Date(); y.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === y.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+  };
+  let html = '', lastDay = '';
+  for (const item of timeline) {
+    const d = new Date(item.at);
+    const day = dayLabel(d);
+    if (day !== lastDay) { html += `<div style="font-size:12px;font-weight:600;margin:10px 0 4px;opacity:0.8">${esc(day)}</div>`; lastDay = day; }
+    html += `<div style="display:flex;gap:8px;align-items:flex-start;margin:3px 0">
+      <span style="font-size:11px;opacity:0.6;min-width:38px;padding-top:1px">${esc(d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))}</span>
+      <span style="width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;background:${TIMELINE_DOT[item.kind] || '#999'}"></span>
+      <div style="min-width:0"><div style="font-size:12px">${esc(item.title)}</div>
+      ${item.detail ? `<div class="admin-toggle-sub" style="margin:1px 0 0">${esc(item.detail)}</div>` : ''}</div></div>`;
+  }
+  return card('Timeline', `<div class="admin-toggle-sub" style="margin-top:0">What she's been up to over the last week, newest first.</div>${html}`);
+}
+
+function renderTimeline() {
+  const slot = document.getElementById('persona-timeline');
+  if (slot) slot.innerHTML = timelineCard();
+}
+
+async function loadTimeline() {
+  clearTimeout(timelineTimer);
+  try { timeline = (await api('/timeline?days=7')).items; } catch (err) { timeline = []; }
+  renderTimeline();
+  const modal = document.getElementById('persona-modal');
+  if (modal && !modal.classList.contains('hidden') && activeTab === 'timeline') timelineTimer = setTimeout(loadTimeline, 20000);
+}
+
+function applyTab() {
+  document.querySelectorAll('#persona-body [data-ptab]').forEach(el => { el.hidden = el.dataset.ptab !== activeTab; });
+  document.querySelectorAll('#persona-body [data-persona-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.personaTab === activeTab);
+  });
+}
+
+function tabBar() {
+  return `<div class="memory-tabs" style="margin-bottom:8px">${TABS.map(([id, label]) =>
+    `<button type="button" class="memory-tab${id === activeTab ? ' active' : ''}" data-persona-tab="${id}">${esc(label)}</button>`).join('')}</div>`;
+}
+
 function renderAutonomy() {
   const slot = document.getElementById('persona-autonomy');
   if (slot) slot.innerHTML = autonomyCard();
@@ -319,9 +373,12 @@ function render() {
   if (!body) return;
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
-  body.innerHTML = statusCard() + `<div id="persona-research">${researchCard()}</div>`
-    + `<div id="persona-inbox">${inboxCard()}</div>` + `<div id="persona-autonomy">${autonomyCard()}</div>`
-    + whisperCard() + modeCard() + modulesCard();
+  body.innerHTML = tabBar()
+    + `<div data-ptab="now">${statusCard()}<div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
+    + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
+    + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
+    + `<div data-ptab="identity">${modeCard()}${modulesCard()}</div>`;
+  applyTab();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
   });
@@ -340,6 +397,14 @@ async function load() {
 }
 
 async function onClick(event) {
+  const tab = event.target.closest('[data-persona-tab]');
+  if (tab) {
+    activeTab = tab.dataset.personaTab;
+    try { localStorage.setItem('persona-tab', activeTab); } catch { /* per-viewer convenience only */ }
+    applyTab();
+    if (activeTab === 'timeline') loadTimeline();
+    return;
+  }
   const target = event.target.closest('[data-persona-mode], [data-persona-save], [data-persona-action]');
   if (!target || target.disabled) return;
   if (target.dataset.personaAction === 'open-article') {
@@ -438,12 +503,14 @@ export function openPersonaModal() {
   loadResearch();
   loadInbox();
   loadAutonomy();
+  loadTimeline();
 }
 
 function closePersonaModal() {
   clearTimeout(pollTimer);
   clearTimeout(inboxTimer);
   clearTimeout(autonomyTimer);
+  clearTimeout(timelineTimer);
   const modal = document.getElementById('persona-modal');
   if (modal) modal.classList.add('hidden');
 }
