@@ -1977,6 +1977,19 @@ def _image_mode_from_request(form_data, body) -> str:
     return value if value in IMAGE_MODES else "auto"
 
 
+def _image_model_from_request(form_data, body) -> str:
+    """The chat menu's image model for this turn ("" = the configured default)."""
+    value = None
+    try:
+        value = form_data.get("image_model") if form_data is not None else None
+    except Exception:
+        value = None
+    if value is None and isinstance(body, dict):
+        value = body.get("image_model")
+    value = str(value or "").strip()
+    return value if re.fullmatch(r"[A-Za-z0-9._:/@+-]{1,120}", value) else ""
+
+
 def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     """Whether this chat session should bypass text chat and generate images.
 
@@ -3307,6 +3320,10 @@ def setup_chat_routes(
         # Image Mode (chat menu): on = this message is an image prompt, straight to the
         # image model; off = no image tools at all; auto = her normal judgement.
         image_mode = _image_mode_from_request(form_data, body)
+        image_model_choice = _image_model_from_request(form_data, body)
+        if image_model_choice:
+            from src.ai_interaction import IMAGE_MODEL_OVERRIDE
+            IMAGE_MODEL_OVERRIDE.set(image_model_choice)
         forced_image_turn = (image_mode == "on" and not image_generation_session
                              and not tool_approval_continuation and bool((message or "").strip()))
         if forced_image_turn:
@@ -4589,7 +4606,7 @@ def setup_chat_routes(
                 else:
                     # A forced turn (Image Mode on) runs on her chat model's session, so let the
                     # configured image model and a full-size canvas apply instead.
-                    _img_spec = json.dumps({"prompt": _user_msg, "size": "1024x1024"}) if forced_image_turn else f"{_user_msg}\n{sess.model}\n512x512"
+                    _img_spec = json.dumps({"prompt": _user_msg, "size": "1024x1024", "model": image_model_choice}) if forced_image_turn else f"{_user_msg}\n{sess.model}\n512x512"
                     _img_task = asyncio.create_task(do_generate_image(_img_spec, session, owner=_user,
                                                                       progress_cb=_image_progress_callback))
                 _img_started = time.time()

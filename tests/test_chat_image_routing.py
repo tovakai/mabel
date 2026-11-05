@@ -150,7 +150,7 @@ def test_direct_image_dispatch_preserves_permissions(monkeypatch, editing, restr
         tool_policy=policy, chat_handler=None, att_ids=[], _user='test',
         _first_image_attachment=lambda *args, **kwargs: {'path': '/test.png'} if editing else None,
         message='A thumbnail', session='test-session', sess=_session(model='gpt-5-image'),
-        incognito=True, _active_streams={'test-session': object()}, forced_image_turn=False,
+        incognito=True, _active_streams={'test-session': object()}, forced_image_turn=False, image_model_choice='',
         asyncio=asyncio, time=time, json=json, Dict=dict, Any=object,
     )
     exec(compile(module, '<image route>', 'exec'), namespace)

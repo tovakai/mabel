@@ -51,7 +51,32 @@ _PROGRESS = {}
 @asynccontextmanager
 async def lifespan(application):
     load_model()
+    _apply_scheduler()
     yield
+
+
+SCHEDULERS = {
+    # name: (diffusers class, extra config)
+    "euler": ("EulerDiscreteScheduler", {}),
+    "euler_a": ("EulerAncestralDiscreteScheduler", {}),
+    "dpmpp_2m": ("DPMSolverMultistepScheduler", {}),
+    "dpmpp_2m_karras": ("DPMSolverMultistepScheduler", {"use_karras_sigmas": True}),
+    "dpmpp_2m_sde_karras": ("DPMSolverMultistepScheduler", {"algorithm_type": "sde-dpmsolver++", "use_karras_sigmas": True}),
+}
+
+
+def _apply_scheduler():
+    """Swap the pipeline's sampler for the one the model's author recommends (--scheduler)."""
+    name = (getattr(_args, "scheduler", "") or "").strip().lower()
+    if not name or _pipe is None or not hasattr(_pipe, "scheduler"):
+        return
+    if name not in SCHEDULERS:
+        logger.warning("Unknown scheduler %r; keeping %s", name, type(_pipe.scheduler).__name__)
+        return
+    import diffusers
+    cls_name, extra = SCHEDULERS[name]
+    _pipe.scheduler = getattr(diffusers, cls_name).from_config(_pipe.scheduler.config, **extra)
+    logger.info("Scheduler: %s (%s)", name, cls_name)
 
 
 app = FastAPI(title="Diffusion Server", lifespan=lifespan)
@@ -204,9 +229,12 @@ def _parse_size(size: str) -> tuple[int, int]:
 
 
 def _quality_steps(quality: str) -> int:
-    default_steps = _args.steps or 8
-    steps_map = {"low": 4, "medium": default_steps, "high": 20, "auto": 12}
-    return steps_map.get(quality, default_steps)
+    """Steps per quality, relative to the model's own default (--steps), so "high" never means fewer
+    steps than "medium" (fast turbo models default to ~8, full SDXL models to ~25)."""
+    d = _args.steps or 8
+    steps_map = {"low": 4 if d <= 8 else round(d * 0.6), "medium": d, "high": max(20, round(d * 1.4)),
+                 "auto": max(12, d)}
+    return steps_map.get(quality, d)
 
 
 def _guidance_scale() -> float:
@@ -247,10 +275,14 @@ def _pipeline_call_kwargs(**kwargs) -> dict:
 
 
 def _with_prompt_suffix(prompt: str) -> str:
-    """Append the model's trigger phrase (e.g. ". in pixel art style") unless it's already there."""
+    """Add the model's fixed tags: a prefix (e.g. Pony's "score_9, score_8_up, ...") in front and a
+    trigger phrase (e.g. ". in pixel art style") at the end, each unless it's already there."""
     suffix = (getattr(_args, "prompt_suffix", "") or "").strip()
     if suffix and suffix.lower().lstrip(". ") not in (prompt or "").lower():
-        return f"{(prompt or '').rstrip(' .')}{suffix if suffix.startswith(('.', ',')) else ' ' + suffix}"
+        prompt = f"{(prompt or '').rstrip(' .')}{suffix if suffix.startswith(('.', ',')) else ' ' + suffix}"
+    prefix = (getattr(_args, "prompt_prefix", "") or "").strip().rstrip(",")
+    if prefix and not (prompt or "").lower().startswith(prefix.lower()):
+        prompt = f"{prefix}, {prompt}"
     return prompt
 
 
@@ -751,6 +783,8 @@ def generate_image(req: ImageRequest):
                 }
             if negative_prompt:
                 kwargs["negative_prompt"] = negative_prompt
+            if getattr(_args, "clip_skip", 0) and _pipeline_accepts_arg("clip_skip"):
+                kwargs["clip_skip"] = int(_args.clip_skip)
             result = _run_pipeline_with_progress(
                 _pipe,
                 request_id,
@@ -1496,6 +1530,9 @@ if __name__ == "__main__":
     parser.add_argument("--guidance-scale", type=float, default=3.5, help="Default classifier-free guidance scale")
     parser.add_argument("--negative-prompt", default="", help="Default negative prompt for pipelines that support it")
     parser.add_argument("--single-file-config", default="", help="Base Diffusers repo/path for single-file checkpoints that need missing components. Comma-separated values are tried in order.")
+    parser.add_argument("--scheduler", default="", help="Sampler: " + ", ".join(SCHEDULERS) + " (default: the model's own)")
+    parser.add_argument("--prompt-prefix", default="", help="Tags put in front of every prompt (e.g. Pony's 'score_9, score_8_up, score_7_up')")
+    parser.add_argument("--clip-skip", type=int, default=0, help="Extra CLIP layers to skip. SDXL already uses the penultimate layer, so A1111-style 'clip skip 2' is 0 here")
     parser.add_argument("--prompt-suffix", default="", help="Trigger phrase appended to every prompt (e.g. '. in pixel art style')")
     parser.add_argument("--pixelate", type=int, default=0, help="Snap output to a pixel grid N px wide (nearest-neighbour down N×, then up N×)")
     parser.add_argument("--width", type=int, default=1024, help="Default output width")

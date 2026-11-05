@@ -2247,10 +2247,12 @@ function initializeEventListeners() {
     }
     // Close menu when clicking any item inside it. preventDefault on pointerdown
     // so tapping an item (e.g. Attach files) doesn't steal focus from the message
-    // box — keeps the mobile keyboard up.
+    // box — keeps the mobile keyboard up. Toggles marked data-keep-open (TTS Mode,
+    // Images, image Model) stay open so they can be clicked through; click outside
+    // or press Escape to close.
     menu.querySelectorAll('.overflow-menu-item').forEach(item => {
       item.addEventListener('pointerdown', (e) => { e.preventDefault(); });
-      item.addEventListener('click', () => closeOverflowMenu());
+      item.addEventListener('click', () => { if (!('keepOpen' in item.dataset)) closeOverflowMenu(); });
     });
     document.addEventListener('click', (e) => {
       if (!menu.contains(e.target) && e.target !== plusBtn) closeOverflowMenu();
@@ -2565,6 +2567,45 @@ function initializeEventListeners() {
       apply(mode);
       try { const s = loadToggleState(); s.imageMode = mode; saveToggleState(s); } catch (e) {}
       updatePlusDot();
+    });
+  })();
+
+
+  // Image model picker: cycles through the registered image models; the choice is sent
+  // with each message as image_model (dreams always use the configured default).
+  (function initImageModelPicker() {
+    const btn = document.getElementById('overflow-image-model-btn');
+    const label = document.getElementById('overflow-image-model-label');
+    if (!btn || !label) return;
+    let choices = [];
+    let current = '';
+    const nice = (c) => String(c.label || c.id).replace(/\s*\(GPU swap\)\s*$/i, '');
+    function apply() {
+      const c = choices.find(x => x.id === current) || choices[0];
+      if (!c) return;
+      current = c.id;
+      label.textContent = `Model: ${nice(c)}`;
+      btn.title = `Image model for generating: ${c.id}`;
+    }
+    fetch('/api/image-models/choices', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data || !Array.isArray(data.choices) || data.choices.length < 2) return;
+        choices = data.choices;
+        let saved = '';
+        try { saved = loadToggleState().imageModel || ''; } catch (e) {}
+        current = choices.some(c => c.id === saved) ? saved : (data.default || choices[0].id);
+        btn.hidden = false;
+        btn.style.display = '';
+        apply();
+      })
+      .catch(() => {});
+    btn.addEventListener('click', () => {
+      if (!choices.length) return;
+      const i = choices.findIndex(c => c.id === current);
+      current = choices[(i + 1) % choices.length].id;
+      apply();
+      try { const s = loadToggleState(); s.imageModel = current; saveToggleState(s); } catch (e) {}
     });
   })();
 

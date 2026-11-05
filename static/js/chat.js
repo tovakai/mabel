@@ -2669,6 +2669,12 @@ import { invalidateSettings } from './appConfig.js';
         const _imageMode = Storage.loadToggleState().imageMode;
         fd.append('image_mode', ['auto', 'on', 'off'].includes(_imageMode) ? _imageMode : 'auto');
       } catch (_) { fd.append('image_mode', 'auto'); }
+      try {
+        const _imageModel = Storage.loadToggleState().imageModel;
+        if (_imageModel && document.getElementById('overflow-image-model-btn')?.style.display !== 'none') {
+          fd.append('image_model', String(_imageModel));
+        }
+      } catch (_) {}
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');

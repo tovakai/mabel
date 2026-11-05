@@ -50,7 +50,7 @@ and calendar). Everything Odysseus does still works; see
 | **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles + sites, places and steps from Home Assistant, WhatsApp/Messenger/Discord message previews from your phone's notifications) and your journal. Every morning she writes her own account of your day. |
 | **Memory** | Moments from conversations and from your days become memory candidates. You decide what's kept; kept memories are verified against their source every time they're recalled. |
 | **Self-reflection** | Every few days she looks back at her own week and writes about patterns in herself, how she feels, and questions about what she is. Those questions feed her research. |
-| **Images** | She can generate images (a local SDXL model by default). On a single GPU her own model steps aside while it renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off (never). |
+| **Images** | She can generate images (a local SDXL model by default). On a single GPU her own model steps aside while it renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off (never), and with more than one image model a **Model** picker chooses which one renders (dreams always use the default). |
 | **Visual dreams** | At most once a day, while you're away, one of Dottie's notes sinks into a dream: she writes a few broken dream fragments, they become a picture, and on waking she looks at it and writes about it. Her self-reflection reads her recent dreams. |
 | **Timeline** | One feed of everything above, so you can see what she's been up to. |
 
@@ -246,6 +246,10 @@ the GPU swap does the juggling:
    ```
 3. Register the endpoint as an image endpoint with model refresh off and the model id pinned, set it as the
    image model, and turn image generation on.
+4. More models: add another service (its own port) and endpoint the same way; the chat menu's Model picker
+   lists every registered image model. `--prompt-prefix` adds fixed leading tags (e.g. Pony's
+   `score_9, score_8_up, score_7_up`); a single-file checkpoint can be converted once with diffusers'
+   `from_single_file(...).save_pretrained(...)`.
 
 A request then stops her model (`strata runtime stop`), starts the image server, renders, stops it and
 starts her again (about a minute and a half on a 12 GB card). Bringing her back always runs, and a crash

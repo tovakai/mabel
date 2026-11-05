@@ -1165,16 +1165,21 @@
                    don't break; without this entry point it can't be enabled. -->
               <!-- Group Chat moved to Characters modal Group tab -->
               <!-- TTS Mode: read replies aloud as they arrive. Shown once a TTS provider is configured (app.js). -->
-              <button type="button" class="overflow-menu-item" id="overflow-tts-btn" style="display:none">
+              <button type="button" class="overflow-menu-item" id="overflow-tts-btn" data-keep-open style="display:none">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
                 <span>TTS Mode</span>
                 <span class="overflow-active-dot"></span>
               </button>
               <!-- Image Mode: auto (her judgement) → on (every message is an image prompt) → off (never). app.js -->
-              <button type="button" class="overflow-menu-item" id="overflow-image-mode-btn" style="display:none">
+              <button type="button" class="overflow-menu-item" id="overflow-image-mode-btn" data-keep-open style="display:none">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
                 <span id="overflow-image-mode-label">Images: Auto</span>
                 <span class="overflow-active-dot"></span>
+              </button>
+              <!-- Image model: which image model to use when generating (shown with 2+ image models). app.js -->
+              <button type="button" class="overflow-menu-item" id="overflow-image-model-btn" data-keep-open style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.6-10-8.6z"/></svg>
+                <span id="overflow-image-model-label">Model: default</span>
               </button>
               <button type="button" class="overflow-menu-item" id="overflow-preset-btn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

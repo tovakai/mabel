@@ -2070,6 +2070,32 @@ def setup_model_routes(model_discovery):
 
     # ---- Admin: model endpoints CRUD ----
 
+    @router.get("/image-models/choices")
+    def image_model_choices(request: Request) -> Dict[str, Any]:
+        """Image models the chat menu can pick from: registered ids of enabled image endpoints
+        (also the GPU-swapped ones, which are offline until a render starts) and the default."""
+        from src.settings import get_setting
+        owner = effective_user(request) or ""
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True,  # noqa: E712
+                                               ModelEndpoint.model_type == "image")
+            if owner:
+                q = owner_filter(q, ModelEndpoint, owner)
+            choices: list[dict] = []
+            for ep in q.order_by(ModelEndpoint.created_at).all():
+                ids = []
+                for raw in (ep.pinned_models, ep.cached_models):
+                    try:
+                        ids += [str(m) for m in json.loads(raw or "[]") if m]
+                    except (TypeError, ValueError):
+                        pass
+                for mid in dict.fromkeys(ids):
+                    choices.append({"id": mid, "label": ep.name or mid})
+        finally:
+            db.close()
+        return {"default": str(get_setting("image_model", "") or ""), "choices": choices}
+
     @router.get("/model-endpoints")
     def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
         require_admin(request)

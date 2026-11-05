@@ -15,6 +15,7 @@ through the standard agent_tools.py pipeline.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import re
@@ -1160,6 +1161,10 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 # Image generation
 # ---------------------------------------------------------------------------
 
+# The chat menu's image model for the current request (empty = the configured default).
+# Set per request by the chat route; dreams and other background callers never see it.
+IMAGE_MODEL_OVERRIDE: contextvars.ContextVar[str] = contextvars.ContextVar("image_model_override", default="")
+
 _SWAP_PHASE_LABELS = {
     "stepping_aside": "Stepping aside to make room on the GPU…",
     "loading": "Loading the image model…",
@@ -1231,7 +1236,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     # Use admin-configured model/quality if not specified by the tool call
     if not model_spec:
-        model_spec = _settings.get("image_model", "")
+        model_spec = IMAGE_MODEL_OVERRIDE.get() or _settings.get("image_model", "")
     if quality == "medium" and _settings.get("image_quality"):
         quality = _settings["image_quality"]
 
