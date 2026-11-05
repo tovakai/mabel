@@ -4567,7 +4567,58 @@ def _provider_stream_error_status(error, *, default: int = 400) -> int:
     return default
 
 
+# Transient pre-content failures (model server busy, timed out, briefly down)
+# are regenerated quietly instead of ending the turn with an error. Only
+# before any output: once tokens have streamed, a retry would duplicate them.
+TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+TRANSIENT_REGENERATIONS = 2
+TRANSIENT_BACKOFF_S = (3.0, 8.0)
+_TRANSIENT_TEXT = re.compile(r"time(?:d)?\s*out|timeout|connect|reset|unavailable|overloaded|busy", re.I)
+
+
+def _is_transient_stream_error(chunk: str) -> bool:
+    try:
+        data = json.loads(next(line[6:] for line in chunk.splitlines() if line.startswith("data: ")))
+    except (StopIteration, ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    message = str(data.get("error") or data.get("message") or "")
+    # Respect the stream's own verdict (e.g. a write timeout may already have
+    # reached the server), and leave empty completions to the agent's
+    # empty-response recovery.
+    if data.get("fallback_eligible") is False or "no substantive output" in message:
+        return False
+    status = data.get("status")
+    if status is not None:
+        # Only well-formed integer statuses; malformed ones (e.g. 429.9) are not retried.
+        return type(status) is int and status in TRANSIENT_STATUSES
+    return bool(_TRANSIENT_TEXT.search(message))
+
+
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
+    """``_stream_llm_with_fallback_once`` plus quiet regeneration of transient pre-content errors."""
+    from contextlib import aclosing
+    for attempt in range(TRANSIENT_REGENERATIONS + 1):
+        committed = False
+        retry = False
+        async with aclosing(_stream_llm_with_fallback_once(candidates, messages, **dict(kwargs))) as stream:
+            async for chunk in stream:
+                if (not committed and attempt < TRANSIENT_REGENERATIONS and isinstance(chunk, str)
+                        and chunk.startswith("event: error") and _is_transient_stream_error(chunk)):
+                    retry = True
+                    logger.warning("Transient model error before any output; regenerating (%d/%d): %s",
+                                   attempt + 1, TRANSIENT_REGENERATIONS, chunk[:200].replace("\n", " "))
+                    break
+                if isinstance(chunk, str) and chunk.startswith("data:") and '"diagnostic_event"' not in chunk[:80]:
+                    committed = True   # real output (text, reasoning, tool calls): never regenerate past this
+                yield chunk
+        if not retry:
+            return
+        await asyncio.sleep(TRANSIENT_BACKOFF_S[min(attempt, len(TRANSIENT_BACKOFF_S) - 1)])
+
+
+async def _stream_llm_with_fallback_once(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
     `candidates` is a list of (url, model, headers). Each is tried in order,

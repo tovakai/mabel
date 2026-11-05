@@ -1420,6 +1420,8 @@ def test_dedupe_candidates_keeps_first_of_each_route():
 
 
 def test_duplicate_route_is_attempted_only_once(monkeypatch):
+    # Route de-duplication only; transient-error regeneration has its own tests.
+    monkeypatch.setattr(llm_core, "TRANSIENT_REGENERATIONS", 0)
     """A fallback that repeats the primary's (url, model) must NOT make the chain
     sail back into the same dead route — each distinct route is tried once."""
     calls = []
