@@ -32,7 +32,8 @@ def status() -> dict:
         out["session"] = {"id": session.id, "steps_done": done,
                           "next_step": next((s for s in STEPS if s not in done), None),
                           "subject": choice.get("subject"), "question": choice.get("question"),
-                          "why": choice.get("why"), "result": session.done("write")}
+                          "why": choice.get("why"), "result": session.done("write"),
+                          "dottie_decisions": choice.get("dottie_decisions") or []}
     return out
 
 

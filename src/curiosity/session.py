@@ -80,6 +80,15 @@ class Paths:
         self.index = index_db(self.source_vault, self.owner)
 
 
+def _dottie_patterns(limit: int = 4) -> list[dict]:
+    """Dottie's newest conversation patterns, for Mabel to consider (and keep or reject)."""
+    try:
+        from src.subconscious.inbox import default_inbox
+        return default_inbox().list(status="new", kind="pattern", limit=limit)
+    except Exception:
+        return []
+
+
 def _brief(subject: str) -> dict | None:
     """Dottie's research brief for ``subject``, if one is waiting (Phase 4 Scout)."""
     if not subject:
@@ -173,6 +182,9 @@ class Session:
             if item["name"].casefold() not in researched:
                 pool.append(Candidate(item["name"], "spawned", ref=item["id"],
                                       reasons=[f"a link you left in {Path(item['from_article']).stem}"]))
+        for item in _dottie_patterns():
+            pool.append(Candidate(item["title"], "dottie", question=item["payload"].get("curiosity") or None,
+                                  ref=item["id"], reasons=[f"Dottie noticed: {item['summary']}"[:200]]))
         listed = [c.as_dict() for c in pool]
         self._checkpoint("candidates", listed)
         return listed
@@ -192,12 +204,18 @@ class Session:
         prompt = (
             "You have some free time to research something purely because you want to. Below are things "
             "Anthon's notes link to but nobody has written up yet, a couple of random picks, and any open "
-            "questions you left yourself last time.\n\n" + "\n".join(lines) + "\n\n"
+            "questions you left yourself last time. Items marked [dottie] are things Dottie noticed Anthon keeps "
+            "talking about.\n\n" + "\n".join(lines) + "\n\n"
             + (f"Already written up (don't pick these): {', '.join(researched)}\n\n" if researched else "")
             + "Pick the one you're genuinely most curious about, or ignore the list and ask an entirely new "
             "question. Turn it into a real question (not just a topic). Be honest about why.\n"
             'Reply with only JSON: {"pick": <list number, or 0 for your own>, "subject": "...", '
-            '"question": "...", "why": "one or two sentences", "search_queries": ["up to 3 web searches"]}')
+            '"question": "...", "why": "one or two sentences", "search_queries": ["up to 3 web searches"]'
+            + (', "dottie": [{"item": <list number>, "decision": "keep" or "reject", "reason": "short and honest"}]'
+               if any(c["kind"] == "dottie" for c in pool) else "") + "}"
+            + ("\nFor every [dottie] item you don't pick, decide: keep it for another day, or reject it "
+               "(not interesting to you, not researchable, or not your business), and say why."
+               if any(c["kind"] == "dottie" for c in pool) else ""))
         if forced is not None:
             prompt += f"\n\n(Operator note: this run is restricted to item {forced}.)"
         reply = await _ask([{"role": "system", "content": _core_identity()}, {"role": "user", "content": prompt}],
@@ -214,11 +232,49 @@ class Session:
                   "question": question, "why": " ".join(str(choice.get("why") or "").split())[:500],
                   "search_queries": (queries or [subject])[:QUERIES_PER_ARTICLE],
                   "candidate": picked, "chosen_at": _now().isoformat()}
+        record["dottie_decisions"] = self._review_dottie(pool, picked, choice.get("dottie"))
         self._checkpoint("choice", record)
         self._ledger(record)
-        if picked and picked.get("ref"):
+        if picked and picked.get("ref") and picked["kind"] != "dottie":
             self.backlog.mark(picked["ref"], "picked")
         return record
+
+    def _review_dottie(self, pool: list[dict], picked: dict | None, decisions) -> list[dict]:
+        """Apply Mabel's verdicts on Dottie's suggestions: picked -> accepted, reject -> rejected (with her reason)."""
+        try:
+            from src.subconscious.inbox import default_inbox
+            inbox = default_inbox()
+        except Exception:
+            return []
+        out = []
+        if picked and picked["kind"] == "dottie":
+            inbox.decide(picked["ref"], "accepted", by="mabel", reason=f"picked for curiosity session {self.id}")
+            out.append({"item": picked["ref"], "title": picked["name"], "decision": "picked"})
+        if picked and picked["kind"] == "open_question" and picked.get("ref"):
+            linked = inbox.find(f"question:{picked['ref']}")
+            if linked and linked["status"] == "new":
+                inbox.decide(linked["id"], "done", by="mabel", reason=f"picked for curiosity session {self.id}")
+        for verdict in decisions if isinstance(decisions, list) else []:
+            if not isinstance(verdict, dict):
+                continue
+            try:
+                index = int(verdict.get("item"))
+            except (TypeError, ValueError):
+                continue
+            cand = pool[index - 1] if 1 <= index <= len(pool) else None
+            if not cand or cand["kind"] != "dottie" or cand is picked:
+                continue
+            reason = " ".join(str(verdict.get("reason") or "").split())[:300]
+            decision = str(verdict.get("decision") or "").lower()
+            if decision == "reject":
+                try:
+                    inbox.decide(cand["ref"], "rejected", by="mabel", reason=reason or "not for me")
+                except Exception:
+                    continue
+            elif decision != "keep":
+                continue
+            out.append({"item": cand["ref"], "title": cand["name"], "decision": decision, "reason": reason})
+        return out
 
     def _ledger(self, record: dict) -> None:
         try:
@@ -429,7 +485,7 @@ Give at least one quote for every source you cite; quotes must be copied exactly
         fresh = [link for link in draft.links if link.casefold() not in known][:NEW_CANDIDATES_CAP]
         added = self.backlog.add_from_article(article=rel, subject=choice["subject"], questions=draft.questions,
                                               links=fresh)
-        if (choice.get("candidate") or {}).get("ref"):
+        if (choice.get("candidate") or {}).get("ref") and choice["candidate"]["kind"] != "dottie":
             self.backlog.mark(choice["candidate"]["ref"], "done")
         whisper_outcome = self._propose_whisper(choice, draft.whisper, rel, check["status"])
         self._journal(choice, rel, check, draft)

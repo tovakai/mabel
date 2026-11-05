@@ -172,6 +172,8 @@ function researchCard() {
   } else if (sess && sess.result) {
     const r = sess.result;
     now = `<div style="font-size:12px;margin:4px 0">Finished: <strong>${esc(sess.subject || '')}</strong> (${esc(r.status)}${r.whisper_outcome === 'set' || r.whisper_outcome === 'replaced_automatic' ? ', set her whisper' : ''})</div>`;
+    const verdicts = (sess.dottie_decisions || []).map(d => `${d.decision === 'reject' ? 'rejected' : d.decision === 'keep' ? 'kept' : 'picked'} “${esc(d.title)}”${d.reason ? ` (${esc(d.reason)})` : ''}`);
+    if (verdicts.length) now += `<div class="admin-toggle-sub">Dottie's suggestions: ${verdicts.join('; ')}</div>`;
   }
   const button = research.can_manage
     ? `<button type="button" class="theme-io-btn" data-persona-action="research-run" ${st.running ? 'disabled' : ''} style="height:26px;font-size:12px">${st.running ? 'Researching…' : 'Go research something'}</button>

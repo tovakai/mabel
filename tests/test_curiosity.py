@@ -199,3 +199,68 @@ def test_sentence_splitting_respects_abbreviations_and_citations():
     assert split_sentences(text) == [
         "Its works include Kill Bill Vol. 1, Eden of the East, and Haikyu!! [S1].",
         "Ghost in the Shell reached #1 on the U.S. Billboard chart [S1].", "Then a new one!", "Another here."]
+
+
+def test_mabel_reviews_dotties_patterns_while_choosing(tmp_path, monkeypatch):
+    import asyncio
+    from src.curiosity import session as session_mod
+    from src.subconscious.inbox import Inbox
+    vault, db = _vault(tmp_path)
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    monkeypatch.setattr("src.subconscious.inbox.default_inbox", lambda: inbox)
+    ev = [{"ref": "chat:s1/m1", "kind": "chat"}, {"ref": "chat:s2/m2", "kind": "chat"}]
+    docs, _ = inbox.add(kind="pattern", loop="dreamer", title="Documentation & Vault", dedupe_key="p1",
+                        evidence=ev, priority=70, payload={"curiosity": "Is he testing me?"})
+    horror, _ = inbox.add(kind="pattern", loop="dreamer", title="Rocky Horror", dedupe_key="p2",
+                          evidence=ev, priority=60, payload={"curiosity": "Costume this time?"})
+    paths = session_mod.Paths(mabel_vault=tmp_path / "mabel", data_dir=tmp_path / "data", source_vault=vault, owner="alice")
+    paths.index = db
+    session = session_mod.Session(paths)
+    pool = session.build_candidates(seed=1)
+    numbers = {c["name"]: i for i, c in enumerate(pool, 1)}
+    assert pool[numbers["Rocky Horror"] - 1]["kind"] == "dottie"
+    prompts = []
+
+    async def fake_ask(messages, *, max_tokens, owner):
+        prompts.append(messages[-1]["content"])
+        return json.dumps({"pick": numbers["Madhouse"], "subject": "Madhouse", "question": "Why Madhouse?",
+                           "why": "Beck.", "search_queries": ["Madhouse"],
+                           "dottie": [{"item": numbers["Documentation & Vault"], "decision": "reject",
+                                       "reason": "that's just him testing me, not a research topic"},
+                                      {"item": numbers["Rocky Horror"], "decision": "keep", "reason": "fun later"},
+                                      {"item": numbers["Madhouse"], "decision": "reject", "reason": "ignored: not dottie"}]})
+    monkeypatch.setattr(session_mod, "_ask", fake_ask)
+    monkeypatch.setattr(session_mod, "_core_identity", lambda: "You are Mabel.")
+    choice = asyncio.run(session.choose())
+    assert "[dottie]" in prompts[0] and '"dottie"' in prompts[0]
+    assert [(d["title"], d["decision"]) for d in choice["dottie_decisions"]] == \
+        [("Documentation & Vault", "reject"), ("Rocky Horror", "keep")]
+    rejected = inbox.get(docs["id"])
+    assert (rejected["status"], rejected["decided_by"]) == ("rejected", "mabel")
+    assert rejected["decision_reason"].startswith("that's just him testing me")
+    assert inbox.get(horror["id"])["status"] == "new", "kept items stay for another day"
+
+
+def test_mabel_can_pick_a_dottie_pattern(tmp_path, monkeypatch):
+    import asyncio
+    from src.curiosity import session as session_mod
+    from src.subconscious.inbox import Inbox
+    vault, db = _vault(tmp_path)
+    inbox = Inbox(tmp_path / "inbox.sqlite")
+    monkeypatch.setattr("src.subconscious.inbox.default_inbox", lambda: inbox)
+    item, _ = inbox.add(kind="pattern", loop="dreamer", title="Rocky Horror", dedupe_key="p2",
+                        evidence=[{"ref": "chat:s/m", "kind": "chat"}], payload={"curiosity": "Costume?"})
+    paths = session_mod.Paths(mabel_vault=tmp_path / "mabel", data_dir=tmp_path / "data", source_vault=vault, owner="alice")
+    paths.index = db
+    session = session_mod.Session(paths)
+    pool = session.build_candidates(seed=1)
+    pick = next(i for i, c in enumerate(pool, 1) if c["kind"] == "dottie")
+
+    async def fake_ask(messages, *, max_tokens, owner):
+        return json.dumps({"pick": pick, "subject": "The Rocky Horror Picture Show", "question": "Why do people dress up?",
+                           "why": "He keeps bringing it up.", "search_queries": ["Rocky Horror audience participation"]})
+    monkeypatch.setattr(session_mod, "_ask", fake_ask)
+    monkeypatch.setattr(session_mod, "_core_identity", lambda: "You are Mabel.")
+    choice = asyncio.run(session.choose())
+    assert choice["kind"] == "dottie" and inbox.get(item["id"])["status"] == "accepted"
+    assert inbox.get(item["id"])["decided_by"] == "mabel"
