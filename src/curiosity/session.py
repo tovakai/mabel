@@ -238,7 +238,11 @@ class Session:
             results.extend({"query": query, **r} for r in found if isinstance(r, dict) and r.get("url"))
         picked, domains = [], set()
         for r in sorted(results, key=lambda r: -self._url_score(r["url"])):
-            domain = urlparse(r["url"]).netloc.lower().removeprefix("www.")
+            domain = urlparse(r["url"]).netloc.lower().removeprefix("www.").removeprefix("m.")
+            if domain.endswith(".wikipedia.org"):
+                if not domain.startswith("en."):
+                    continue   # other language editions repeat the English article (and aren't English)
+                domain = "wikipedia.org"
             if any(s in domain for s in _SKIP_DOMAINS) or r["url"].lower().endswith(".pdf") or domain in domains:
                 continue
             domains.add(domain)

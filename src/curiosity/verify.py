@@ -58,6 +58,33 @@ def salvage_quotes(fragment: str) -> dict[str, list[str]]:
     return out
 
 
+_ABBREVIATIONS = re.compile(r"(?:\b(?:vol|no|nos|vs|etc|dr|mr|mrs|ms|st|jr|sr|inc|ltd|co|corp|ep|eps|ch|pp|fig|approx|ca)"
+                            r"|\b(?:[A-Za-z]\.){1,3}[A-Za-z]?|\be\.g|\bi\.e)\.$", re.I)
+
+
+def split_sentences(text: str) -> list[str]:
+    """Sentences, without breaking on abbreviations ("Kill Bill Vol. 1", "the U.S. Billboard")."""
+    out, current = [], ""
+    for piece in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text or "").strip()):
+        current = f"{current} {piece}".strip() if current else piece
+        nxt_ok = True
+        if _ABBREVIATIONS.search(current):
+            nxt_ok = False
+        if nxt_ok:
+            out.append(current)
+            current = ""
+    if current:
+        out.append(current)
+    # A "sentence" starting with a digit, lowercase letter or citation continues the previous one.
+    merged: list[str] = []
+    for sentence in out:
+        if merged and re.match(r"[\da-z\[]", sentence[:1]):
+            merged[-1] = f"{merged[-1]} {sentence}"
+        else:
+            merged.append(sentence)
+    return merged
+
+
 def parse_draft(text: str) -> Draft:
     text = re.sub(r"(?s)<think>.*?</think>", "", text or "").strip()
     problems = []
@@ -112,7 +139,7 @@ def verify(draft: Draft, sources: dict[str, str]) -> dict:
             quotes_ok[sid] = good
     unknown = [sid for sid in cited if sid not in sources]
     unverified = [sid for sid in cited if sid not in verified]
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", draft.found)) if len(s.split()) >= 6]
+    sentences = [s for s in split_sentences(draft.found) if len(s.split()) >= 6]
     uncited = [s for s in sentences if not _CITE.search(s)]
     for sid in unverified:
         draft.body = draft.body.replace(f"[{sid}]", f"[{sid}?]")

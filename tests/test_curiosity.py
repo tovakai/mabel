@@ -190,3 +190,12 @@ def test_research_run_is_admin_only_and_single(monkeypatch, tmp_path):
         raise runner.AlreadyRunning("a curiosity session is already running")
     monkeypatch.setattr(runner, "start", busy)
     assert client.post("/api/persona/research/run").status_code == 409
+
+
+def test_sentence_splitting_respects_abbreviations_and_citations():
+    from src.curiosity.verify import split_sentences
+    text = ("Its works include Kill Bill Vol. 1, Eden of the East, and Haikyu!! [S1]. "
+            "Ghost in the Shell reached #1 on the U.S. Billboard chart [S1]. Then a new one! Another here.")
+    assert split_sentences(text) == [
+        "Its works include Kill Bill Vol. 1, Eden of the East, and Haikyu!! [S1].",
+        "Ghost in the Shell reached #1 on the U.S. Billboard chart [S1].", "Then a new one!", "Another here."]
