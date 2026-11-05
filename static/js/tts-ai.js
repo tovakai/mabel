@@ -3,6 +3,61 @@
 
 import { getSettings } from './appConfig.js';
 
+const TTS_PREFETCH = 3;          // the playing piece + two synthesized ahead of it
+const MIN_PIECE = 15;            // shorter sentences are joined onto the next one
+const CHUNK_TARGET = 250;        // read-aloud chunk size after the first piece
+
+/**
+ * Complete sentences at the start of ``region``: [{text, end}] where ``end`` is the
+ * offset just past the sentence (and its trailing space). Short sentences are joined
+ * onto the following one; a trailing short one waits for more text.
+ */
+function completeSentences(region) {
+    const out = [];
+    let start = 0, pendingStart = null;
+    for (let i = 0; i < region.length; i++) {
+        const ch = region[i], next = region[i + 1];
+        if ((ch === '.' || ch === '!' || ch === '?') && next && /\s/.test(next)) {
+            const lastWord = region.slice(start, i + 1).trim().split(/\s/).pop() || '';
+            if (/^\d+\.$/.test(lastWord) || /^[A-Z][a-z]?\.$/.test(lastWord) || /^([A-Za-z]\.){2,}$/.test(lastWord)) continue;
+            const from = pendingStart === null ? start : pendingStart;
+            const text = region.slice(from, i + 1).trim();
+            start = i + 2;
+            if (text.length < MIN_PIECE) { pendingStart = from; continue; }
+            out.push({ text, end: Math.min(start, region.length) });
+            pendingStart = null;
+        }
+    }
+    return { sentences: out };
+}
+
+/** The opening clause of a long, still-unfinished first sentence (cut at , ; : or a dash). */
+function firstClause(region) {
+    if (region.length < 60) return null;
+    const m = /^(.{25,140}?[,;:\u2014\u2013])\s/.exec(region);
+    return m ? { text: m[1].trim(), end: m[0].length } : null;
+}
+
+/** Split a whole message for read-aloud: a short first piece, then ~CHUNK_TARGET-char chunks. */
+function splitForSpeech(plain) {
+    const text = String(plain || '').replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    const complete = completeSentences(text + ' ').sentences;
+    const found = complete.map((s) => s.text);
+    const consumed = complete.length ? complete[complete.length - 1].end : 0;
+    const rest = text.slice(consumed).trim();
+    if (rest) found.push(rest);
+    const pieces = [];
+    let chunk = '';
+    for (const sentence of found) {
+        if (!pieces.length && !chunk) { pieces.push(sentence); continue; }   // speak the first sentence alone
+        if (chunk && (chunk.length + sentence.length + 1) > CHUNK_TARGET) { pieces.push(chunk); chunk = sentence; }
+        else chunk = chunk ? `${chunk} ${sentence}` : sentence;
+    }
+    if (chunk) pieces.push(chunk);
+    return pieces;
+}
+
 class AITTSManager {
     constructor() {
         this.currentAudio = null;
@@ -280,8 +335,25 @@ class AITTSManager {
      */
     enqueue(text, button, resetFn) {
         this._queue.push({ text, button, resetFn });
+        this._prefetch();
         if (!this._processing) {
             this._processQueue();
+        }
+    }
+
+    /** Enqueue a whole message as speakable pieces (short first piece, then ~250-char chunks). */
+    enqueueText(text, button, resetFn) {
+        const pieces = splitForSpeech(this.extractPlainText(text));
+        if (!pieces.length) return;
+        for (const piece of pieces) this.enqueue(piece, button, resetFn);
+    }
+
+    // Synthesize the next few queued pieces while the current one plays, so there's
+    // no silence between sentences (synthesis runs faster than real time).
+    _prefetch() {
+        if (this.useBrowserTTS) return;
+        for (const item of this._queue.slice(0, TTS_PREFETCH)) {
+            if (!item.audio) item.audio = this.synthesize(item.text).catch((err) => { item.error = err; return null; });
         }
     }
 
@@ -318,9 +390,11 @@ class AITTSManager {
         try {
             if (!this._processing) return;
 
-            const audioUrl = await this.synthesize(text);
+            const audioUrl = this.useBrowserTTS ? null : await (item.audio || this.synthesize(text));
+            if (!this.useBrowserTTS && !audioUrl) throw item.error || new Error('TTS synthesis failed');
 
             if (!this._processing) return;
+            this._prefetch();
 
             button.innerHTML = ICON_STOP;
             button.classList.remove('loading');
@@ -363,7 +437,9 @@ class AITTSManager {
                 });
             }
         } finally {
-            if (resetFn) resetFn();
+            // A message read in pieces keeps its button in the "playing" state until the last piece.
+            const more = this._processing && this._queue.slice(1).some((q) => q.button === button);
+            if (resetFn && !more) resetFn();
         }
     }
 
@@ -396,38 +472,24 @@ class AITTSManager {
         if (!plainText || plainText.length <= this._streamSentencesSent) return;
 
         var newRegion = plainText.substring(this._streamSentencesSent);
-
-        var sentences = [];
-        var current = '';
-        for (var i = 0; i < newRegion.length; i++) {
-            current += newRegion[i];
-            var ch = newRegion[i];
-            var next = newRegion[i + 1];
-            if ((ch === '.' || ch === '!' || ch === '?') && next && /\s/.test(next)) {
-                var lastWord = current.trim().split(/\s/).pop() || '';
-                if (/^\d+\.$/.test(lastWord)) continue;
-                if (/^[A-Z][a-z]?\.$/.test(lastWord)) continue;
-                sentences.push(current.trim());
-                current = '';
-            }
+        var found = completeSentences(newRegion);
+        var pieces = found.sentences;
+        // First sound sooner: while a long opening sentence is still being written,
+        // speak up to its first natural pause.
+        if (!pieces.length && this._streamSentencesSent === 0) {
+            var early = firstClause(newRegion);
+            if (early) pieces = [early];
         }
+        if (!pieces.length) return;
 
-        if (sentences.length === 0) return;
-
-        var advancedChars = 0;
-        for (var j = 0; j < sentences.length; j++) {
-            var sentence = sentences[j];
-            if (sentence.length < 15) {
-                advancedChars += sentence.length + 1;
-                continue;
-            }
-            var btn = this._streamButton || this._createPlaceholderButton();
-            var resetFn = this._streamResetFn || function() {};
-            this.enqueue(sentence, btn, resetFn);
-            advancedChars += sentence.length + 1;
+        var btn = this._streamButton || this._createPlaceholderButton();
+        var resetFn = this._streamResetFn || function() {};
+        var advanced = 0;
+        for (var j = 0; j < pieces.length; j++) {
+            this.enqueue(pieces[j].text, btn, resetFn);
+            advanced = pieces[j].end;
         }
-
-        this._streamSentencesSent += advancedChars;
+        this._streamSentencesSent += advanced;
     }
 
     _createPlaceholderButton() {
@@ -464,7 +526,7 @@ class AITTSManager {
         if (!plainText) return;
 
         var remaining = plainText.substring(this._streamSentencesSent).trim();
-        if (remaining.length >= 15) {
+        if (remaining.length > 0) {
             var btn = this._streamButton || this._createPlaceholderButton();
             var resetFn = this._streamResetFn || function() {};
             this.enqueue(remaining, btn, resetFn);
@@ -530,7 +592,7 @@ export function addAITTSButton(messageElement, text) {
             return;
         }
 
-        mgr.enqueue(text, playButton, resetButton);
+        mgr.enqueueText(text, playButton, resetButton);
     });
 
     actions.appendChild(playButton);
