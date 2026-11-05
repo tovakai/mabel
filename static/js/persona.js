@@ -22,12 +22,15 @@ let inbox = null;         // /api/persona/inbox
 let autonomy = null;      // /api/persona/autonomy
 let timeline = null;      // /api/persona/timeline
 let outreach = null;      // /api/persona/outreach
+let life = null;          // /api/lifelog/overview
+let lifeDays = [];
+let lifeOpenDay = null;
 let timelineTimer = null;
-const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['research', 'Research'], ['identity', 'Identity']];
+const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['research', 'Research'], ['identity', 'Identity']];
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
-  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb' };
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff' };
 let autonomyTimer = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
@@ -352,6 +355,56 @@ async function loadOutreach() {
   renderOutreach();
 }
 
+function lifeCard() {
+  if (!life) return card('Life log', '<div class="admin-toggle-sub">Loading…</div>');
+  const L = life, t = L.today || {};
+  const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 2 ? 'just now' : m < 120 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const devices = (L.devices || []).length ? L.devices.map(d => `<div style="font-size:12px">${esc(d.device)} <span style="opacity:0.6">(${esc(d.source)}, last seen ${esc(ago(d.last_seen))})</span></div>`).join('')
+    : '<div class="admin-toggle-sub">No devices yet: see setup below.</div>';
+  const list = (label, items, unit) => (items || []).length ? `<div style="font-size:12px;margin-top:3px"><span style="opacity:0.65">${esc(label)}:</span> ${items.slice(0, 6).map(x => `${esc(x.name)} (${x[unit]}${unit === 'minutes' ? ' min' : ''})`).join(', ')}</div>` : '';
+  const places = (t.places || []).length ? `<div style="font-size:12px;margin-top:3px"><span style="opacity:0.65">Places:</span> ${t.places.slice(-6).map(p => `${esc(p.place)} ${esc(p.from)}–${esc(p.to)}`).join(', ')}</div>` : '';
+  const today = list('Apps', t.apps, 'minutes') + list('Games', t.games, 'minutes') + list('Listening', t.media, 'minutes')
+    + list('Sites', t.sites, 'visits') + list('Phone apps', t.phone_apps, 'minutes') + places
+    + (t.steps ? `<div style="font-size:12px;margin-top:3px"><span style="opacity:0.65">Steps:</span> ${t.steps}</div>` : '');
+  const dayLinks = (lifeDays || []).slice(0, 7).map(d => `<a href="#" data-persona-action="open-day" data-day="${esc(d)}" style="font-size:12px;margin-right:8px">${esc(d)}</a>`).join('');
+  const openDay = lifeOpenDay ? `<div style="margin-top:6px;padding:8px 10px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-radius:6px;font-size:13px;max-height:420px;overflow-y:auto">${lifeOpenDay.html}</div>` : '';
+  const origin = window.location.origin;
+  const field = 'width:100%;box-sizing:border-box;font-size:12px;padding:4px;background:var(--bg);color:var(--fg);border:1px solid color-mix(in srgb, var(--fg) 20%, transparent);border-radius:6px';
+  const manage = L.can_manage ? `<div style="display:flex;gap:6px;margin-top:8px"><button type="button" class="theme-io-btn" data-persona-action="life-pause" style="height:26px;font-size:12px">${L.paused ? 'Resume recording' : 'Pause recording'}</button></div>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Never record these</summary>
+      <div class="admin-toggle-sub">Sites (one per line, e.g. bank.example) and app names; matching activity is dropped on arrival.</div>
+      <textarea id="life-exclude-sites" rows="3" style="${field};margin-top:4px" placeholder="sites">${esc((L.exclude_sites || []).join('\n'))}</textarea>
+      <textarea id="life-exclude-apps" rows="2" style="${field};margin-top:4px" placeholder="apps">${esc((L.exclude_apps || []).join('\n'))}</textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:4px"><button type="button" class="theme-io-btn" data-persona-action="life-exclude" style="height:26px;font-size:12px">Save</button></div></details>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Add a device</summary>
+      <div class="admin-toggle-sub">1. Settings → API tokens: create a token with the <code>lifelog_collector</code> profile, one per device.<br>
+      2. On the device (Linux, incl. SteamOS), run, replacing NAME:<br>
+      <code style="user-select:all">read -rsp 'token: ' MABEL_COLLECTOR_TOKEN; echo; export MABEL_COLLECTOR_TOKEN; curl -fsSL -H "Authorization: Bearer $MABEL_COLLECTOR_TOKEN" ${esc(origin)}/api/lifelog/collector.py -o /tmp/mabel-collector.py && python3 /tmp/mabel-collector.py install --url ${esc(origin)} --device NAME; unset MABEL_COLLECTOR_TOKEN</code><br>
+      You paste the token once (hidden); it installs a user service. Your phone comes in through Home Assistant: enable the Companion app sensors (steps, detected activity, last used app, geocoded location, media session).</div></details>` : '';
+  return card('Life log', `<div class="admin-toggle-sub" style="margin-top:0">What your devices tell Mabel (stored only on this PC; browsing as page titles + sites; raw data kept ${esc(String(L.retention_days || 30))} days). Every morning at 06:00 she writes her own account of your day.</div>
+    <div style="font-size:12px;margin:4px 0"><strong>${L.enabled ? (L.paused ? 'Paused' : 'Recording') : 'Off'}</strong></div>
+    ${devices}
+    <div style="font-size:12px;font-weight:600;margin-top:10px">Today so far (since ${esc(new Date(L.day_start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))})</div>
+    ${today || '<div class="admin-toggle-sub">Nothing recorded yet today.</div>'}
+    <div style="font-size:12px;font-weight:600;margin-top:10px">Her account of your days</div>
+    ${dayLinks || '<div class="admin-toggle-sub">The first one comes after 06:00.</div>'}${openDay}
+    ${manage}`);
+}
+
+function renderLife() {
+  const slot = document.getElementById('persona-life');
+  if (slot) slot.innerHTML = lifeCard();
+}
+
+async function loadLife() {
+  try {
+    const [overview, days] = await Promise.all([fetch(`${window.location.origin}/api/lifelog/overview`, { credentials: 'same-origin' }).then(r => r.json()),
+      fetch(`${window.location.origin}/api/lifelog/days`, { credentials: 'same-origin' }).then(r => r.json())]);
+    life = overview; lifeDays = days.days || [];
+  } catch (err) { life = null; }
+  renderLife();
+}
+
 function renderAutonomy() {
   const slot = document.getElementById('persona-autonomy');
   if (slot) slot.innerHTML = autonomyCard();
@@ -408,6 +461,7 @@ function render() {
   body.innerHTML = tabBar()
     + `<div data-ptab="now">${statusCard()}<div id="persona-outreach">${outreachCard()}</div><div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
     + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
+    + `<div data-ptab="life"><div id="persona-life">${lifeCard()}</div></div>`
     + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
     + `<div data-ptab="identity">${modeCard()}${modulesCard()}</div>`;
   applyTab();
@@ -457,6 +511,28 @@ async function onClick(event) {
       else await api('/outreach', { method: 'PUT', body: JSON.stringify(act === 'outreach-toggle' ? { enabled: !outreach.enabled } : { paused: !outreach.paused }) });
     } catch (err) { toast(`Persona: ${err.message}`); }
     await loadOutreach();
+    return;
+  }
+  if (['life-pause', 'life-exclude', 'open-day'].includes(target.dataset.personaAction)) {
+    event.preventDefault();
+    const act = target.dataset.personaAction;
+    try {
+      if (act === 'open-day') {
+        const d = target.dataset.day;
+        if (lifeOpenDay && lifeOpenDay.date === d) lifeOpenDay = null;
+        else { const r = await fetch(`${window.location.origin}/api/lifelog/day/${encodeURIComponent(d)}`, { credentials: 'same-origin' }).then(x => x.json()); lifeOpenDay = { date: d, html: mdToHtml(r.markdown || '') }; }
+        renderLife();
+        return;
+      }
+      const body = act === 'life-pause' ? { paused: !life.paused } : {
+        exclude_sites: (document.getElementById('life-exclude-sites')?.value || '').split('\n'),
+        exclude_apps: (document.getElementById('life-exclude-apps')?.value || '').split('\n') };
+      const r = await fetch(`${window.location.origin}/api/lifelog/settings`, { method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+      toast('Saved');
+    } catch (err) { toast(`Life log: ${err.message}`); }
+    await loadLife();
     return;
   }
   if (target.dataset.personaAction === 'open-chat') {
@@ -550,6 +626,7 @@ export function openPersonaModal() {
   loadAutonomy();
   loadTimeline();
   loadOutreach();
+  loadLife();
 }
 
 function closePersonaModal() {

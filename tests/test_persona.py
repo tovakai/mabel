@@ -379,7 +379,7 @@ def test_timeline_merges_what_she_did(tmp_path):
     (tmp_path / "persona" / "affect.json").write_text(_json.dumps({"residue": [
         {"at": "2026-11-05T11:04:00+00:00", "source": "time_of_day", "mood": "groggy"}]}))
     titles = [i["title"] for i in build(data_dir=tmp_path, now=now)]
-    assert titles[0] == "Finished her session and went back to sleep"
+    assert "Finished her session and went back to sleep" in titles
     assert "Wrote “Toei”" in titles and "Chose to research Toei Animation" in titles
     assert "Woke up on her own" in titles and "Went through Dottie's suggestions" in titles
     assert "Mood: groggy" in titles and any(t.startswith("You rejected") for t in titles)

@@ -158,6 +158,17 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
     except (OSError, ValueError):
         pass
 
+    try:
+        import yaml
+        for path in sorted((Path(__file__).resolve().parents[2] / "journal" / "anthon").glob("*.md"))[-14:]:
+            text = path.read_text(encoding="utf-8")
+            meta = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")) if text.startswith("---\n") else {}
+            if meta and meta.get("written"):
+                items.append(_item(meta["written"], "day", f"Wrote about your day ({path.stem})",
+                                   "; ".join((meta.get("curious") or [])[:2]), f"journal/anthon/{path.name}"))
+    except Exception:
+        pass
+
     items = [i for i in items if i and _when(i["at"]) >= since]
     items.sort(key=lambda i: i["at"], reverse=True)
     return items[:limit]

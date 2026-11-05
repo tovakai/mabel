@@ -167,6 +167,23 @@ def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO
                             "observation": item.get("summary"), "at": item["created_at"]})
     except Exception:
         pass
+    try:                                                    # her account of his recent days
+        import yaml
+        folder = mabel_vault / "journal" / "anthon"
+        for path in sorted(folder.glob("*.md"))[-2:]:
+            text = path.read_text(encoding="utf-8")
+            meta = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")) if text.startswith("---\n") else {}
+            written = _when((meta or {}).get("written"))
+            if not written or now - written > timedelta(days=2):
+                continue
+            from src.curiosity.verify import _section
+            for i, question in enumerate((meta or {}).get("curious") or []):
+                out.append({"key": f"life:{path.stem}:{i}", "source": "life", "subject": question[:80],
+                            "title": f"your day ({path.stem})", "take": question,
+                            "observation": " ".join(_section(text, "What stood out to me").split())[:500],
+                            "article": f"journal/anthon/{path.name}", "at": meta.get("written")})
+    except Exception:
+        logger.debug("[outreach] life candidates unavailable", exc_info=True)
     kept = []
     for c in out:
         if c["key"] in shared:

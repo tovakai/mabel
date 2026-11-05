@@ -740,6 +740,8 @@ from routes.memory.episodic_routes import setup_episodic_routes
 app.include_router(setup_episodic_routes())
 from routes.persona_routes import setup_persona_routes
 app.include_router(setup_persona_routes())
+from routes.lifelog_routes import setup_lifelog_routes
+app.include_router(setup_lifelog_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
@@ -1194,6 +1196,14 @@ async def _startup_event():
     _startup_tasks.append(app.state.background_tool_delivery_task)
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
+    # Life log: Home Assistant (phone/place) poller and the daily "Anthon's day" summary.
+    try:
+        from src.lifelog.home import poll_forever as _lifelog_home
+        from src.lifelog.compose import daily_loop as _lifelog_daily
+        _startup_tasks.append(asyncio.create_task(_lifelog_home()))
+        _startup_tasks.append(asyncio.create_task(_lifelog_daily()))
+    except Exception as _e:
+        logger.warning("Failed to start the life log: %s", _e)
     # Phase 6: social initiative (Mabel may message your phone; gates in src/initiative).
     try:
         from src.initiative.outreach import loop as _outreach_loop

@@ -166,6 +166,13 @@ DEFAULT_SETTINGS = {
     "initiative_paused": False,
     "initiative_notify_service": "",
     "initiative_public_url": "",
+    # Life log (src/lifelog): activity from your devices, phone and journal; local only.
+    "lifelog_enabled": True,
+    "lifelog_paused": False,
+    "lifelog_exclude_sites": [],
+    "lifelog_exclude_apps": [],
+    "lifelog_retention_days": 30,
+    "lifelog_journal_folder": "daily life of Anthon",
     # Phase 01 prompt stitching: off | shadow | on (identity/ modules + affect).
     "persona_mode": "off",
     "persona_module_root": "",
