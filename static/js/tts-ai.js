@@ -66,6 +66,31 @@ class AITTSManager {
             console.error('Failed to check TTS availability:', error);
             this.available = false;
         }
+        if (this.available && this._provider !== 'disabled') this.watchHistory();
+    }
+
+    // Read-aloud buttons for messages rendered from history (after a refresh or
+    // when switching chats): only finished messages; the live reply gets its
+    // button from chat.js when it completes.
+    attachToExisting() {
+        document.querySelectorAll('#chat-history .msg-ai:not(.streaming)').forEach((msg) => {
+            if (msg.querySelector('.ai-tts-button') || !msg.querySelector('.msg-actions')) return;
+            const text = msg.dataset.raw || msg.querySelector('.body')?.textContent || '';
+            if (text.trim()) addAITTSButton(msg, text);
+        });
+    }
+
+    watchHistory() {
+        this.attachToExisting();
+        if (this._historyObserver) return;
+        const box = document.getElementById('chat-history');
+        if (!box) return;
+        let timer = null;
+        this._historyObserver = new MutationObserver(() => {
+            clearTimeout(timer);
+            timer = setTimeout(() => this.attachToExisting(), 250);
+        });
+        this._historyObserver.observe(box, { childList: true, subtree: true });
     }
 
     extractPlainText(content) {

@@ -1565,7 +1565,9 @@ function initializeEventListeners() {
       const ttsOff = settings.tts_enabled === false || !settings.tts_provider || settings.tts_provider === 'disabled';
       const overflowTts = el('overflow-tts-btn');
       if (overflowTts) {
+        overflowTts.hidden = ttsOff;
         overflowTts.style.display = ttsOff ? 'none' : '';
+        overflowTts.title = 'Read her replies aloud as they arrive';
       }
     })
     .catch(() => {});
