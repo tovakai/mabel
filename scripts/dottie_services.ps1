@@ -128,6 +128,8 @@ if (-not $SkipKokoro) {
         }
         $dir = Join-Path $Home2 "Kokoro-FastAPI"
         if (-not (Test-Path $dir)) { git clone --depth 1 --branch $KokoroVersion https://github.com/remsky/Kokoro-FastAPI.git $dir }
+        # start-gpu.ps1 runs "uv pip install", which needs a virtual environment (Python from .python-version).
+        if (-not (Test-Path (Join-Path $dir ".venv"))) { Push-Location $dir; uv venv; Pop-Location }
         $action = New-ScheduledTaskAction -Execute "powershell.exe" `
             -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dir\start-gpu.ps1`"" -WorkingDirectory $dir
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
