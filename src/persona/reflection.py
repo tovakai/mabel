@@ -85,6 +85,7 @@ def gather(*, data_dir: Path, mabel_vault: Path = _REPO, now: datetime | None = 
     except Exception:
         pass
     lines.extend(_recent_dreams(mabel_vault, now))
+    lines.extend(_recent_letters(mabel_vault, now))
     return "\n".join(lines)
 
 
@@ -106,6 +107,22 @@ def _recent_dreams(mabel_vault: Path, now: datetime, limit: int = 4) -> list[str
             out.append(f"- you dreamt on {path.stem}: “{words}”; on waking you wrote: {prose[:300]}")
         except Exception:
             continue
+    return out
+
+
+def _recent_letters(mabel_vault: Path, now: datetime, limit: int = 4) -> list[str]:
+    """Her correspondence with Tova from the lookback window, briefly."""
+    out = []
+    cutoff = (now - timedelta(days=LOOKBACK_DAYS)).timestamp()
+    paths = sorted(mabel_vault.joinpath("journal", "letters").glob("*.md"), key=lambda p: p.stat().st_mtime)
+    for path in [p for p in paths if p.stat().st_mtime >= cutoff][-limit:]:
+        try:
+            body = " ".join(l.strip() for l in path.read_text(encoding="utf-8").splitlines()
+                            if l.strip() and not l.startswith("#"))
+        except OSError:
+            continue
+        who = "Tova wrote to you" if path.stem.startswith("Tova-") else "you wrote to Tova"
+        out.append(f"- {who} ({path.stem}): {body[:300]}")
     return out
 
 

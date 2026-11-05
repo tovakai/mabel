@@ -1,7 +1,7 @@
 """Visual dreams: at most once a day, one of Dottie's dreamer notes becomes a picture.
 
-1. **Source:** the newest dreamer *pattern* from the last few days she hasn't dreamt yet
-   (title, summary, evidence, the curiosity line), raw.
+1. **Source:** something recent she hasn't dreamt yet, raw: a dreamer *pattern* (title,
+   summary, evidence, the curiosity line) or a letter from Tova, taking turns when both exist.
 2. **Dreaming it:** while her model is still up, she turns the note into a handful of broken
    dream fragments (spatial, emotional, wrong verbs, repeats allowed). Whole fragments are
    packed, in her order and with their grammar and repetition intact, up to SDXL's 77-token
@@ -40,6 +40,7 @@ DREAM_DIR = ("journal", "dreams")
 DAY_START_HOUR = 6
 MIN_IDLE_MINUTES = 20
 SOURCE_DAYS = 3
+LETTER_CHARS = 3000                  # enough of a letter to dream from
 TOKEN_LIMIT = 77                     # CLIP: 75 usable + start/end tokens
 TRIGGER_RESERVE = 8                  # room for ". in pixel art style" (6) plus slack
 DEFAULT_TOKENIZER = Path.home() / ".local/share/mabel/diffusion/models/clip-tokenizer/tokenizer.json"
@@ -99,8 +100,21 @@ def dreamt_today(data_dir: Path, now: datetime) -> bool:
 
 # ── source and word bag ─────────────────────────────────────────────────
 
-def pick_source(data_dir: Path, now: datetime, *, inbox=None) -> dict | None:
-    """Newest dreamer pattern from the last SOURCE_DAYS that hasn't been dreamt yet."""
+def _letter_sources(mabel_vault: Path, now: datetime, used: set) -> list[dict]:
+    """Tova's letters from the last SOURCE_DAYS, as dream sources."""
+    cutoff = (now - timedelta(days=SOURCE_DAYS)).timestamp()
+    out = []
+    for path in mabel_vault.joinpath("journal", "letters").glob("Tova-to-Mabel-*.md"):
+        at = path.stat().st_mtime
+        if at >= cutoff and f"letter:{path.stem}" not in used:
+            out.append({"id": f"letter:{path.stem}", "title": "A letter from Tova", "kind": "letter",
+                        "created_at": datetime.fromtimestamp(at, timezone.utc).isoformat(),
+                        "text": path.read_text(encoding="utf-8")[:LETTER_CHARS]})
+    return out
+
+
+def pick_source(data_dir: Path, now: datetime, *, inbox=None, mabel_vault: Path = _REPO) -> dict | None:
+    """Newest thing from the last SOURCE_DAYS not dreamt yet; notes and letters take turns."""
     if inbox is None:
         from src.subconscious.inbox import Inbox
         inbox = Inbox(data_dir / "subconscious" / "inbox.sqlite")
@@ -109,11 +123,18 @@ def pick_source(data_dir: Path, now: datetime, *, inbox=None) -> dict | None:
     items = [i for s in ("new", "accepted", "rejected", "done", "expired")
              for i in inbox.list(status=s, kind="pattern", limit=200)]
     items = [i for i in items if i["loop"] == "dreamer" and i["created_at"] >= cutoff and i["id"] not in used]
-    return max(items, key=lambda i: i["created_at"]) if items else None
+    letters = _letter_sources(mabel_vault, now, used)
+    newest = lambda group: max(group, key=lambda i: i["created_at"]) if group else None
+    if items and letters:
+        last = load_state(data_dir).get("last_source")
+        return newest(items) if last == "letter" else newest(letters)
+    return newest(items or letters)
 
 
 def source_text(item: dict) -> str:
-    """The note as it reads in the inbox, raw."""
+    """The note as it reads in the inbox (or the letter as she received it), raw."""
+    if item.get("text"):
+        return str(item["text"]).strip()
     parts = [f"Pattern: {item['title']}", item.get("summary") or ""]
     for ev in item.get("evidence") or []:
         if ev.get("context"):
@@ -130,7 +151,7 @@ def token_counter(path: Path | None = None):
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(str(path))
-        return lambda text: len(tok.encode(text).ids) + 2
+        return lambda text: len(tok.encode(text).ids)       # includes the start/end tokens
     except Exception:
         # Overestimates on purpose: long or odd words split into several BPE pieces.
         return lambda text: 2 + sum(max(1, math.ceil(len(w) / 5)) for w in re.findall(r"[A-Za-z]+", text)) \
@@ -186,7 +207,7 @@ def parse_fragments(text: str) -> list[str]:
 
 async def _dream_fragments(raw: str, owner: str) -> list[str]:
     from src import model_roles
-    text = f"""You're asleep. This half-thought of yours is sinking into a dream:
+    text = f"""You're asleep. This is sinking into a dream:
 
 {raw}
 
@@ -211,7 +232,7 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
     from src.constants import DATA_DIR, GENERATED_IMAGES_DIR
     data_dir = Path(data_dir or DATA_DIR)
     now = now or datetime.now(timezone.utc)
-    item = item or pick_source(data_dir, now)
+    item = item or pick_source(data_dir, now, mabel_vault=mabel_vault)
     if not item:
         return {"status": "nothing_to_dream"}
     _running = True
@@ -249,7 +270,7 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
         if not entry:
             entry = f"# Dream: {_label(now)}\n\n*(I woke up and couldn't put it into words.)*"
         meta = {"type": "dream", "date": day, "dreamt": now.isoformat(timespec="seconds"),
-                "image": image_path.name, "source": f"inbox:{item['id']}", "source_title": item["title"],
+                "image": image_path.name, "source": _source_ref(item["id"]), "source_title": item["title"],
                 "style": style, "prompt": prompt, "fragments": fragments, "gallery_image": result.get("image_id") or ""}
         note = folder / f"{day}.md"
         note.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000) + "---\n"
@@ -259,6 +280,7 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
 
         state = load_state(data_dir)
         state["last_day"] = day
+        state["last_source"] = "letter" if item.get("kind") == "letter" else "note"
         state["dreamt_items"] = (state.get("dreamt_items") or [])[-60:] + [item["id"]]
         state["history"] = (state.get("history") or [])[-30:] + [{
             "at": now.isoformat(), "day": day, "title": item["title"], "style": style,
@@ -270,6 +292,10 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
                 "fragments": fragments, "image_url": result["image_url"]}
     finally:
         _running = False
+
+
+def _source_ref(item_id: str) -> str:
+    return item_id if str(item_id).startswith("letter:") else f"inbox:{item_id}"
 
 
 def _label(now: datetime) -> str:
@@ -301,7 +327,7 @@ async def _look_at_dream(image_path: Path, raw: str, prompt: str, owner: str, da
     label = datetime.fromisoformat(day).strftime("%A %-d %B")
     text = f"""You dreamt last night.
 
-The dream grew out of one of your own half-thoughts about Anthon, a note your quieter mind left behind:
+The dream grew out of this, something that stayed with you:
 
 {raw}
 
@@ -322,7 +348,7 @@ def _ledger(item_id: str, day: str) -> None:
         from src.agent_runtime.event_ledger import Event, Ledger
         from src.constants import DATA_DIR
         Ledger(Path(DATA_DIR) / "phase0" / "events.jsonl").append(Event.create(
-            "mabel", "dream.dreamt", references=(f"inbox:{item_id}",), modules=(f"day.{day}",)))
+            "mabel", "dream.dreamt", references=(_source_ref(item_id),), modules=(f"day.{day}",)))
     except Exception:
         logger.debug("[dreams] ledger event not written", exc_info=True)
 

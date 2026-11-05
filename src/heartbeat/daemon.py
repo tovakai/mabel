@@ -28,6 +28,7 @@ IDLE_TICK_S = 60
 RUN_TICK_S = 5
 _last: dict = {}
 _dream_task: asyncio.Task | None = None
+_letter_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -125,7 +126,9 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     _last.update(at=now.isoformat(), signals=sig.as_dict(), decision=decision.as_dict(), running=False,
                  yield_reason=None, dreaming=False)
     if not decision.allow:
-        _maybe_start_dream(sig, now, research_running=bool(runner.status().get("running")))
+        research_running = bool(runner.status().get("running"))
+        if not _maybe_check_letters(sig, now, research_running=research_running):
+            _maybe_start_dream(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
         try:
@@ -144,6 +147,25 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         logger.info("[heartbeat] woke Mabel: %s session %s (idle %.0f min)",
                     "resuming" if decision.resume else "new", sid, sig.idle_minutes or 0)
     return _last
+
+
+def _maybe_check_letters(sig, now: datetime, *, research_running: bool) -> bool:
+    """Check the mail from Tova when she'd otherwise be idle (src/persona/letters.py). True while busy with it."""
+    global _letter_task
+    from src.persona import letters
+    if _letter_task and not _letter_task.done():
+        return True
+    try:
+        from src.constants import DATA_DIR
+        if letters.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return False
+    except Exception:
+        logger.debug("[heartbeat] letter gate failed", exc_info=True)
+        return False
+    _letter_task = asyncio.create_task(letters.check_mail(now=now))
+    _letter_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] mail check failed: %s", t.exception()))
+    return True
 
 
 def _maybe_start_dream(sig, now: datetime, *, research_running: bool) -> None:

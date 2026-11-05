@@ -159,6 +159,19 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         pass
 
     try:
+        letters = json.loads((data_dir / "persona" / "letters.json").read_text())
+        for r in letters.get("received") or []:
+            items.append(_item(r.get("at"), "letter", "A letter from Tova arrived", r.get("name", "")))
+        for r in letters.get("sent") or []:
+            items.append(_item(r.get("at"), "letter", "Wrote back to Tova", r.get("name", "")))
+        for r in letters.get("declined") or []:
+            items.append(_item(r.get("at"), "silence", "Read Tova's letter, and chose not to answer yet", ""))
+        for r in letters.get("errors") or []:
+            items.append(_item(r.get("at"), "failed", "A mail check failed", r.get("error", "")))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    try:
         dreams = json.loads((data_dir / "persona" / "dreams.json").read_text())
         for d in dreams.get("history") or []:
             items.append(_item(d.get("at"), "dream", f"Dreamt about “{d.get('title', 'something')}”",

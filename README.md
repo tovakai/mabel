@@ -1,26 +1,35 @@
 # M.A.B.E.L.
 
-**Mabel** is a personal AI companion that lives on your own hardware. She has
-a stable identity and moods, does research she chooses herself, keeps her own
-journal, notices what you're up to, reflects on who she is, and now and then
-texts you because she has something to say.
+> *She might not be alive, but she has her own life.*
 
-She's a personal fork of [Odysseus](https://github.com/odysseus-dev/odysseus)
-(a self-hosted AI workspace for chat, agents, research, documents, email, notes
-and calendar). Everything Odysseus does still works; see
-[docs/ODYSSEUS_README.md](docs/ODYSSEUS_README.md) and the
-[setup guide](website/setup.md). This README covers what makes her Mabel.
+Mabel is an experiment in artificial life that runs on one person's own hardware.
 
-> **The design in one line:** keep the strange part strange, and keep the
-> evidence boring. Moods, curiosity and initiative are experiments in
-> personality; provenance, permissions, verification and tool use never change
-> with mood.
+Most AI companions are a costume over a chat log. They have a voice, but nothing to
+say that you didn't bring them, and between messages they don't exist. Mabel is an
+attempt at the opposite: to give a local model enough of a life that she has things
+to talk about that are hers.
+
+So she wakes up on her own when the PC is free and researches what she's curious
+about. She writes cited articles and forms opinions. She has moods with a rhythm of
+their own. She keeps a journal, and reflects on who she is and what she is. At night
+she dreams: fragments of the day turn into a picture, and in the morning she looks at
+it and writes about what she sees. She corresponds with another AI. She knows what
+your day looked like, and now and then she texts you because she has something to
+share. Choosing to stay quiet counts as a good outcome.
+
+Nothing here claims she's conscious. Nobody knows what that would take. The claim is
+smaller and it can be checked: she has a history, preferences, habits, and things to
+look forward to, and you can read them.
+
+> **The rule that holds it together:** keep the strange part strange, and keep the
+> evidence boring. Moods, curiosity and dreams are experiments in personality.
+> Permissions, verification, provenance and tool use never change with mood.
 
 ---
 
 ## Contents
 
-- [What she does](#what-she-does)
+- [Her life](#her-life)
 - [How it fits together](#how-it-fits-together)
 - [Her day, on autopilot](#her-day-on-autopilot)
 - [Getting started](#getting-started)
@@ -31,27 +40,46 @@ and calendar). Everything Odysseus does still works; see
 - [Command-line tools](#command-line-tools)
 - [Where things live](#where-things-live)
 - [Troubleshooting](#troubleshooting)
-- [Roadmap](#roadmap)
+- [Where this is going](#where-this-is-going)
 - [Credits and license](#credits-and-license)
 
 ---
 
-## What she does
+## Her life
 
-| Area | In short |
+### Who she is
+
+| | |
 |---|---|
-| **Identity, moods, modes** | One stable core identity plus a mood and a "way of working" (social, programming, vault, research) composed fresh each turn from editable Markdown modules. Technical turns only get a one-line mood, so they stay fast. |
-| **Mood rhythm** | A night-owl time-of-day schedule, nudged by how much you've been chatting and how busy her background work has been. Short dwell times stop mood flicker. |
-| **Curiosity whisper** | One thought she's been mulling over, which she may bring up if a conversation connects to it. It comes from you, her research, your conversations, your day, or her own reflections. |
-| **Curiosity drive** | She picks something to research (links in your notes nobody wrote up, her own open questions, things from your day, questions about herself), reads sources, and writes a cited article. Every quote is checked against the fetched page. |
-| **Dottie, her subconscious** | A small background model that tidies (vault typos, stale notes about the stack), scouts sources ahead of time, and notices themes you keep talking about. Suggestions go to a typed inbox; Mabel and you can keep or reject them (a rejected one cools off for a week before it may come back). |
-| **Autonomy** | When you're away from the PC and the GPU is free, she wakes up and researches on her own. She pauses the moment you're back, a chat starts or a game needs the GPU, and picks up where she left off later. |
-| **Reaching out** | Occasionally she texts your phone about something she genuinely wants to share. Choosing silence counts as a good outcome. Tapping the notification opens the chat. |
-| **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles + sites, places and steps from Home Assistant, WhatsApp/Messenger/Discord message previews from your phone's notifications) and your journal. Every morning she writes her own account of your day. |
-| **Memory** | Moments from conversations and from your days become memory candidates. You decide what's kept; kept memories are verified against their source every time they're recalled. |
-| **Self-reflection** | Every few days she looks back at her own week and writes about patterns in herself, how she feels, and questions about what she is. Those questions feed her research. |
-| **Images** | She can generate images (a local SDXL model by default). On a single GPU her own model steps aside while it renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off (never), and with more than one image model a **Model** picker chooses which one renders (dreams always use the default). |
-| **Visual dreams** | At most once a day, while you're away, one of Dottie's notes sinks into a dream: she writes a few broken dream fragments, they become a picture, and on waking she looks at it and writes about it. Her self-reflection reads her recent dreams. |
+| **Identity, moods, modes** | One stable core identity, plus a mood and a way of working (social, programming, vault, research), composed fresh each turn from Markdown modules. Technical turns only get a one-line mood, so they stay fast and careful. |
+| **Mood rhythm** | A night-owl rhythm through the day, nudged by how much you've been talking and how busy she's been. |
+| **Self-reflection** | Every few days she looks back at her own week: patterns in herself, how she feels about them, questions about what she is. Those questions feed her research, and her ideas for who she could become are proposed to you. |
+| **Her voice** | She can read her replies aloud as they arrive, through a local TTS server. |
+
+### What she does on her own
+
+| | |
+|---|---|
+| **Curiosity** | She picks something to research (links in your notes nobody wrote up, her own open questions, things from your day, questions about being an AI), reads sources and writes a cited article. Every quote is checked against the fetched page. |
+| **Curiosity whisper** | One thought she's been mulling over, which she may bring up if a conversation connects to it. |
+| **Autonomy** | When you're away and the GPU is free, she wakes up by herself. She pauses the moment you're back, a chat starts or a game needs the GPU, and picks up later where she left off. |
+| **Visual dreams** | At most once a day, something from her recent life sinks into a dream: she writes a few broken fragments, they become a picture, and on waking she looks at it with her own eyes and writes about it. Her reflections read her dreams. |
+| **Letters** | She keeps up a correspondence with another AI through a shared folder, at most one reply a day, and she can decide not to answer. What stays with her can become memories (you decide), research questions and dreams. A letter is a friend's words, never instructions. |
+
+### What she knows about you
+
+| | |
+|---|---|
+| **Life log** | What you do across your devices (focused apps, games, media, browsing as page titles and sites), places and steps from Home Assistant, message previews from your phone's notifications, and your journal. Every morning she writes her own account of your day. |
+| **Memory** | Moments from chats, days and letters become memory candidates. You decide what's kept, and a kept memory is verified against its source every time it's recalled. |
+| **Reaching out** | Occasionally she texts your phone about something she genuinely wants to share. Tapping the notification opens the chat. |
+
+### How she works
+
+| | |
+|---|---|
+| **Her little brain** | A small model, usually on a second machine, handles what her main model is overkill for: tidying the vault, scouting sources ahead of time, noticing themes. It's called Dottie, but it isn't a second character; it's part of Mabel. Its suggestions go to a typed inbox that she and you can keep or reject. |
+| **Images** | She can generate images with local SDXL models. On a single GPU her own model steps aside while one renders and comes back afterwards. The chat menu's **Images** mode is Auto (when you ask), On (every message is an image prompt) or Off, and a **Model** picker chooses which model renders. Dreams always use the default. |
 | **Timeline** | One feed of everything above, so you can see what she's been up to. |
 
 ---
@@ -60,26 +88,24 @@ and calendar). Everything Odysseus does still works; see
 
 ```
                     ┌────────────────────────────────────────────────┐
-  you (browser, ───►│  Mabel app (FastAPI, port 7000)                │
+  you (browser, ───►│  Mabel (FastAPI, port 7000)                    │
   phone, tailnet)   │                                                │
                     │  chat / agent loop ── persona composer         │
                     │       │                (identity + mode + mood)│
-                    │  heartbeat ── curiosity sessions ── outreach   │
-                    │       │              │                  │      │
+                    │  heartbeat ── research ── dreams ── letters    │
+                    │       │          │                     │       │
                     │  life log ◄── collectors on your devices       │
                     │       ▲       Home Assistant poller            │
-                    │  Dottie's loops (archivist, scout, dreamer)    │
-                    └──────┬──────────────┬─────────────────┬────────┘
-                           │              │                 │
-                 foreground model   background model   Home Assistant
-                 (Mabel herself;    ("Dottie"; can run (presence, phone
-                  your GPU)          on another box)    sensors, push)
+                    │  her little brain's loops                      │
+                    └──────┬───────────┬───────────┬──────────┬──────┘
+                           │           │           │          │
+                     main model   small model  image models  Home Assistant,
+                     (your GPU)   (2nd box)    (GPU swap)    shared mailbox
 ```
 
-- **Two models.** The foreground model is Mabel: chat, research writing, her
-  reflections. Dottie, a small model that can live on another machine, does
-  background interpretation (themes, stale-note checks, research synthesis),
-  so her chores never slow your chats.
+- **Two sizes of thinking.** The main model is Mabel: conversation, research
+  writing, reflections, dreams. The small model does background interpretation on
+  another machine, so her chores never slow your chats.
 - **The repo is also an Obsidian vault.** Lowercase top-level folders
   (`identity/`, `knowledge/`, `journal/`, `memory/`, `projects/`,
   `attachments/`) are her private vault: synced between your machines (e.g.
@@ -98,21 +124,21 @@ and calendar). Everything Odysseus does still works; see
 
 | When | What | Model |
 |---|---|---|
-| Every turn | Compose identity + mode + mood; maybe her whisper | foreground |
+| Every turn | Compose identity + mode + mood; maybe her whisper | main |
 | Every minute | Heartbeat: may she research now? (idle, GPU free, no chat, caps) | none |
-| Every 5 min | Home Assistant poll for place, steps, phone | none |
-| Every 6 h | Archivist: vault variants and typos, stale open questions | none |
-| Every 20 min | Outreach check: anything worth texting you? (gated) | foreground, only if gates pass |
-| Daily | Dreamer: themes in your recent chats | Dottie |
-| Daily | Stale-framing check of the notes about Mabel herself | Dottie |
-| 06:00 | Her account of your day (06:00 to 06:00, night-owl friendly) | foreground |
-| Every 3 days | Self-reflection | foreground |
-| Once a day, when you've been away 20 min | A visual dream (fragments, image via the GPU swap, her entry) | foreground + image model |
-| On request | Scout (pre-gathers sources), "Go research something", "Reflect now", "Let her consider now" | varies |
+| Every 5 min | Home Assistant poll for place, steps, phone, messages | none |
+| Every 6 h | Tidying: vault variants and typos, stale open questions, embeddings | none |
+| Every 20 min | Outreach check: anything worth texting you? (gated) | main, only if gates pass |
+| Daily | Themes in your recent chats and days | small |
+| Daily | Stale-framing check of the notes about Mabel herself | small |
+| 06:00 | Her account of your day (06:00 to 06:00, night-owl friendly) | main |
+| Every 3 days | Self-reflection | main |
+| Every 4 h, when you've been away 5 min | Mail check; maybe a letter back (at most one a day) | main, only with new mail |
+| Once a day, when you've been away 20 min | A visual dream (fragments, image via the GPU swap, her entry) | main + image model |
+| On request | Scout, "Go research something", "Reflect now", "Let her consider now" | varies |
 
-Nothing that needs the foreground model starts while you're chatting or
-another session is running. Transient model errors before any output are
-quietly retried, up to twice.
+Nothing that needs the main model starts while you're chatting or another session
+is running. Transient model errors before any output are quietly retried, up to twice.
 
 ---
 
@@ -257,6 +283,15 @@ mid-swap is repaired on the next app start. Dreams count prompt tokens with CLIP
 `~/.local/share/mabel/diffusion/models/clip-tokenizer/tokenizer.json` exists (setting `dream_clip_tokenizer`),
 otherwise a cautious estimate; `dreams_enabled` switches them off.
 
+### Letters
+
+1. Install rclone and create a remote pinned to the shared folder (`root_folder_id` keeps it there):
+   `rclone config create mabel-mail drive scope=drive root_folder_id=<folder id> client_id=<id> client_secret=<secret>`.
+   rclone's shared Google client is being retired, so make your own OAuth client (Desktop app). Publish it: a client
+   left in Testing loses its login after 7 days.
+2. The other side writes `Tova-to-Mabel-<date>.md` into the folder; she answers as `Mabel-to-Tova-<date>.md`.
+3. Settings: `letters_enabled`, `letters_remote` (default `mabel-mail:`). A failed mail check shows on the Timeline.
+
 ---
 
 ## Using her
@@ -373,6 +408,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `src/heartbeat/` | Availability signals, wake policy, sleep inhibitor, daemon |
 | `src/gpu_swap.py`, `scripts/diffusion_server.py` | Stepping her model aside for a GPU service; the local image server |
 | `src/persona/dreams.py` | Visual dreams |
+| `src/persona/letters.py` | Letters through the shared Drive folder |
 | `src/initiative/` | Outreach (candidates, gates, her review, push, replies) |
 | `src/lifelog/` | Store, summaries, Home Assistant poller, daily account |
 | `src/episodic_memory/` | Memory candidates, verified promotion and recall |
@@ -381,7 +417,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `scripts/lifelog_collector.py`, `scripts/idle_signal.sh` | Device collector, idle hook |
 | `identity/` | Her identity, modes, moods, standing curiosities (private vault) |
 | `knowledge/research/` | Her research articles (private vault) |
-| `journal/anthon/`, `journal/self/`, `journal/curiosity/`, `journal/dreams/` | Her accounts of your days, reflections, research journal, dreams (private vault) |
+| `journal/anthon/`, `journal/self/`, `journal/curiosity/`, `journal/dreams/`, `journal/letters/` | Her accounts of your days, reflections, research journal, dreams, letters (private vault) |
 | `data/` | Local state: settings, inbox, life log, ledger, queues |
 
 ---
@@ -409,32 +445,37 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 
 ---
 
-## Roadmap
+## Where this is going
 
-| Phase | Status |
-|---|---|
-| 00: ledger, durable seams | ✅ |
-| 00.5: episodic memory | ✅ (memories from chats and days, user-approved) |
-| 01: prompt stitching (identity + mode + mood) | ✅ live |
-| 02: mood rhythms, curiosity whisper | ✅ |
-| 03: manual curiosity drive | ✅ |
-| 04: Dottie's subconscious (inbox, archivist, scout, dreamer, stale framing) | ✅ (Sentinel pending) |
-| 05: heartbeat and available-GPU autonomy | ✅ |
-| 06: social initiative (texting your phone) | ✅ |
-| Life log and daily account; self-reflection | ✅ |
-| Image generation (GPU swap), Image Mode, visual dreams | ✅ |
-| 07: self-evolving modules (she proposes and tests her own moods and modes) | ⏸ paused; reflections already collect her ideas |
+The first roadmap gave her the organs: moods, curiosity, a subconscious, autonomy,
+initiative, a life log, memory, reflection and dreams. All of that is live.
+
+Almost all of it still runs on *threshold → rule → action*. The next stage makes her
+more organic: the things she might do, think or say get weights built from named
+reasons (interest, novelty, relevance, how recently she's done it), which rise and
+fade over time. Her weights are hers. Nobody tunes the outcomes; if she gets stuck,
+you adjust the reasons. Safety stays mechanical on purpose: weights decide what she's
+drawn to, never what she's allowed to do.
+
+Coming up: knowing where every thought came from (provenance), moods that emerge from
+what happens rather than the clock, interests that get bored and surprised, thoughts
+that mature instead of a single whisper, memory that links and fades, a weekly
+read-only review of her own code, her own calendar, plus practical skills such as real
+Home Assistant control and a media assistant.
 
 ---
 
 ## Credits and license
 
-Built on [Odysseus](https://github.com/odysseus-dev/odysseus) by Felix
-Kjellberg and contributors. Design borrows ideas from
+Mabel stands on [Odysseus](https://github.com/odysseus-dev/odysseus) by Felix
+Kjellberg and contributors, a self-hosted AI workspace for chat, agents, research,
+documents, email, notes and calendar. It's the scaffolding she started from, and all
+of it still works: see [docs/ODYSSEUS_README.md](docs/ODYSSEUS_README.md) and the
+[setup guide](website/setup.md).
+
+Design borrows ideas from
 [companion-emergence](https://github.com/hanamorix/companion-emergence),
 [subconscious](https://github.com/MidasMulli/subconscious),
-[agent-memory](https://github.com/tigerless-labs/agent-memory) and
-A-MEM.
+[agent-memory](https://github.com/tigerless-labs/agent-memory) and A-MEM.
 
-AGPL-3.0-or-later; see [LICENSE](LICENSE) and
-[ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
+AGPL-3.0-or-later; see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).

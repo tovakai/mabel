@@ -302,6 +302,10 @@ def promote_verified_conversation(
 
 _DAY_SOURCE = re.compile(r"lifelog:day:(?P<date>\d{4}-\d{2}-\d{2})")
 DAY_DIR = ("journal", "anthon")
+# Moments from her correspondence with Tova verify against the note she wrote on reading a letter.
+_LETTER_SOURCE = re.compile(r"letter:note:(?P<note>(?P<date>\d{4}-\d{2}-\d{2})(?:-\d+)?)")
+LETTER_NOTE_DIR = ("journal", "letters", "notes")
+NOTE_SOURCE_PREFIXES = ("lifelog:day:", "letter:note:")
 MOMENTS_HEADING = "Moments worth remembering"
 
 
@@ -316,10 +320,13 @@ def day_moments(text: str) -> list[str]:
 
 def _verified_day_moment(candidate: dict, vault_root: str | Path) -> tuple[str, str]:
     """Prove the moment still appears in Mabel's day note; returns (date, moment)."""
-    match = _DAY_SOURCE.fullmatch(str(candidate.get("source_ref") or ""))
+    ref = str(candidate.get("source_ref") or "")
+    day, letter = _DAY_SOURCE.fullmatch(ref), _LETTER_SOURCE.fullmatch(ref)
+    match = day or letter
     if candidate.get("source_kind") != "tool_observation" or candidate.get("kind") != "experience" or not match:
         raise CandidateAdmissionError("Not a moment from a daily account")
-    path = Path(vault_root).expanduser().joinpath(*DAY_DIR, f"{match.group('date')}.md")
+    name = f"{letter.group('note')}.md" if letter else f"{match.group('date')}.md"
+    path = Path(vault_root).expanduser().joinpath(*(LETTER_NOTE_DIR if letter else DAY_DIR), name)
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
         raise CandidateAdmissionError("The daily account this moment came from is missing")
     moment = " ".join(str(candidate.get("summary") or "").split())
@@ -329,6 +336,14 @@ def _verified_day_moment(candidate: dict, vault_root: str | Path) -> tuple[str, 
 
 
 def _day_moment_markdown(candidate: dict, date: str, moment: str) -> str:
+    letter = _LETTER_SOURCE.fullmatch(str(candidate.get("source_ref") or ""))
+    title = f"A moment from her letters with Tova ({date})" if letter else f"A moment from Anthon's day ({date})"
+    basis = (f"This note verifies that the moment appears in what Mabel wrote on reading a letter "
+             f"(journal/letters/notes/{letter.group('note')}.md). It is her own recollection of a correspondence; "
+             "anything Tova said in it is Tova's word, not established fact.\n\n") if letter else (
+        "This note verifies that the moment appears in Mabel's own account of that day "
+        f"(journal/anthon/{date}.md), which she wrote from recorded activity and his journal. "
+        "It is her recollection, not independent proof that it happened exactly so.\n\n")
     return (
         "---\n"
         f"id: episode_{candidate['id']}\n"
@@ -342,10 +357,8 @@ def _day_moment_markdown(candidate: dict, date: str, moment: str) -> str:
         "evidence_status: day_note_verified\n"
         "status: active\n"
         "---\n\n"
-        f"# A moment from Anthon's day ({date})\n\n"
-        "This note verifies that the moment appears in Mabel's own account of that day "
-        f"(journal/anthon/{date}.md), which she wrote from recorded activity and his journal. "
-        "It is her recollection, not independent proof that it happened exactly so.\n\n"
+        f"# {title}\n\n"
+        + basis +
         "## Moment\n\n" + _fenced(moment)
     )
 
@@ -369,7 +382,7 @@ def promote_verified(queue: CandidateQueue, candidate_id: str, *, db, vault_root
                      policy: CapturePolicy, approved: bool = False) -> dict:
     """Promote whichever kind of candidate this is (conversation turn or day moment)."""
     row = queue.get(candidate_id)
-    if row is not None and str(row.get("source_ref") or "").startswith("lifelog:day:"):
+    if row is not None and str(row.get("source_ref") or "").startswith(NOTE_SOURCE_PREFIXES):
         return promote_verified_day_moment(queue, candidate_id, vault_root=vault_root,
                                            protected_roots=protected_roots, policy=policy, approved=approved)
     return promote_verified_conversation(queue, candidate_id, db=db, vault_root=vault_root,

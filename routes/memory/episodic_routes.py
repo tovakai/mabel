@@ -28,7 +28,7 @@ class EpisodicSettings(BaseModel):
     recall_enabled: Optional[bool] = None
 
 
-_DAY = re.compile(r"^lifelog:day:(?P<date>\d{4}-\d{2}-\d{2})$")
+_DAY = re.compile(r"^(?P<source>lifelog:day|letter:note):(?P<date>\d{4}-\d{2}-\d{2})(?:-\d+)?$")
 
 
 def _item(row: dict) -> dict:
@@ -36,7 +36,8 @@ def _item(row: dict) -> dict:
     if day:      # a moment from Mabel's account of his day
         return {"id": row["id"], "kind": row.get("kind"), "state": row.get("state"),
                 "created_at": row.get("created_at"), "updated_at": row.get("updated_at"), "session_id": None,
-                "source_label": f"From your day, {day.group('date')}", "user_excerpt": str(row.get("summary") or ""),
+                "source_label": (f"From her letters with Tova, {day.group('date')}"
+                                 if day.group("source") == "letter:note" else f"From your day, {day.group('date')}"), "user_excerpt": str(row.get("summary") or ""),
                 "assistant_excerpt": "", "interpretation": row.get("interpretation") or ""}
     match = _SUMMARY.match(str(row.get("summary") or ""))
     source = _SOURCE.match(str(row.get("source_ref") or ""))

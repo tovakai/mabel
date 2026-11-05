@@ -128,8 +128,8 @@ def search_verified_episodes(
     matches = []
     skipped_invalid = 0
     for candidate in page:
-        if str(candidate.get("source_ref") or "").startswith("lifelog:day:"):
-            # A kept moment from Mabel's account of his day: re-verify it against the day note.
+        if str(candidate.get("source_ref") or "").startswith(("lifelog:day:", "letter:note:")):
+            # A kept moment from her account of his day or her letters: re-verify it against its note.
             from .promotion import _verified_day_moment
             note = _verified_episode_path(parent, candidate["id"], candidate["decision_reason"])
             try:
@@ -145,7 +145,9 @@ def search_verified_episodes(
             if score:
                 matches.append({"candidate_id": candidate["id"], "source_ref": candidate["source_ref"],
                                 "evidence_status": "day_note_verified", "note_path": note, "occurred_at": date,
-                                "lexical_score": score, "user_excerpt": f"(from his day, {date}) {moment}",
+                                "lexical_score": score, "user_excerpt": (f"(from your letters with Tova, {date}) {moment}"
+                                                 if candidate["source_ref"].startswith("letter:")
+                                                 else f"(from his day, {date}) {moment}"),
                                 "assistant_excerpt": ""})
             continue
         if (

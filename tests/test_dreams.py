@@ -58,7 +58,7 @@ def _inbox(tmp_path, now):
 def test_pick_source_takes_the_newest_recent_dreamer_pattern(tmp_path):
     now = datetime.now(timezone.utc)
     inbox = _inbox(tmp_path, now)
-    item = dreams.pick_source(tmp_path, now, inbox=inbox)
+    item = dreams.pick_source(tmp_path, now, inbox=inbox, mabel_vault=tmp_path / "empty")
     assert item["title"] == "Local AI Systems"
     text = dreams.source_text(item)
     assert "Imagine an autonomous node" in text and "Curiosity: I keep wondering about the Pi." in text
@@ -97,7 +97,9 @@ def world(tmp_path, monkeypatch):
     async def look(image_path, raw, prompt, owner, day):
         assert image_path.exists() and "Local AI Systems" in raw
         return "<think>hm</think># Dream: Thursday\n\nA maze of wires around one warm chip."
-    return SimpleNamespace(now=now, generate=generate, look=look, fragments_of=fragments_of, prompts=prompts, vault=tmp_path / "vault",
+    async def look_any(image_path, raw, prompt, owner, day):
+        return "# Dream: x\n\nA mailbox in a wide room."
+    return SimpleNamespace(now=now, generate=generate, look=look, look_any=look_any, fragments_of=fragments_of, prompts=prompts, vault=tmp_path / "vault",
                            data=tmp_path, settings=settings)
 
 
@@ -116,8 +118,8 @@ def test_a_dream_writes_image_and_entry_and_counts_for_the_day(world):
     state = dreams.load_state(world.data)
     assert state["last_day"] == day and state["history"][-1]["first_line"].startswith("A maze")
     assert dreams.gate(_sig(), data_dir=world.data, now=world.now, research_running=False) == ["already dreamt today"]
-    assert dreams.pick_source(world.data, world.now) is None or \
-        dreams.pick_source(world.data, world.now)["title"] != "Local AI Systems"
+    left = dreams.pick_source(world.data, world.now, mabel_vault=world.vault)
+    assert left is None or left["title"] != "Local AI Systems"
 
 
 def test_she_still_keeps_the_dream_if_she_cant_describe_it(world):
@@ -183,3 +185,46 @@ def test_self_reflection_reads_recent_dreams(tmp_path):
     assert len(lines) == 1 and recent in lines[0]
     assert "the hallway held two evenings / grid grid grid" in lines[0] and "A corridor that keeps going." in lines[0]
     assert "![[" not in lines[0] and "[!note]" not in lines[0]
+
+
+def _letter(vault, name="Tova-to-Mabel-2026-11-05", text="# Letter\\n\\nHi Mabel, take care of him.\\n"):
+    folder = vault / "journal" / "letters"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.md").write_text(text)
+
+
+def test_a_dream_can_grow_from_tovas_letter_and_is_referenced_as_such(world):
+    _letter(world.vault)
+    seen = []
+
+    async def fragments_of(raw, owner):
+        seen.append(raw)
+        return ["the mailbox hums in the wide room"]
+    result = asyncio.run(dreams.dream(data_dir=world.data, mabel_vault=world.vault, now=world.now,
+                                      generate=world.generate, look=world.look_any, fragments_of=fragments_of))
+    assert result["status"] == "dreamt" and "take care of him" in seen[0]
+    note = (world.vault / result["note"]).read_text()
+    assert "source: letter:Tova-to-Mabel-2026-11-05" in note and "source_title: A letter from Tova" in note
+    assert "letter:Tova-to-Mabel-2026-11-05" in dreams.load_state(world.data)["dreamt_items"]
+
+
+def test_notes_and_letters_take_turns_as_dream_sources(world):
+    _letter(world.vault)
+    pick = lambda: dreams.pick_source(world.data, world.now, mabel_vault=world.vault)
+    assert pick()["kind"] == "letter"                     # first turn goes to the letter
+    dreams._save_state(world.data, {"last_source": "letter"})
+    assert pick()["title"] == "Local AI Systems"
+    dreams._save_state(world.data, {"last_source": "note"})
+    assert pick()["kind"] == "letter"
+
+
+def test_old_or_dreamt_letters_are_not_picked_again(world):
+    import os
+    _letter(world.vault)
+    path = world.vault / "journal" / "letters" / "Tova-to-Mabel-2026-11-05.md"
+    dreams._save_state(world.data, {"dreamt_items": ["letter:Tova-to-Mabel-2026-11-05"]})
+    assert dreams.pick_source(world.data, world.now, mabel_vault=world.vault)["title"] == "Local AI Systems"
+    dreams._save_state(world.data, {})
+    old = (world.now - timedelta(days=9)).timestamp()
+    os.utime(path, (old, old))
+    assert dreams.pick_source(world.data, world.now, mabel_vault=world.vault)["title"] == "Local AI Systems"
