@@ -1184,9 +1184,11 @@ async def _startup_event():
     from src.background_tool_jobs import BackgroundToolJobs
     from routes.chat_routes import _active_streams
     from src import agent_runs
+    from src.curiosity import held as _held
     app.state.background_tool_jobs = BackgroundToolJobs(
         is_busy=lambda sid: sid in _active_streams or agent_runs.is_active(sid),
         session_manager=session_manager, research_handler=research_handler,
+        resolvers={_held.TOOL: _held.ready_to_answer}, writers={_held.TOOL: _held.answer},
     )
     app.state.background_tool_delivery_task = asyncio.create_task(app.state.background_tool_jobs.run())
     _startup_tasks.append(app.state.background_tool_delivery_task)

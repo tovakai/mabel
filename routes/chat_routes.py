@@ -1413,6 +1413,42 @@ def _mark_tool_approval_resolved(sess, approval_id: Any, decision: Any, scope_pr
         db.close()
 
 
+def _maybe_hold_for_research(request, sess, session_id, message, preset_id, chat_handler, *, compare_mode,
+                             incognito, approval, has_attachments):
+    """While Mabel is off on a curiosity session, answer "busy, back soon" and hold the message.
+
+    Only for ordinary text messages to the Mabel persona; compare panes,
+    incognito chats, approval continuations and attachments go through as usual.
+    """
+    if compare_mode or incognito or approval or has_attachments or not str(message or "").strip():
+        return None
+    try:
+        from src.curiosity import held
+        running, subject = held.research_subject()
+        if not running:
+            return None
+        from routes.chat_helpers import extract_preset
+        preset = extract_preset(chat_handler, preset_id)
+        if re.sub(r"[^a-z]", "", str(preset.character_name or "").lower()) != "mabel":
+            return None
+        owner = getattr(sess, "owner", None) or effective_user(request)
+        held.hold(str(session_id), owner, str(message))
+        line = held.busy_line(subject)
+        sess.add_message(ChatMessage("user", str(message).strip(), metadata={"held_for_research": True}))
+        sess.add_message(ChatMessage("assistant", line, metadata={"model": sess.model, "held_busy_reply": True}))
+        logger.info("[held] message held for session %s while researching %r", session_id, subject)
+    except Exception:
+        logger.warning("[held] could not hold message; continuing normally", exc_info=True)
+        return None
+
+    async def _busy_stream():
+        yield f"data: {json.dumps({'delta': line})}\n\n"
+        yield f"data: {json.dumps({'type': 'metrics', 'data': {'total_time': 0}})}\n\n"
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(_busy_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
 async def _tool_approval_resolution_stream(decision: str) -> AsyncGenerator[str, None]:
     yield f"data: {json.dumps({'type': 'tool_approval_resolved', 'decision': decision})}\n\n"
     yield "data: [DONE]\n\n"
@@ -2894,6 +2930,13 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
+            _held_response = _maybe_hold_for_research(
+                request, sess, session, message, preset_id, chat_handler,
+                compare_mode=compare_mode, incognito=incognito,
+                approval=bool(tool_approval_id), has_attachments=_has_atts,
+            )
+            if _held_response is not None:
+                return _held_response
             session_mode = str(getattr(sess, "thinking_mode", "") or "off").lower()
             # An explicit request-scoped mode (headless eval, API client, or
             # UI override) wins over the persisted session default. The old

@@ -27,12 +27,20 @@ def background_result_context(metadata):
 
 
 class BackgroundToolJobs:
-    def __init__(self, *, is_busy, summarize=None, session_manager=None, research_handler=None, summary_timeout=75):
+    def __init__(self, *, is_busy, summarize=None, session_manager=None, research_handler=None, summary_timeout=75,
+                 resolvers=None, writers=None, writer_timeout=180):
         self.is_busy = is_busy
         self.summarize = summarize or self._summarize
         self.session_manager = session_manager
         self.research_handler = research_handler
         self.summary_timeout = summary_timeout
+        # Other job kinds: resolvers[tool](job) -> bool says a running job is ready;
+        # writers[tool](session, payload) -> reply text. A failed writer is retried
+        # on later ticks (with backoff) instead of posting a generic fallback.
+        self.resolvers = dict(resolvers or {})
+        self.writers = dict(writers or {})
+        self.writer_timeout = writer_timeout
+        self._writer_failures: dict[str, tuple[int, float]] = {}
         self._lock = asyncio.Lock()
 
     def register(self, job_id, session_id, owner, tool, query, rounds):
@@ -138,6 +146,15 @@ class BackgroundToolJobs:
                         elif state in {'error', 'cancelled'} or not state:
                             self.complete(job_id, f'Research {state or "was interrupted by a server restart"}.', [], error=True)
                         db.expire_all()
+                    elif job.status == 'running' and job.tool in self.resolvers:
+                        try:
+                            ready = bool(self.resolvers[job.tool](job))
+                        except Exception:
+                            logger.warning('Background job resolver failed for %s', job_id, exc_info=True)
+                            ready = False
+                        if ready:
+                            self.complete(job_id, job.query, [])
+                        db.expire_all()
                     if job.status != 'ready' or self.is_busy(job.session_id):
                         continue
                     session = db.get(database.Session, job.session_id)
@@ -147,6 +164,25 @@ class BackgroundToolJobs:
                         continue
                     payload = json.loads(job.payload)
                     summary = job.summary
+                    if not summary and job.tool in self.writers:
+                        failures, retry_at = self._writer_failures.get(job_id, (0, 0.0))
+                        if asyncio.get_running_loop().time() < retry_at:
+                            continue
+                        try:
+                            summary = await asyncio.wait_for(self.writers[job.tool](session, payload),
+                                                             timeout=self.writer_timeout)
+                            self._writer_failures.pop(job_id, None)
+                        except Exception:
+                            failures += 1
+                            logger.warning('Background %s reply failed for job %s (attempt %d)', job.tool, job_id, failures)
+                            if failures < 4:
+                                self._writer_failures[job_id] = (failures, asyncio.get_running_loop().time() + 20 * failures)
+                                continue
+                            self._writer_failures.pop(job_id, None)
+                            summary = "I'm back, but my brain isn't cooperating right now. Can you send that again?"
+                        from src.research_utils import strip_thinking
+                        job.summary = strip_thinking(str(summary)).strip() or "I'm back! Say that again?"
+                        db.commit()
                     if not summary:
                         if payload.get('error'):
                             summary = payload['report']
@@ -171,11 +207,16 @@ class BackgroundToolJobs:
                     message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f'odysseus:background:{job.id}:{job.session_id}'))
                     if not db.get(database.ChatMessage, message_id):
                         content = job.summary
-                        if not payload.get('error'):
+                        if job.tool == 'research' and not payload.get('error'):
                             content += f'\n\n[Open research report](#research-{job.id})'
                         now = database.utcnow_naive()
                         meta = {'background_job_id': job.id, 'model': session.model,
-                            'timestamp': now.isoformat() + 'Z', 'background_tool_result': payload}
+                            'timestamp': now.isoformat() + 'Z'}
+                        if job.tool == 'research':
+                            # Only research reports are re-injected as completed-research context.
+                            meta['background_tool_result'] = payload
+                        else:
+                            meta['background_tool'] = job.tool
                         db.add(database.ChatMessage(id=message_id, session_id=job.session_id,
                             role='assistant', content=content, meta_data=json.dumps(meta), timestamp=now))
                         session.message_count = (session.message_count or 0) + 1
