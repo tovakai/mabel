@@ -43,12 +43,14 @@ if ($existing) {
 }
 
 $serverArgs = "-m `"$Model`" --reranking --host 0.0.0.0 --port $Port --ctx-size 8192 --alias bge-reranker-v2-m3"
-Start-Process -FilePath $LlamaServer -ArgumentList $serverArgs -WorkingDirectory (Split-Path $LlamaServer) -WindowStyle Hidden
 $action = New-ScheduledTaskAction -Execute $LlamaServer -Argument $serverArgs -WorkingDirectory (Split-Path $LlamaServer)
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
 Register-ScheduledTask -TaskName "Mabel reranker" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Write-Host "Started, and registered logon task 'Mabel reranker'."
+# Start it through Task Scheduler, not as a child of this shell: processes started inside an SSH
+# session are killed when the session closes.
+Start-ScheduledTask -TaskName "Mabel reranker"
+Write-Host "Registered and started logon task 'Mabel reranker'."
 
 $body = @{ model = "bge-reranker-v2-m3"; query = "anime studio"; documents = @("Toei Animation makes anime", "a recipe for soup") } | ConvertTo-Json
 foreach ($try in 1..20) {
