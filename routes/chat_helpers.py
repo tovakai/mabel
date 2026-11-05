@@ -1228,14 +1228,13 @@ async def build_chat_context(
         time_filter=time_filter,
         preset_system_prompt=_persona_system_prompt,
         owner=user,
+        use_rag=use_rag_val,
         character_name=preset.character_name,
         persona_memory=preset.persona_memory,
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None or is_research_spinoff or casual_low_signal:
-        _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
     # Capture used memories immediately
