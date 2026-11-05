@@ -1194,6 +1194,12 @@ async def _startup_event():
     _startup_tasks.append(app.state.background_tool_delivery_task)
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
+    # Phase 5: heartbeat (autonomous research only when idle + GPU free).
+    try:
+        from src.heartbeat.daemon import heartbeat as _heartbeat
+        _startup_tasks.append(asyncio.create_task(_heartbeat()))
+    except Exception as _e:
+        logger.warning("Failed to start the heartbeat: %s", _e)
     # Phase 4: Dottie's cheap maintenance loops (archivist 6-hourly, dreamer daily).
     try:
         from src.subconscious.loops import scheduler as _subconscious_scheduler

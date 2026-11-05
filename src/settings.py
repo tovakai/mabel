@@ -157,6 +157,10 @@ DEFAULT_SETTINGS = {
     "episodic_capture_enabled": False,
     "episodic_recall_enabled": False,
     "subconscious_auto_enabled": True,
+    # Phase 5 heartbeat: autonomous research when idle + GPU free (see src/heartbeat).
+    "autonomy_enabled": True,
+    "autonomy_paused": False,
+    "heartbeat_presence_entity": "",
     # Phase 01 prompt stitching: off | shadow | on (identity/ modules + affect).
     "persona_mode": "off",
     "persona_module_root": "",

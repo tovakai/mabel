@@ -102,3 +102,18 @@ def test_chat_route_holds_only_plain_messages_to_mabel_while_researching(monkeyp
     assert response is not None and holds == [('chat', 'alice', 'you there?')]
     assert [m.role for m in saved] == ['user', 'assistant'] and saved[0].content == 'you there?'
     assert 'Yoshifumi Kondo' in saved[1].content and saved[1].metadata['held_busy_reply']
+
+
+def test_any_chat_interrupts_an_autonomous_session_instead_of_waiting(monkeypatch):
+    from types import SimpleNamespace
+    from routes import chat_routes
+    from src.curiosity import held, runner
+    yields = []
+    monkeypatch.setattr(runner, "is_autonomous_running", lambda: True)
+    monkeypatch.setattr(runner, "yield_now", lambda reason: yields.append(reason) or "cs-1")
+    monkeypatch.setattr(held, "hold", lambda *a: (_ for _ in ()).throw(AssertionError("must not hold")))
+    handler = SimpleNamespace(validate_and_extract_preset=lambda pid: (0.6, 0, 'p', 'M.A.B.E.L.', '', 'general'))
+    response = chat_routes._maybe_hold_for_research(
+        SimpleNamespace(), SimpleNamespace(owner='alice', model='g'), 'chat', 'hey, I am back', 'p', handler,
+        compare_mode=False, incognito=False, approval=False, has_attachments=True)
+    assert response is None and yields == ["a chat started"]

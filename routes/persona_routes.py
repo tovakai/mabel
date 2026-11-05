@@ -37,6 +37,12 @@ class WhisperBody(BaseModel):
     days: float = Field(default=14, gt=0, le=90)
 
 
+class AutonomyBody(BaseModel):
+    enabled: bool | None = None
+    paused: bool | None = None
+    presence_entity: str | None = Field(default=None, max_length=120)
+
+
 class DecisionBody(BaseModel):
     status: str
     reason: str = Field(default="", max_length=300)
@@ -268,6 +274,45 @@ def setup_persona_routes() -> APIRouter:
         if not loops.start():
             raise HTTPException(409, "Dottie is already working")
         return {"running": True}
+
+    # --- Autonomy / heartbeat (Phase 5) -----------------------------------------------------
+
+    @router.get("/autonomy")
+    async def autonomy_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        import asyncio
+        from src.curiosity import runner
+        from src.heartbeat import daemon, policy, signals
+        from src.settings import get_setting
+        sig = await asyncio.to_thread(signals.collect)
+        state = daemon.load_state()
+        preview = policy.decide(sig, state, now=datetime.now().astimezone(),
+                                enabled=bool(get_setting("autonomy_enabled", True)),
+                                paused=bool(get_setting("autonomy_paused", False)),
+                                research_running=bool(runner.status().get("running")))
+        return {"can_manage": _is_admin(request), **daemon.status(), "signals": sig.as_dict(),
+                "decision_now": preview.as_dict(), "autonomous_running": runner.is_autonomous_running(),
+                "presence_entity": str(get_setting("heartbeat_presence_entity", "") or "")}
+
+    @router.put("/autonomy")
+    async def autonomy_update(body: AutonomyBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.settings import load_settings, save_settings
+        current = dict(load_settings())
+        if body.enabled is not None:
+            current["autonomy_enabled"] = body.enabled
+        if body.paused is not None:
+            current["autonomy_paused"] = body.paused
+        if body.presence_entity is not None:
+            entity = body.presence_entity.strip()
+            if entity and not re.fullmatch(r"(?:person|device_tracker|binary_sensor)\.[a-z0-9_]+", entity):
+                raise HTTPException(422, "entity must look like person.name or device_tracker.phone")
+            current["heartbeat_presence_entity"] = entity
+        save_settings(current)
+        if body.paused or body.enabled is False:
+            from src.curiosity import runner
+            runner.yield_now("paused by you")
+        return {"enabled": current.get("autonomy_enabled", True), "paused": current.get("autonomy_paused", False),
+                "presence_entity": current.get("heartbeat_presence_entity", "")}
 
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:

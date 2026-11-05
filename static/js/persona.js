@@ -19,6 +19,8 @@ const MODE_HELP = {
 let data = null;
 let research = null;      // /api/persona/research
 let inbox = null;         // /api/persona/inbox
+let autonomy = null;      // /api/persona/autonomy
+let autonomyTimer = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
   dreamer: 'Things you keep talking about (Dreamer)', sentinel: 'Changes (Sentinel)',
@@ -236,6 +238,47 @@ function inboxCard() {
     ${button}${runs ? `<div class="admin-toggle-sub">Last runs: ${esc(runs)}</div>` : ''}${body}${decided}`);
 }
 
+function autonomyCard() {
+  if (!autonomy) return card('Autonomy', '<div class="admin-toggle-sub">Loading…</div>');
+  const a = autonomy, s = a.signals || {}, d = a.decision_now || {};
+  const idle = s.idle === 'idle' ? `away ${s.idle_minutes} min` : s.idle === 'active' ? 'at the PC' : 'unknown (no idle signal yet)';
+  const gpu = s.gpu === 'free' ? 'free' : s.gpu === 'busy' ? `busy: ${s.gpu_reason}` : `unknown (${s.gpu_reason})`;
+  const presence = { home: 'home', away: 'away', unknown: 'unknown', not_configured: 'not connected' }[s.presence] || s.presence;
+  const today = (a.starts || []).filter(x => new Date(x).toDateString() === new Date().toDateString()).length;
+  const lim = a.limits || {};
+  const row = (k, v) => `<div style="display:flex;gap:8px;font-size:12px"><span style="opacity:0.65;min-width:110px">${esc(k)}</span><span>${esc(v)}</span></div>`;
+  let now;
+  if (a.autonomous_running) now = '<div style="font-size:13px;margin:6px 0"><strong>Researching on her own.</strong> She stops the moment you\'re back.</div>';
+  else if (d.allow) now = `<div style="font-size:13px;margin:6px 0"><strong>Would wake now</strong>${d.resume ? ' (to finish an interrupted session)' : ''}; the heartbeat checks every minute.</div>`;
+  else now = `<div style="font-size:12px;margin:6px 0">Not now: ${esc((d.reasons || []).join('; '))}</div>`;
+  const y = a.yielded ? `<div class="admin-toggle-sub">Last interrupted: ${esc(a.yielded.reason)} (${esc(when(a.yielded.at))}); she'll finish it next time.</div>` : '';
+  const controls = a.can_manage ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <button type="button" class="theme-io-btn" data-persona-action="autonomy-toggle" style="height:26px;font-size:12px">${a.enabled ? 'Turn off' : 'Turn on'}</button>
+      <button type="button" class="theme-io-btn" data-persona-action="autonomy-pause" style="height:26px;font-size:12px" ${a.enabled ? '' : 'disabled'}>${a.paused ? 'Resume' : 'Pause'}</button></div>
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Home Assistant presence</summary>
+      <div class="admin-toggle-sub">Shown and logged only for now. Connect Home Assistant under Integrations (URL + long-lived token), then name the entity to watch.</div>
+      <div style="display:flex;gap:6px;margin-top:4px"><input id="persona-presence-entity" value="${esc(a.presence_entity || '')}" placeholder="person.anthon" style="flex:1;font-size:12px;padding:4px;background:var(--bg);color:var(--fg);border:1px solid color-mix(in srgb, var(--fg) 20%, transparent);border-radius:6px">
+      <button type="button" class="theme-io-btn" data-persona-action="autonomy-presence" style="height:26px;font-size:12px">Save</button></div></details>` : '';
+  return card('Autonomy', `<div class="admin-toggle-sub" style="margin-top:0">She researches on her own only when you're away, the GPU is free and no chat is running: at most ${lim.max_per_day} sessions a day, ${lim.min_gap_hours} h apart, ${lim.session_cap_minutes} min each. While she runs she holds off sleep, then lets the PC suspend as usual.</div>
+    <div style="font-size:12px;margin:4px 0"><strong>${a.enabled ? (a.paused ? 'Paused' : 'On') : 'Off'}</strong> · today ${today}/${lim.max_per_day}</div>
+    ${row('You', idle)}${row('GPU', gpu)}${row('Chats', s.chat_active ? 'one running' : s.chat_active === false ? 'none' : 'unknown')}
+    ${row('Model server', s.strata ? 'up' : 'down')}${row('Presence', presence + (s.presence_entity ? ` (${s.presence_entity})` : ''))}
+    ${now}${y}${controls}`);
+}
+
+function renderAutonomy() {
+  const slot = document.getElementById('persona-autonomy');
+  if (slot) slot.innerHTML = autonomyCard();
+}
+
+async function loadAutonomy() {
+  clearTimeout(autonomyTimer);
+  try { autonomy = await api('/autonomy'); } catch (err) { autonomy = null; }
+  renderAutonomy();
+  const modal = document.getElementById('persona-modal');
+  if (modal && !modal.classList.contains('hidden')) autonomyTimer = setTimeout(loadAutonomy, 15000);
+}
+
 function renderInbox() {
   const slot = document.getElementById('persona-inbox');
   if (slot) slot.innerHTML = inboxCard();
@@ -277,7 +320,8 @@ function render() {
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
   body.innerHTML = statusCard() + `<div id="persona-research">${researchCard()}</div>`
-    + `<div id="persona-inbox">${inboxCard()}</div>` + whisperCard() + modeCard() + modulesCard();
+    + `<div id="persona-inbox">${inboxCard()}</div>` + `<div id="persona-autonomy">${autonomyCard()}</div>`
+    + whisperCard() + modeCard() + modulesCard();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
   });
@@ -307,6 +351,16 @@ async function onClick(event) {
       openArticle = { file, html: mdToHtml(art.markdown) };
     } catch (err) { toast(`Persona: ${err.message}`); }
     renderResearch();
+    return;
+  }
+  if (['autonomy-toggle', 'autonomy-pause', 'autonomy-presence'].includes(target.dataset.personaAction)) {
+    const act = target.dataset.personaAction;
+    const body = act === 'autonomy-toggle' ? { enabled: !autonomy.enabled }
+      : act === 'autonomy-pause' ? { paused: !autonomy.paused }
+      : { presence_entity: document.getElementById('persona-presence-entity')?.value || '' };
+    try { await api('/autonomy', { method: 'PUT', body: JSON.stringify(body) }); toast('Saved'); }
+    catch (err) { toast(`Persona: ${err.message}`); }
+    await loadAutonomy();
     return;
   }
   const inboxAction = target.dataset.personaAction;
@@ -383,11 +437,13 @@ export function openPersonaModal() {
   load();
   loadResearch();
   loadInbox();
+  loadAutonomy();
 }
 
 function closePersonaModal() {
   clearTimeout(pollTimer);
   clearTimeout(inboxTimer);
+  clearTimeout(autonomyTimer);
   const modal = document.getElementById('persona-modal');
   if (modal) modal.classList.add('hidden');
 }

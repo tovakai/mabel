@@ -1420,6 +1420,14 @@ def _maybe_hold_for_research(request, sess, session_id, message, preset_id, chat
     Only for ordinary text messages to the Mabel persona; compare panes,
     incognito chats, approval continuations and attachments go through as usual.
     """
+    try:
+        from src.curiosity import runner
+        if runner.is_autonomous_running():
+            # She started this herself while he was away: he's back, so any chat wins.
+            runner.yield_now("a chat started")
+            return None
+    except Exception:
+        logger.debug("[held] autonomy check failed", exc_info=True)
     if compare_mode or incognito or approval or has_attachments or not str(message or "").strip():
         return None
     try:
