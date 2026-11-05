@@ -97,18 +97,21 @@ class Composer:
         module = library.functions.get(function) or library.functions.get("social")
         mood = library.moods.get(projection.mood)
         parts = []
+        influence = str((module.meta.get("mood_influence") if module else "high") or "high")
         if module:
             comp.refs.append(module.ref)
-            parts.append(f"How you're working right now ({module.id.split('.', 1)[1]}): {module.body}")
+            # Measured: naming a technical task ("programming work") doubles the
+            # model's reasoning with no better answers, and the agent runtime and
+            # tool descriptions already carry that guidance. Function prose is
+            # served only where it shapes the conversation (social).
+            if influence == "high":
+                parts.append(f"How you're working right now ({module.id.split('.', 1)[1]}): {module.body}")
         if mood:
             comp.refs.append(mood.ref)
-            influence = str((module.meta.get("mood_influence") if module else "high") or "high")
             if influence == "high":
                 parts.append(f"Your mood right now ({projection.mood}): {mood.body}")
             else:
-                # Technical work: a light touch on tone only.
-                parts.append(f"Your mood right now is {projection.mood} ({_first_sentence(mood.body)}). "
-                             "Let it colour your tone slightly; the work stays complete and careful.")
+                parts.append(f"Mood right now: {projection.mood} ({_first_sentence(mood.body)})")
         fragment = "\n\n".join(parts)
         if len(fragment) > FRAGMENT_LIMIT and len(parts) > 1:
             fragment = parts[0]  # over budget: drop the mood, keep the function

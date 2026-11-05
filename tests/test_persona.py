@@ -70,8 +70,8 @@ def test_lazy_decay_approaches_baseline():
     assert decayed(1.0, 0.25, 3.0, 72.0) == pytest.approx(0.25, abs=1e-4)
 
 
-@pytest.mark.parametrize("hour,minute,mood", [
-    (0, 10, "restless"), (2, 0, "tired"), (6, 0, "groggy"), (12, 0, "relaxed"), (19, 0, "playful"), (23, 0, "restless"),
+@pytest.mark.parametrize("hour,minute,mood", [  # night owl: before 23:00 is early in her day
+    (0, 10, "playful"), (3, 0, "restless"), (6, 0, "tired"), (12, 0, "groggy"), (19, 0, "relaxed"), (23, 0, "playful"),
 ])
 def test_time_of_day_schedule(hour, minute, mood):
     assert scheduled_mood(datetime(2026, 11, 5, hour, minute, tzinfo=TZ)) == mood
@@ -79,18 +79,18 @@ def test_time_of_day_schedule(hour, minute, mood):
 
 def test_mood_persists_across_restart_and_holds_briefly(tmp_path):
     path = tmp_path / "affect.json"
-    first, _ = AffectStore(path).project(datetime(2026, 11, 5, 9, 25, tzinfo=TZ))
+    first, _ = AffectStore(path).project(datetime(2026, 11, 5, 15, 55, tzinfo=TZ))
     assert first.mood == "groggy" and first.changed
-    held, _ = AffectStore(path).project(datetime(2026, 11, 5, 9, 35, tzinfo=TZ))  # new instance = restart
+    held, _ = AffectStore(path).project(datetime(2026, 11, 5, 16, 5, tzinfo=TZ))  # new instance = restart
     assert held.mood == "groggy" and held.source == "hysteresis"
-    moved, _ = AffectStore(path).project(datetime(2026, 11, 5, 9, 50, tzinfo=TZ))
+    moved, _ = AffectStore(path).project(datetime(2026, 11, 5, 16, 20, tzinfo=TZ))
     assert moved.mood == "relaxed" and moved.changed
 
 
 def test_corrupt_state_recovers_to_baseline(tmp_path):
     path = tmp_path / "affect.json"
     path.write_text("{not json")
-    projection, state = AffectStore(path).project(datetime(2026, 11, 5, 12, 0, tzinfo=TZ))
+    projection, state = AffectStore(path).project(datetime(2026, 11, 5, 18, 0, tzinfo=TZ))
     assert projection.mood == "relaxed" and state["channels"]["calm"] == 0.6
 
 
@@ -117,11 +117,12 @@ def test_quoted_and_code_data_cannot_switch_to_vault():
 
 def test_technical_work_gets_only_a_light_mood_touch(tmp_path):
     composer = Composer(_library(tmp_path), tmp_path / "affect.json")
-    social = composer.compose("hi!", set(), "a", local_now=datetime(2026, 11, 5, 2, 0, tzinfo=TZ), mode="on")
-    assert "Feeling tired. Second sentence." in social.fragment
+    social = composer.compose("hi!", set(), "a", local_now=datetime(2026, 11, 5, 7, 0, tzinfo=TZ), mode="on")
+    assert "Feeling tired. Second sentence." in social.fragment and "Chat." in social.fragment
     code = composer.compose("fix this traceback", {"shell_files"}, "b",
-                            local_now=datetime(2026, 11, 5, 2, 0, tzinfo=TZ), mode="on")
-    assert "Second sentence" not in code.fragment and "the work stays complete" in code.fragment
+                            local_now=datetime(2026, 11, 5, 7, 0, tzinfo=TZ), mode="on")
+    # Technical turns: one mood line, no function prose (it doubled reasoning time).
+    assert code.fragment == "Mood right now: tired (Feeling tired.)"
     assert code.core_text == "You are Mabel." and [r.split("@")[0] for r in code.refs] == \
         ["core", "function.programming", "mood.tired"]
 
@@ -144,5 +145,5 @@ def test_ledger_event_is_metadata_only(tmp_path, monkeypatch):
     log_composition(comp, session_id="s1", served=False)
     line = (tmp_path / "phase0" / "events.jsonl").read_text().splitlines()[-1]
     event = json.loads(line)
-    assert event["kind"] == "prompt.composition_shadowed" and "mood.relaxed" in event["modules"]
+    assert event["kind"] == "prompt.composition_shadowed" and "mood.groggy" in event["modules"]
     assert "You are Mabel" not in line and "Chat." not in line

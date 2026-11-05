@@ -27,13 +27,14 @@ CHANNELS = {
 MIN_MOOD_MINUTES = 20   # hysteresis: a selected mood holds at least this long
 RESIDUE_LIMIT = 20
 
-# Local-time mood schedule (start hour as a float, mood). Wraps around midnight.
+# Night-owl local-time schedule (start hour, mood); wraps around midnight.
+# Everything before 23:00 is the early part of her day.
 SCHEDULE = (
-    (0.5, "tired"),
-    (5.0, "groggy"),
-    (9.5, "relaxed"),
-    (17.0, "playful"),
-    (21.5, "restless"),
+    (2.5, "restless"),   # wired, late night
+    (5.0, "tired"),      # an all-nighter
+    (10.0, "groggy"),    # her morning
+    (16.0, "relaxed"),   # her daytime
+    (23.0, "playful"),   # prime time
 )
 
 
@@ -55,10 +56,10 @@ def scheduled_mood(local: datetime) -> str:
 
 
 def energy_for(local: datetime) -> float:
-    """A smooth day curve: low before dawn, high mid-afternoon (presentation only)."""
+    """A smooth night-owl curve: lowest early afternoon, highest around 01:00 (presentation only)."""
     hour = local.hour + local.minute / 60
     import math
-    return round(0.5 + 0.45 * math.sin((hour - 9.0) / 24 * 2 * math.pi), 3)
+    return round(0.5 + 0.45 * math.sin((hour - 19.0) / 24 * 2 * math.pi), 3)
 
 
 @dataclass
