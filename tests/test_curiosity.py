@@ -148,3 +148,45 @@ def test_session_writes_only_into_mabels_vault(tmp_path, monkeypatch):
     assert result["whisper_outcome"] == "set"
     assert (whisper["origin"], whisper["source"], whisper["thought"]) == ("self_generated", "research", "Madhouse stuck with me.")
     assert whisper["reference"] == result["article"]
+
+
+def _research_client(monkeypatch, tmp_path, *, admin=True):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import persona_routes
+    from src.auth_helpers import require_user
+    articles = tmp_path / "mabel" / "knowledge" / "research"
+    articles.mkdir(parents=True)
+    (articles / "Kondo.md").write_text("---\ntype: research-article\nsubject: Kondo\nquestion: Why?\n"
+                                       "status: verified\ncreated: '2026-11-05T02:00:00+00:00'\n---\n# Kondo\nBody [S1].\n")
+    (tmp_path / "secret.md").write_text("private")
+    fake = SimpleNamespace(articles=articles, data=tmp_path / "data" / "curiosity")
+    monkeypatch.setattr("src.curiosity.session.Paths", lambda: fake)
+    monkeypatch.setattr(persona_routes, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr("src.tool_security.owner_is_admin_or_single_user", lambda user: admin)
+    app = FastAPI()
+    app.include_router(persona_routes.setup_persona_routes())
+    app.dependency_overrides[require_user] = lambda: "alice"
+    return TestClient(app)
+
+
+def test_research_overview_and_article(monkeypatch, tmp_path):
+    client = _research_client(monkeypatch, tmp_path)
+    data = client.get("/api/persona/research").json()
+    assert [a["title"] for a in data["articles"]] == ["Kondo"] and data["status"]["running"] is False
+    article = client.get("/api/persona/research/article", params={"file": "Kondo.md"}).json()
+    assert article["markdown"].startswith("# Kondo") and "type: research-article" not in article["markdown"]
+    for bad in ("../../secret.md", "Kondo", "/etc/passwd"):
+        assert client.get("/api/persona/research/article", params={"file": bad}).status_code == 404
+
+
+def test_research_run_is_admin_only_and_single(monkeypatch, tmp_path):
+    from src.curiosity import runner
+    assert _research_client(monkeypatch, tmp_path, admin=False).post("/api/persona/research/run").status_code == 403
+    client = _research_client(monkeypatch, tmp_path / "admin")
+
+    def busy(**kwargs):
+        raise runner.AlreadyRunning("a curiosity session is already running")
+    monkeypatch.setattr(runner, "start", busy)
+    assert client.post("/api/persona/research/run").status_code == 409

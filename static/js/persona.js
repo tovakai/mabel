@@ -6,6 +6,7 @@
 // Module text is validated server-side by the same parser that serves it.
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
+import { mdToHtml } from './markdown.js';
 
 const esc = uiModule.esc;
 const toast = (msg) => uiModule.showToast(msg);
@@ -16,6 +17,12 @@ const MODE_HELP = {
   on: 'On — identity replaces the preset prompt; a short mode + mood note rides along each turn.',
 };
 let data = null;
+let research = null;      // /api/persona/research
+let openArticle = null;   // { file, html }
+let pollTimer = null;
+const STEP_LABELS = { candidates: 'looking at what your notes link to', choice: 'choosing what to research',
+  evidence: 'searching and reading sources', draft: 'writing the article', quotes: 'checking her quotes',
+  write: 'verifying and saving' };
 
 async function api(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
@@ -148,12 +155,70 @@ function modulesCard() {
     ${group('mood', 'Moods', 'Picked from the night-owl schedule above, or pinned.')}`);
 }
 
+function researchCard() {
+  if (!research) return card('Research', '<div class="admin-toggle-sub">Loading…</div>');
+  const st = research.status || {};
+  const sess = st.session;
+  let now = '';
+  if (st.running && sess) {
+    now = `<div style="font-size:12px;margin:4px 0"><strong>Researching…</strong> ${esc(STEP_LABELS[sess.next_step] || sess.next_step || '')}${sess.subject ? ` · <em>${esc(sess.subject)}</em>` : ''}</div>
+      ${sess.why ? `<div class="admin-toggle-sub">Why: ${esc(sess.why)}</div>` : ''}`;
+  } else if (st.error) {
+    now = `<div style="font-size:12px;color:var(--red);margin:4px 0">Last session stopped: ${esc(st.error)}</div>`;
+  } else if (sess && sess.result) {
+    const r = sess.result;
+    now = `<div style="font-size:12px;margin:4px 0">Finished: <strong>${esc(sess.subject || '')}</strong> (${esc(r.status)}${r.whisper_outcome === 'set' || r.whisper_outcome === 'replaced_automatic' ? ', set her whisper' : ''})</div>`;
+  }
+  const button = research.can_manage
+    ? `<button type="button" class="theme-io-btn" data-persona-action="research-run" ${st.running ? 'disabled' : ''} style="height:26px;font-size:12px">${st.running ? 'Researching…' : 'Go research something'}</button>
+       <span class="admin-toggle-sub" style="margin-left:6px">She picks the topic. Takes a few minutes and occupies her model.</span>`
+    : '';
+  const articles = research.articles.length ? research.articles.map(a => {
+    const open = openArticle && openArticle.file === a.file;
+    return `<div style="margin:6px 0">
+      <a href="#" data-persona-action="open-article" data-file="${esc(a.file)}" style="font-size:13px;font-weight:600">${esc(a.title)}</a>
+      <span class="admin-toggle-sub" style="margin-left:4px">${esc(a.status || '')} · ${esc((a.created || '').slice(0, 10))} · ${esc(String(a.chosen_from || '').replace(/_/g, ' '))}</span>
+      ${a.question ? `<div class="admin-toggle-sub" style="margin:2px 0 0">${esc(a.question)}</div>` : ''}
+      ${open ? `<div class="persona-article" style="margin-top:6px;padding:8px 10px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-radius:6px;font-size:13px;max-height:420px;overflow-y:auto">${openArticle.html}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="admin-toggle-sub">No articles yet.</div>';
+  const questions = research.open_questions.length
+    ? '<ul style="margin:4px 0 0 18px;padding:0;font-size:12px">' + research.open_questions.map(q =>
+      `<li>${esc(q.question)}${q.cooling ? ` <span style="opacity:0.6">(cooling off until ${esc(new Date(q.eligible_after).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }))})</span>` : ''}</li>`).join('') + '</ul>'
+    : '<div class="admin-toggle-sub">None yet.</div>';
+  return card('Research', `${button}${now}
+    <div style="font-size:12px;font-weight:600;margin-top:10px">Her articles</div>${articles}
+    <div style="font-size:12px;font-weight:600;margin-top:10px">Questions she left herself</div>${questions}
+    ${research.spawned.length ? `<div class="admin-toggle-sub" style="margin-top:6px">Links she wants to follow: ${research.spawned.map(esc).join(', ')}</div>` : ''}`);
+}
+
+// Refresh only the Research card, so polling never disturbs text being edited elsewhere.
+function renderResearch() {
+  const slot = document.getElementById('persona-research');
+  if (slot) slot.innerHTML = researchCard();
+  else render();
+}
+
+async function loadResearch() {
+  clearTimeout(pollTimer);
+  try {
+    research = await api('/research');
+  } catch (err) {
+    research = { can_manage: false, status: { error: err.message }, articles: [], open_questions: [], spawned: [] };
+  }
+  renderResearch();
+  const modal = document.getElementById('persona-modal');
+  if (research.status?.running && modal && !modal.classList.contains('hidden')) {
+    pollTimer = setTimeout(loadResearch, 5000);
+  }
+}
+
 function render() {
   const body = document.getElementById('persona-body');
   if (!body) return;
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
-  body.innerHTML = statusCard() + whisperCard() + modeCard() + modulesCard();
+  body.innerHTML = statusCard() + `<div id="persona-research">${researchCard()}</div>` + whisperCard() + modeCard() + modulesCard();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
   });
@@ -174,6 +239,25 @@ async function load() {
 async function onClick(event) {
   const target = event.target.closest('[data-persona-mode], [data-persona-save], [data-persona-action]');
   if (!target || target.disabled) return;
+  if (target.dataset.personaAction === 'open-article') {
+    event.preventDefault();
+    const file = target.dataset.file;
+    if (openArticle && openArticle.file === file) { openArticle = null; renderResearch(); return; }
+    try {
+      const art = await api(`/research/article?file=${encodeURIComponent(file)}`);
+      openArticle = { file, html: mdToHtml(art.markdown) };
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    renderResearch();
+    return;
+  }
+  if (target.dataset.personaAction === 'research-run') {
+    try {
+      await api('/research/run', { method: 'POST' });
+      toast('Mabel is off researching something');
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    await loadResearch();
+    return;
+  }
   try {
     if (target.dataset.personaMode) {
       await api('/mode', { method: 'PUT', body: JSON.stringify({ mode: target.dataset.personaMode }) });
@@ -221,9 +305,11 @@ export function openPersonaModal() {
   modal.style.display = '';
   render();
   load();
+  loadResearch();
 }
 
 function closePersonaModal() {
+  clearTimeout(pollTimer);
   const modal = document.getElementById('persona-modal');
   if (modal) modal.classList.add('hidden');
 }

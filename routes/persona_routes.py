@@ -189,6 +189,49 @@ def setup_persona_routes() -> APIRouter:
         _composer().whispers.retire(_now())
         return {"retired": True}
 
+    # --- Research (Phase 3 Curiosity Drive) ------------------------------------------------
+
+    def _research_paths():
+        from src.curiosity.session import Paths
+        return Paths()
+
+    @router.get("/research")
+    async def research_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.curiosity import runner
+        from src.curiosity.backlog import Backlog, articles
+        paths = _research_paths()
+        now = datetime.now().astimezone().isoformat()
+        listed = []
+        for item in sorted(articles(paths.articles), key=lambda a: str(a.get("created") or ""), reverse=True):
+            listed.append({"file": item["path"].name, "title": item["path"].stem, "subject": item.get("subject"),
+                           "question": item.get("question"), "why": item.get("why"), "status": item.get("status"),
+                           "created": str(item.get("created") or ""), "chosen_from": item.get("chosen_from")})
+        log = Backlog(paths.data / "backlog.json").load()
+        questions = [{"question": q["question"], "subject": q["subject"], "eligible_after": q["eligible_after"],
+                      "cooling": q["eligible_after"] > now} for q in log["questions"] if q["status"] == "open"]
+        return {"can_manage": _is_admin(request), "status": runner.status(), "articles": listed,
+                "open_questions": questions[::-1][:20],
+                "spawned": [s["name"] for s in log["spawned"] if s["status"] == "open"][::-1][:20]}
+
+    @router.get("/research/article")
+    async def research_article(file: str, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        folder = _research_paths().articles.resolve()
+        path = (folder / file).resolve()
+        if path.parent != folder or path.suffix != ".md" or not path.is_file() or path.is_symlink():
+            raise HTTPException(404, "Unknown article")
+        text = path.read_text(encoding="utf-8")
+        body = text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
+        return {"file": path.name, "markdown": body}
+
+    @router.post("/research/run")
+    async def research_run(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.curiosity import runner
+        try:
+            return runner.start()
+        except runner.AlreadyRunning as error:
+            raise HTTPException(409, str(error)) from None
+
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
         _require_admin(request)
