@@ -156,6 +156,7 @@ DEFAULT_SETTINGS = {
     # Phase 00.5 episodic memory (off by default; toggled in the Memory sidebar).
     "episodic_capture_enabled": False,
     "episodic_recall_enabled": False,
+    "subconscious_auto_enabled": True,
     # Phase 01 prompt stitching: off | shadow | on (identity/ modules + affect).
     "persona_mode": "off",
     "persona_module_root": "",

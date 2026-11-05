@@ -1194,6 +1194,12 @@ async def _startup_event():
     _startup_tasks.append(app.state.background_tool_delivery_task)
     if upload_cleanup_func:
         upload_cleanup_task = asyncio.create_task(upload_cleanup_func())
+    # Phase 4: Dottie's cheap maintenance loops (archivist 6-hourly, dreamer daily).
+    try:
+        from src.subconscious.loops import scheduler as _subconscious_scheduler
+        _startup_tasks.append(asyncio.create_task(_subconscious_scheduler()))
+    except Exception as _e:
+        logger.warning("Failed to start the subconscious scheduler: %s", _e)
     # Always-on monitor that auto-continues the agent when a background bash
     # job (#!bg) finishes — re-invokes the turn with the job output.
     try:

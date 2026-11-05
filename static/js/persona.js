@@ -18,6 +18,10 @@ const MODE_HELP = {
 };
 let data = null;
 let research = null;      // /api/persona/research
+let inbox = null;         // /api/persona/inbox
+let inboxTimer = null;
+const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
+  dreamer: 'Things you keep talking about (Dreamer)', sentinel: 'Changes (Sentinel)' };
 let openArticle = null;   // { file, html }
 let pollTimer = null;
 const STEP_LABELS = { candidates: 'looking at what your notes link to', choice: 'choosing what to research',
@@ -193,6 +197,56 @@ function researchCard() {
 }
 
 // Refresh only the Research card, so polling never disturbs text being edited elsewhere.
+function evidenceList(item) {
+  return '<ul style="margin:4px 0 0 16px;padding:0;font-size:11px;opacity:0.85">' + item.evidence.slice(0, 6).map(e => {
+    const ref = String(e.ref || '');
+    const label = e.title || ref.replace(/^chat:[^/]+\//, 'message ').replace(/#L(\d+)$/, ' (line $1)');
+    const link = /^https?:\/\//.test(ref) ? `<a href="${esc(ref)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label);
+    const extra = e.excerpt || e.context;
+    return `<li>${link}${extra ? `<div style="opacity:0.75">${esc(String(extra).slice(0, 220))}</div>` : ''}</li>`;
+  }).join('') + '</ul>';
+}
+
+function inboxCard() {
+  if (!inbox) return card("Dottie's inbox", '<div class="admin-toggle-sub">Loading…</div>');
+  const groups = {};
+  inbox.items.forEach(item => { (groups[item.loop] = groups[item.loop] || []).push(item); });
+  const runs = Object.entries(inbox.last_runs || {}).map(([name, r]) => `${name} ${when(r.at)}`).join(' · ');
+  const button = inbox.can_manage
+    ? `<button type="button" class="theme-io-btn" data-persona-action="inbox-run" ${inbox.running ? 'disabled' : ''} style="height:26px;font-size:12px">${inbox.running ? 'Dottie is looking around…' : 'Let Dottie look around'}</button>
+       <span class="admin-toggle-sub" style="margin-left:6px">Runs on Dottie's machine; never slows Mabel.</span>` : '';
+  const body = Object.keys(groups).length ? Object.entries(groups).map(([loop, items]) => `
+    <div style="font-size:12px;font-weight:600;margin-top:10px">${esc(LOOP_LABELS[loop] || loop)}</div>
+    ${items.map(item => `<details style="margin:4px 0">
+      <summary style="cursor:pointer;font-size:12px">${esc(item.title)} <span style="opacity:0.55;font-size:11px">${Math.round(item.confidence * 100)}% · ${esc(item.verification.replace('_', ' '))}</span></summary>
+      ${item.summary ? `<div class="admin-toggle-sub" style="margin:2px 0">${esc(item.summary)}</div>` : ''}
+      ${item.payload && item.payload.curiosity ? `<div style="font-size:12px;font-style:italic;margin:2px 0">${esc(item.payload.curiosity)}</div>` : ''}
+      ${evidenceList(item)}
+      ${inbox.can_manage ? `<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:4px">
+        <button type="button" class="theme-io-btn" data-persona-action="inbox-accept" data-item="${esc(item.id)}" style="height:24px;font-size:11px">Keep</button>
+        <button type="button" class="theme-io-btn" data-persona-action="inbox-reject" data-item="${esc(item.id)}" style="height:24px;font-size:11px">Reject</button></div>` : ''}
+    </details>`).join('')}`).join('') : '<div class="admin-toggle-sub">Nothing waiting.</div>';
+  const decided = (inbox.decided || []).length ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px">Decided (${inbox.decided.length})</summary>
+    <ul style="margin:4px 0 0 16px;padding:0;font-size:11px">${inbox.decided.map(i => `<li>${esc(i.status)} by ${esc(i.decided_by || '?')}: ${esc(i.title)}${i.decision_reason ? ` <span style="opacity:0.6">(${esc(i.decision_reason)})</span>` : ''}</li>`).join('')}</ul></details>` : '';
+  return card("Dottie's inbox", `<div class="admin-toggle-sub" style="margin-top:0">Suggestions from Dottie's background loops. Rejecting keeps the item (and where it came from) so it isn't suggested again. Nothing here changes your notes.</div>
+    ${button}${runs ? `<div class="admin-toggle-sub">Last runs: ${esc(runs)}</div>` : ''}${body}${decided}`);
+}
+
+function renderInbox() {
+  const slot = document.getElementById('persona-inbox');
+  if (slot) slot.innerHTML = inboxCard();
+}
+
+async function loadInbox() {
+  clearTimeout(inboxTimer);
+  try { inbox = await api('/inbox'); } catch (err) {
+    inbox = { can_manage: false, running: false, items: [], decided: [], last_runs: {}, error: err.message };
+  }
+  renderInbox();
+  const modal = document.getElementById('persona-modal');
+  if (inbox.running && modal && !modal.classList.contains('hidden')) inboxTimer = setTimeout(loadInbox, 4000);
+}
+
 function renderResearch() {
   const slot = document.getElementById('persona-research');
   if (slot) slot.innerHTML = researchCard();
@@ -218,7 +272,8 @@ function render() {
   if (!body) return;
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
-  body.innerHTML = statusCard() + `<div id="persona-research">${researchCard()}</div>` + whisperCard() + modeCard() + modulesCard();
+  body.innerHTML = statusCard() + `<div id="persona-research">${researchCard()}</div>`
+    + `<div id="persona-inbox">${inboxCard()}</div>` + whisperCard() + modeCard() + modulesCard();
   body.querySelectorAll('details textarea').forEach(t => {
     if (open.has(t.dataset.personaText)) t.closest('details').open = true;
   });
@@ -248,6 +303,23 @@ async function onClick(event) {
       openArticle = { file, html: mdToHtml(art.markdown) };
     } catch (err) { toast(`Persona: ${err.message}`); }
     renderResearch();
+    return;
+  }
+  const inboxAction = target.dataset.personaAction;
+  if (inboxAction === 'inbox-run' || inboxAction === 'inbox-accept' || inboxAction === 'inbox-reject') {
+    try {
+      if (inboxAction === 'inbox-run') {
+        await api('/inbox/run', { method: 'POST' });
+        toast('Dottie is looking around');
+      } else {
+        const accept = inboxAction === 'inbox-accept';
+        const reason = accept ? '' : (window.prompt('Why reject it? (optional)') ?? null);
+        if (reason === null) return;
+        await api(`/inbox/${encodeURIComponent(target.dataset.item)}/decide`, { method: 'POST',
+          body: JSON.stringify({ status: accept ? 'accepted' : 'rejected', reason }) });
+      }
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    await loadInbox();
     return;
   }
   if (target.dataset.personaAction === 'research-run') {
@@ -306,10 +378,12 @@ export function openPersonaModal() {
   render();
   load();
   loadResearch();
+  loadInbox();
 }
 
 function closePersonaModal() {
   clearTimeout(pollTimer);
+  clearTimeout(inboxTimer);
   const modal = document.getElementById('persona-modal');
   if (modal) modal.classList.add('hidden');
 }

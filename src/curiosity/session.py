@@ -80,6 +80,18 @@ class Paths:
         self.index = index_db(self.source_vault, self.owner)
 
 
+def _brief(subject: str) -> dict | None:
+    """Dottie's research brief for ``subject``, if one is waiting (Phase 4 Scout)."""
+    if not subject:
+        return None
+    try:
+        from src.subconscious.inbox import default_inbox
+        from src.subconscious.scout import brief_for
+        return brief_for(default_inbox(), subject)
+    except Exception:
+        return None
+
+
 def _json_object(text: str) -> dict:
     text = re.sub(r"(?s)<think>.*?</think>", "", text or "")
     start = text.find("{")
@@ -149,6 +161,11 @@ class Session:
             return self.done("candidates")
         researched = backlog_mod.researched_subjects(self.paths.articles)
         pool = candidates(self.paths.index, exclude=researched, seed=seed)
+        for cand in pool:
+            brief = _brief(cand.name)
+            if brief:
+                urls = [e for e in brief["evidence"] if e.get("kind") == "url"]
+                cand.reasons.append(f"Dottie already gathered {len(urls)} sources for it")
         for item in self.backlog.eligible_questions()[:3]:
             pool.append(Candidate(item["subject"], "open_question", question=item["question"], ref=item["id"],
                                   reasons=[f"your open question from {Path(item['from_article']).stem}"]))
@@ -226,7 +243,14 @@ class Session:
         results = []
         loop = asyncio.get_running_loop()
         from src.search import fetch_webpage_content, searxng_search_results
-        for query in choice["search_queries"]:
+        brief = _brief((candidate.get("name") or subject))
+        if brief:
+            # Dottie's Scout already found pages that name the subject: start from them
+            # (re-fetched and verified below like any source) and search less.
+            results.extend({"query": "dottie brief", "url": e["ref"], "title": e.get("title", "")}
+                           for e in brief["evidence"] if e.get("kind") == "url")
+        queries = choice["search_queries"][:1] if brief else choice["search_queries"]
+        for query in queries:
             if self.state["searches"] >= WEB_SEARCH_BUDGET:
                 break
             self.state["searches"] += 1
@@ -237,7 +261,7 @@ class Session:
                 continue
             results.extend({"query": query, **r} for r in found if isinstance(r, dict) and r.get("url"))
         picked, domains = [], set()
-        for r in sorted(results, key=lambda r: -self._url_score(r["url"])):
+        for r in sorted(results, key=lambda r: (r["query"] != "dottie brief", -self._url_score(r["url"]))):
             domain = urlparse(r["url"]).netloc.lower().removeprefix("www.").removeprefix("m.")
             if domain.endswith(".wikipedia.org"):
                 if not domain.startswith("en."):
@@ -263,7 +287,13 @@ class Session:
                             "title": str(page.get("title") or r.get("title") or r["url"])[:200], "text": text})
             if len(sources) >= MAX_SOURCES:
                 break
-        evidence = {"vault": vault, "link_contexts": candidate.get("contexts") or [],
+        if brief:
+            try:
+                from src.subconscious.inbox import default_inbox
+                default_inbox().decide(brief["id"], "accepted", by="mabel", reason=f"used in curiosity session {self.id}")
+            except Exception:
+                logger.debug("[curiosity] brief not marked", exc_info=True)
+        evidence = {"vault": vault, "link_contexts": candidate.get("contexts") or [], "brief": brief["id"] if brief else None,
                     "link_sources": [p for p in candidate.get("sources") or []][:6],
                     "previous_articles": previous, "sources": sources, "searches": self.state["searches"]}
         self._checkpoint("evidence", evidence)

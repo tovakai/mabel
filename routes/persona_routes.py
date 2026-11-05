@@ -37,6 +37,11 @@ class WhisperBody(BaseModel):
     days: float = Field(default=14, gt=0, le=90)
 
 
+class DecisionBody(BaseModel):
+    status: str
+    reason: str = Field(default="", max_length=300)
+
+
 class OverrideBody(BaseModel):
     mood: str
     hours: float = Field(default=2.0, gt=0, le=24)
@@ -231,6 +236,38 @@ def setup_persona_routes() -> APIRouter:
             return runner.start()
         except runner.AlreadyRunning as error:
             raise HTTPException(409, str(error)) from None
+
+    # --- Dottie's inbox (Phase 4) -----------------------------------------------------------
+
+    @router.get("/inbox")
+    async def inbox_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.subconscious import loops
+        from src.subconscious.inbox import default_inbox
+        inbox = default_inbox()
+        decided = [i for s in ("accepted", "rejected") for i in inbox.list(status=s, limit=15)]
+        decided.sort(key=lambda i: i.get("decided_at") or "", reverse=True)
+        return {"can_manage": _is_admin(request), "running": loops.running(), "last_runs": loops.last_runs(),
+                "counts": inbox.counts(), "items": inbox.list(limit=60), "decided": decided[:15]}
+
+    @router.post("/inbox/{item_id}/decide")
+    async def inbox_decide(item_id: str, body: DecisionBody, request: Request,
+                           _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.subconscious.inbox import InboxError, default_inbox
+        if body.status not in ("accepted", "rejected"):
+            raise HTTPException(422, "status must be accepted or rejected")
+        try:
+            return default_inbox().decide(item_id, body.status, by="user", reason=body.reason)
+        except InboxError as error:
+            raise HTTPException(404, str(error)) from None
+
+    @router.post("/inbox/run")
+    async def inbox_run(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.subconscious import loops
+        if not loops.start():
+            raise HTTPException(409, "Dottie is already working")
+        return {"running": True}
 
     @router.post("/mood-override")
     async def pin_mood(body: OverrideBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
