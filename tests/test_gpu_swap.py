@@ -137,3 +137,67 @@ def test_image_tool_reports_swap_phases_while_waiting(swap):
     messages = [e["message"] for e in events]
     assert "Loading the image model…" in messages and "Coming back…" in messages
     assert all(e["tool"] == "generate_image" for e in events)
+
+
+def test_swap_waits_for_a_running_model_call_and_new_calls_wait_for_the_swap(swap):
+    calls, state = swap
+
+    async def run():
+        log = []
+        release = asyncio.Event()
+
+        async def summary():
+            async with gpu_swap.model_call():
+                log.append("summary:start")
+                await release.wait()
+                log.append("summary:end")
+
+        async def dream():
+            async with gpu_swap.room("image"):
+                log.append("image")
+
+        first = asyncio.create_task(summary())
+        await asyncio.sleep(0)
+        second = asyncio.create_task(dream())
+        await asyncio.sleep(0.05)
+        assert "strata:stop" not in calls                 # still generating: Strata stays up
+        release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), 5)
+        return log
+    assert asyncio.run(run()) == ["summary:start", "summary:end", "image"]
+    assert calls.index("strata:stop") > 0 and gpu_swap._model_calls == 0
+
+
+def test_swap_gives_up_cleanly_if_her_model_stays_busy(swap, monkeypatch):
+    calls, state = swap
+    monkeypatch.setattr(gpu_swap, "DRAIN_WAIT", 0)
+    monkeypatch.setattr(gpu_swap, "_model_calls", 1)
+
+    async def run():
+        async with gpu_swap.room("image"):
+            pass
+    with pytest.raises(gpu_swap.SwapError):
+        asyncio.run(run())
+    assert "strata:stop" not in calls and gpu_swap.active() is None
+    assert state["strata"] == "ready"
+
+
+def test_model_call_waits_out_a_swap(swap, monkeypatch):
+    log = []
+
+    async def run():
+        gpu_swap._write_state({"service": "image", "phase": "working"})
+
+        async def end_swap():
+            await asyncio.sleep(0.05)
+            log.append("swap done")
+            gpu_swap._write_state(None)
+
+        async def call():
+            async with gpu_swap.model_call():
+                log.append("called")
+        real_sleep = asyncio.sleep
+        monkeypatch.setattr(gpu_swap.asyncio, "sleep", lambda s: real_sleep(0.01 if s == 2 else s))
+        await asyncio.gather(end_swap(), call())
+    asyncio.run(run())
+    assert log == ["swap done", "called"]

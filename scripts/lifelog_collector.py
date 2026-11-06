@@ -160,12 +160,43 @@ def name_from_command(line: str) -> str | None:
     return folder if stem.lower() in _GENERIC_EXE and folder else stem
 
 
+# Launch plumbing and SteamVR's own helpers: none of these mean a game is running. SteamVR's
+# dashboard can stay parented under a game's launch long after the game has exited.
+_NOT_A_GAME = (r"/reaper\b", r"srt-bwrap", r"srt-logger", r"pv-adverb", r"pressure-vessel", r"steam-runtime",
+               r"SteamLinuxRuntime", r"/SteamVR/")
+
+
+def launch_has_game(pid: int, rows: list[tuple[int, int, str]]) -> bool:
+    """True if something other than launch plumbing or SteamVR runs under this Steam launch."""
+    import re
+    children: dict[int, list[tuple[int, str]]] = {}
+    for child, parent, args in rows:
+        children.setdefault(parent, []).append((child, args))
+    skip = re.compile("|".join(_NOT_A_GAME))
+    stack = [pid]
+    while stack:
+        for child, args in children.get(stack.pop(), []):
+            if not skip.search(args):
+                return True
+            stack.append(child)
+    return False
+
+
 def sample_game() -> dict | None:
     # Every Steam launch (native or Proton) runs under "reaper SteamLaunch AppId=<id>".
     import re
-    for line in run(["ps", "-eo", "args"]).splitlines():
+    rows: list[tuple[int, int, str]] = []
+    for line in run(["ps", "-eo", "pid=,ppid=,args="]).splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+            rows.append((int(parts[0]), int(parts[1]), parts[2]))
+    leftover: set[str] = set()             # launches with no game left in them
+    for pid, _parent, line in rows:
         m = re.search(r"\bSteamLaunch\b.*?\bAppId=(\d+)", line)
         if m and m.group(1) not in ("0", "250820"):        # 250820 = SteamVR itself
+            if not launch_has_game(pid, rows):
+                leftover.add(m.group(1))
+                continue
             name = steam_game_name(m.group(1))
             if name.startswith("Steam app "):              # a non-Steam shortcut: name it after its executable
                 name = name_from_command(line) or name
@@ -176,7 +207,7 @@ def sample_game() -> dict | None:
         except OSError:
             continue
         appid = _vdf_value(text, "RunningAppID")
-        if appid and appid != "0":
+        if appid and appid != "0" and appid not in leftover:   # Steam still counts a leftover launch as running
             return {"app": "steam", "title": steam_game_name(appid), "detail": {"appid": appid}}
     return None
 

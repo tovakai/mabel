@@ -35,6 +35,9 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 _LOCK = asyncio.Lock()
+_model_calls = 0                       # her model's in-flight background calls in this process
+DRAIN_WAIT = 300                       # how long a swap waits for those to finish
+SWAP_WAIT = 300                        # how long a model call waits for a swap to finish
 STRATA_STOP_WAIT = 120
 STRATA_START_WAIT = 900
 
@@ -188,6 +191,31 @@ def _reap(proc: subprocess.Popen) -> None:
         pass
 
 
+# ── Her model's background calls ────────────────────────────────────────
+
+@asynccontextmanager
+async def model_call():
+    """Wrap a background call to her model: it waits out a swap, and a swap waits for it."""
+    global _model_calls
+    deadline = time.monotonic() + SWAP_WAIT
+    while active() and time.monotonic() < deadline:
+        await asyncio.sleep(2)
+    _model_calls += 1
+    try:
+        yield
+    finally:
+        _model_calls -= 1
+
+
+async def _drain_model_calls() -> None:
+    """Stopping Strata mid-generation cuts that reply short, so let running calls finish."""
+    deadline = time.monotonic() + DRAIN_WAIT
+    while _model_calls and time.monotonic() < deadline:
+        await asyncio.sleep(1)
+    if _model_calls:
+        raise SwapError(f"her model is still busy ({_model_calls} call(s) running)")
+
+
 # ── Public API ──────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -226,6 +254,7 @@ async def _swapped(cfg: dict, service: str, svc: dict):
     _ledger("gpu.swap_started", service=service)
     proc = None
     try:
+        await _drain_model_calls()             # state is written first, so no new call slips in
         if was_running:
             res = await asyncio.to_thread(_strata, cfg, "stop", STRATA_STOP_WAIT)
             if not res.get("ok"):

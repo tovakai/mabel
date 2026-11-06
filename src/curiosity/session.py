@@ -83,6 +83,14 @@ class Paths:
 SELF_NOTES = "Projects/gitprojects/Mabel/"
 
 
+def _no_notes_line(kind) -> str:
+    """What the prompt says when no notes matched. Only a graph/surprise topic has a link of his
+    behind it; her own questions mustn't read as if they came from him."""
+    if kind in ("graph", "surprise"):      # topics found through links in his vault
+        return "- (nothing beyond the link itself)"
+    return "- (nothing: no note of his is behind this topic, so don't attribute it to him)"
+
+
 def self_curiosities(path: Path | None = None) -> list[dict]:
     """Standing questions about herself from identity/curiosities.md ("Topic: question" bullets)."""
     path = path or (_REPO / "identity" / "curiosities.md")
@@ -205,6 +213,8 @@ class Session:
             pool.append(Candidate(item["subject"], "open_question", question=item["question"], ref=item["id"],
                                   reasons=[f"something from Anthon's day ({Path(item['from_article']).stem})"
                                            if str(item.get("from_article", "")).startswith("journal/anthon/")
+                                           else f"something from the news ({Path(item['from_article']).stem})"
+                                           if str(item.get("from_article", "")).startswith("journal/news/")
                                            else f"your open question from {Path(item['from_article']).stem}"]))
         for item in self.backlog.eligible_spawned()[:2]:
             if item["name"].casefold() not in researched:
@@ -412,7 +422,7 @@ Your question: {choice['question']}
 Why you picked it: {choice['why']}
 
 From Anthon's notes (context for why it matters to him; not web evidence):
-{chr(10).join(vault_lines) or '- (nothing beyond the link itself)'}
+{chr(10).join(vault_lines) or _no_notes_line((choice.get('candidate') or {}).get('kind'))}
 
 Your own earlier research articles (context only; never cite them as evidence):
 {chr(10).join(previous) or '- (none yet)'}

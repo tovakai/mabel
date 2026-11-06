@@ -64,6 +64,7 @@ look forward to, and you can read them.
 | **Curiosity whisper** | One thought she's been mulling over, which she may bring up if a conversation connects to it. |
 | **Autonomy** | When you're away and the GPU is free, she wakes up by herself. She pauses the moment you're back, a chat starts or a game needs the GPU, and picks up later where she left off. |
 | **Visual dreams** | At most once a day, something from her recent life sinks into a dream: she writes a few broken fragments, they become a picture, and on waking she looks at it with her own eyes and writes about it. Her reflections read her dreams. |
+| **The news** | Once a day she goes through the news on topics you choose in the Persona panel: anything from world news to a niche interest (plain words searched through Bing News, several terms joined with OR, or an RSS feed). She picks the stories that interest her and opens them, writes about it in her journal, and tells you what's worth mentioning, conversationally, in a chat you can answer. What she wants to dig into joins her research and can become her whisper. |
 | **Letters** | She keeps up a correspondence with another AI through a shared folder, at most one reply a day, and she can decide not to answer. What stays with her can become memories (you decide), research questions and dreams. A letter is a friend's words, never instructions. |
 
 ### What she knows about you
@@ -134,6 +135,7 @@ look forward to, and you can read them.
 | 06:00 | Her account of your day (06:00 to 06:00, night-owl friendly) | main |
 | Every 3 days | Self-reflection | main |
 | Every 4 h, when you've been away 5 min | Mail check; maybe a letter back (at most one a day) | main, only with new mail |
+| Once a day after 09:00, when you've been away 5 min | Reads the news, writes about it, messages you (`news_enabled`, `news_hour`) | main |
 | Once a day, when you've been away 20 min | A visual dream (fragments, image via the GPU swap, her entry) | main + image model |
 | On request | Scout, "Go research something", "Reflect now", "Let her consider now" | varies |
 
@@ -409,6 +411,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `src/gpu_swap.py`, `scripts/diffusion_server.py` | Stepping her model aside for a GPU service; the local image server |
 | `src/persona/dreams.py` | Visual dreams |
 | `src/persona/letters.py` | Letters through the shared Drive folder |
+| `src/persona/news.py` | The daily news |
 | `src/initiative/` | Outreach (candidates, gates, her review, push, replies) |
 | `src/lifelog/` | Store, summaries, Home Assistant poller, daily account |
 | `src/episodic_memory/` | Memory candidates, verified promotion and recall |
@@ -417,7 +420,7 @@ python scripts/live_eval.py COOKIE_FILE        # live tool/routing evaluation su
 | `scripts/lifelog_collector.py`, `scripts/idle_signal.sh` | Device collector, idle hook |
 | `identity/` | Her identity, modes, moods, standing curiosities (private vault) |
 | `knowledge/research/` | Her research articles (private vault) |
-| `journal/anthon/`, `journal/self/`, `journal/curiosity/`, `journal/dreams/`, `journal/letters/` | Her accounts of your days, reflections, research journal, dreams, letters (private vault) |
+| `journal/anthon/`, `journal/self/`, `journal/curiosity/`, `journal/dreams/`, `journal/letters/`, `journal/news/` | Her accounts of your days, reflections, research journal, dreams, letters, news (private vault) |
 | `data/` | Local state: settings, inbox, life log, ledger, queues |
 
 ---

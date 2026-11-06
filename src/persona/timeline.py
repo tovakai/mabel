@@ -159,6 +159,17 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         pass
 
     try:
+        news = json.loads((data_dir / "persona" / "news.json").read_text())
+        for n in news.get("history") or []:
+            told = "and told you about it" if n.get("delivery") in ("sent", "in_app_only") else "and wrote about it"
+            items.append(_item(n.get("at"), "news", f"Read the news {told}", n.get("message", ""),
+                               n.get("session_id") or n.get("note")))
+        for r in news.get("errors") or []:
+            items.append(_item(r.get("at"), "failed", "Couldn't get through the news", r.get("error", "")))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    try:
         letters = json.loads((data_dir / "persona" / "letters.json").read_text())
         for r in letters.get("received") or []:
             items.append(_item(r.get("at"), "letter", "A letter from Tova arrived", r.get("name", "")))

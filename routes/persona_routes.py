@@ -43,6 +43,16 @@ class AutonomyBody(BaseModel):
     presence_entity: str | None = Field(default=None, max_length=120)
 
 
+class NewsTopicBody(BaseModel):
+    name: str
+    search: str = ""
+    feed: str = ""
+
+
+class NewsBody(BaseModel):
+    enabled: bool | None = None
+
+
 class OutreachBody(BaseModel):
     enabled: bool | None = None
     paused: bool | None = None
@@ -373,6 +383,49 @@ def setup_persona_routes() -> APIRouter:
         if not outreach.consider_now():
             raise HTTPException(409, "She's already thinking about it")
         return {"started": True}
+
+    # --- The daily news -----------------------------------------------------------------------
+
+    def _news_dir():
+        from src.constants import DATA_DIR
+        return Path(DATA_DIR)
+
+    @router.get("/news")
+    async def news_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona import news
+        from src.settings import get_setting
+        state = news.load_state(_news_dir())
+        return {"can_manage": _is_admin(request), "enabled": bool(get_setting("news_enabled", True)),
+                "running": news.running(), "hour": int(get_setting("news_hour", news.DEFAULT_HOUR)),
+                "topics": state["topics"], "last_error": state.get("last_error"),
+                "history": (state.get("history") or [])[-5:][::-1]}
+
+    @router.put("/news")
+    async def news_update(body: NewsBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.settings import load_settings, save_settings
+        current = dict(load_settings())
+        if body.enabled is not None:
+            current["news_enabled"] = body.enabled
+        save_settings(current)
+        return {"enabled": current.get("news_enabled", True)}
+
+    @router.post("/news/topics")
+    async def news_add_topic(body: NewsTopicBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona import news
+        try:
+            return news.add_topic(_news_dir(), body.name, feed=body.feed, search=body.search)
+        except news.NewsError as exc:
+            raise HTTPException(400, str(exc))
+
+    @router.delete("/news/topics/{topic_id}")
+    async def news_remove_topic(topic_id: str, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona import news
+        if not news.remove_topic(_news_dir(), topic_id):
+            raise HTTPException(404, "No such topic")
+        return {"removed": True}
 
     # --- Self-reflection ----------------------------------------------------------------------
 

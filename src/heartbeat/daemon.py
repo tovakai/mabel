@@ -29,6 +29,7 @@ RUN_TICK_S = 5
 _last: dict = {}
 _dream_task: asyncio.Task | None = None
 _letter_task: asyncio.Task | None = None
+_news_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -127,7 +128,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
                  yield_reason=None, dreaming=False)
     if not decision.allow:
         research_running = bool(runner.status().get("running"))
-        if not _maybe_check_letters(sig, now, research_running=research_running):
+        if not _maybe_check_letters(sig, now, research_running=research_running) \
+                and not _maybe_read_news(sig, now, research_running=research_running):
             _maybe_start_dream(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
@@ -165,6 +167,25 @@ def _maybe_check_letters(sig, now: datetime, *, research_running: bool) -> bool:
     _letter_task = asyncio.create_task(letters.check_mail(now=now))
     _letter_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] mail check failed: %s", t.exception()))
+    return True
+
+
+def _maybe_read_news(sig, now: datetime, *, research_running: bool) -> bool:
+    """Her daily read of the news (src/persona/news.py). True while busy with it."""
+    global _news_task
+    from src.persona import news
+    if _news_task and not _news_task.done():
+        return True
+    try:
+        from src.constants import DATA_DIR
+        if news.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return False
+    except Exception:
+        logger.debug("[heartbeat] news gate failed", exc_info=True)
+        return False
+    _news_task = asyncio.create_task(news.read_news(now=now))
+    _news_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] reading the news failed: %s", t.exception()))
     return True
 
 

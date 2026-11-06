@@ -271,3 +271,12 @@ def test_private_notes_only_with_an_explicit_allowance(tmp_path):
     assert all("Private" not in h["path"] for h in vault_context(db, "Secret Bar Downtown"))
     allowed = vault_context(db, "Secret Bar Downtown", allow=("Library/People (Private)/",))
     assert any("Private" in h["path"] for h in allowed)
+
+
+def test_no_notes_placeholder_only_mentions_a_link_for_link_topics():
+    from src.curiosity.session import _no_notes_line
+    for kind in ("graph", "surprise"):
+        assert "link itself" in _no_notes_line(kind)
+    for kind in ("self", "open_question", "spawned", "dottie", None):
+        line = _no_notes_line(kind)
+        assert "link itself" not in line and "don't attribute it to him" in line

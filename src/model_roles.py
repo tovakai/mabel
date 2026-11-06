@@ -283,10 +283,15 @@ async def call(role,messages,*,owner='',primary_route=None,**kwargs):
     async def operation(route):
         from src.llm_core import llm_call_async
         from src.model_role_runtime import _RUNNING
+        from src import gpu_swap
         token=_RUNNING.set(True)
         try:
-            return await llm_call_async(route.url,route.assignment.model,messages,headers=route.headers,
-                **{**kwargs,'timeout':timeout,'max_retries':1})
+            if role!='default':
+                return await llm_call_async(route.url,route.assignment.model,messages,headers=route.headers,
+                    **{**kwargs,'timeout':timeout,'max_retries':1})
+            async with gpu_swap.model_call():  # her main model shares the GPU with image models
+                return await llm_call_async(route.url,route.assignment.model,messages,headers=route.headers,
+                    **{**kwargs,'timeout':timeout,'max_retries':1})
         finally:
             _RUNNING.reset(token)
     result,_,_=await run_candidates(role,entries,operation,owner=owner,resolved_routes=resolved,

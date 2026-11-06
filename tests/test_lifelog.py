@@ -205,3 +205,41 @@ def test_day_moment_promotion_and_recall_are_verified_against_the_day_note(tmp_p
     gone = search_verified_episodes(queue, "did I beat the Hades boss?", db=None, vault_root=mabel,
                                     protected_roots=(tmp_path / "source",), policy=policy, approved=True)
     assert not (gone["results"]), "a moment edited out of the note isn't recalled"
+
+
+def _collector():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lifelog_collector_test", "scripts/lifelog_collector.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+REAPER = "/s/ubuntu12_32/reaper SteamLaunch AppId=3402616201 -- /s/common/SteamLinuxRuntime_4/_v2-entry-point --verb=waitforexitandrun -- /games/Some Game/SomeGameVR.exe"
+PLUMBING = [(10, 1, REAPER), (11, 10, "/s/common/SteamLinuxRuntime_4/pressure-vessel/libexec/steam-runtime-tools-0/srt-bwrap --args 41"),
+            (12, 11, "/usr/lib/pressure-vessel/from-host/libexec/steam-runtime-tools-0/pv-adverb --prefix=/usr")]
+
+
+def test_leftover_steamvr_dashboard_is_not_a_running_game():
+    mod = _collector()
+    rows = PLUMBING + [(13, 12, "/s/common/SteamVR/bin/linux64/vrdashboard")]
+    assert mod.launch_has_game(10, rows) is False
+
+
+def test_a_real_game_under_the_launch_counts():
+    mod = _collector()
+    assert mod.launch_has_game(10, PLUMBING + [(13, 12, "Z:\\games\\Some Game\\SomeGameVR.exe")]) is True
+    assert mod.launch_has_game(10, PLUMBING + [(13, 12, "/s/common/Proton/proton waitforexitandrun x.exe")]) is True
+    assert mod.launch_has_game(10, PLUMBING + [(13, 12, "/games/native/game.x86_64")]) is True
+
+
+def test_sample_game_ignores_a_leftover_launch_even_if_steam_says_it_runs(tmp_path, monkeypatch):
+    mod = _collector()
+    registry = tmp_path / "registry.vdf"
+    registry.write_text('"RunningAppID"\t\t"3402616201"\n')
+    monkeypatch.setattr(mod, "STEAM_REGISTRY", [str(registry)])
+    rows = PLUMBING + [(13, 12, "/s/common/SteamVR/bin/linux64/vrdashboard")]
+    monkeypatch.setattr(mod, "run", lambda cmd, *a, **k: "\n".join(f"{p} {pp} {args}" for p, pp, args in rows))
+    assert mod.sample_game() is None
+    registry.write_text('"RunningAppID"\t\t"777"\n')       # another app Steam reports is still believed
+    assert mod.sample_game()["detail"]["appid"] == "777"

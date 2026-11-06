@@ -27,7 +27,7 @@ KINDS = frozenset({'runtime.tool_discovery', 'runtime.agent_turn', 'prompt.compo
                    'outreach.reviewed', 'outreach.held', 'outreach.sent', 'outreach.dropped',
                    'outreach.responded',
                    'gpu.swap_started', 'gpu.swap_finished', 'gpu.swap_recovered', 'dream.dreamt',
-                   'letter.received', 'letter.sent'})
+                   'letter.received', 'letter.sent', 'news.read'})
 TOKEN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 _thread_lock = Lock()
 

@@ -33,8 +33,9 @@ const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['rese
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
-  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5' };
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5', news: '#6fb7e0' };
 let autonomyTimer = null;
+let news = null;
 let inboxTimer = null;
 const LOOP_LABELS = { archivist: 'Vault tidying (Archivist)', scout: 'Research leads (Scout)',
   dreamer: 'Things you keep talking about (Dreamer)', sentinel: 'Changes (Sentinel)',
@@ -348,6 +349,35 @@ function outreachCard() {
     <div style="font-size:12px">${now}</div>${last}${sent}${controls}`);
 }
 
+function newsCard() {
+  if (!news) return card('The news', '<div class="admin-toggle-sub">Loading…</div>');
+  const n = news;
+  const topics = (n.topics || []).map(t => `<div style="display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px">
+      <span style="flex:1"><strong>${esc(t.name)}</strong> <span style="opacity:0.6;font-size:11px">${esc(t.feed ? 'feed' : `search: ${t.search || t.name}`)}</span></span>
+      ${n.can_manage ? `<button type="button" class="theme-io-btn" data-persona-action="news-remove" data-topic="${esc(t.id)}" style="height:22px;font-size:11px">Remove</button>` : ''}</div>`).join('');
+  const add = n.can_manage ? `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <input id="persona-news-name" placeholder="Topic, e.g. Steam Deck" style="flex:1;min-width:120px;height:26px;font-size:12px">
+      <input id="persona-news-feed" placeholder="Optional: RSS feed URL" style="flex:1;min-width:120px;height:26px;font-size:12px">
+      <button type="button" class="theme-io-btn" data-persona-action="news-add" style="height:26px;font-size:12px">Add</button>
+      <button type="button" class="theme-io-btn" data-persona-action="news-toggle" style="height:26px;font-size:12px">${n.enabled ? 'Turn off' : 'Turn on'}</button></div>` : '';
+  const last = (n.history || [])[0];
+  const lastLine = last ? `<div class="admin-toggle-sub">Last read ${esc(when(last.at))}: ${esc(String(last.items))} headlines, ${esc(String(last.opened || 0))} opened in full.${(last.failed || []).length ? ` Couldn't read: ${esc(last.failed.join(', '))}.` : ''}</div>
+      <div class="admin-toggle-sub" style="margin:1px 0 0">“${esc(last.message || '')}”</div>` : '<div class="admin-toggle-sub">She hasn\'t read the news yet.</div>';
+  const err = n.last_error ? `<div class="admin-toggle-sub" style="color:var(--red)">Last try failed: ${esc(n.last_error.error || '')}</div>` : '';
+  return card('The news', `<div class="admin-toggle-sub" style="margin-top:0">Once a day (after ${esc(String(n.hour))}:00, when you've been away a few minutes) she goes through these, opens the stories that interest her, writes about them in her journal and tells you what's worth mentioning. What she wants to dig into joins her research.${n.enabled ? '' : ' <strong>Off.</strong>'}</div>
+    ${topics}${add}${lastLine}${err}`);
+}
+
+function renderNews() {
+  const slot = document.getElementById('persona-news');
+  if (slot) slot.innerHTML = newsCard();
+}
+
+async function loadNews() {
+  try { news = await api('/news'); } catch (err) { news = null; }
+  renderNews();
+}
+
 function renderOutreach() {
   const slot = document.getElementById('persona-outreach');
   if (slot) slot.innerHTML = outreachCard();
@@ -495,7 +525,7 @@ function render() {
   if (!data) { body.innerHTML = '<div class="admin-toggle-sub" style="padding:12px">Loading…</div>'; return; }
   const open = new Set([...body.querySelectorAll('details[open] textarea')].map(t => t.dataset.personaText));
   body.innerHTML = tabBar()
-    + `<div data-ptab="now">${statusCard()}<div id="persona-outreach">${outreachCard()}</div><div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
+    + `<div data-ptab="now">${statusCard()}<div id="persona-outreach">${outreachCard()}</div><div id="persona-news">${newsCard()}</div><div id="persona-autonomy">${autonomyCard()}</div>${whisperCard()}</div>`
     + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
     + `<div data-ptab="life"><div id="persona-life">${lifeCard()}</div></div>`
     + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
@@ -538,6 +568,21 @@ async function onClick(event) {
       openArticle = { file, html: mdToHtml(art.markdown) };
     } catch (err) { toast(`Persona: ${err.message}`); }
     renderResearch();
+    return;
+  }
+  if (['news-add', 'news-remove', 'news-toggle'].includes(target.dataset.personaAction)) {
+    const act = target.dataset.personaAction;
+    try {
+      if (act === 'news-remove') await api(`/news/topics/${encodeURIComponent(target.dataset.topic)}`, { method: 'DELETE' });
+      else if (act === 'news-toggle') await api('/news', { method: 'PUT', body: JSON.stringify({ enabled: !news.enabled }) });
+      else {
+        const name = (document.getElementById('persona-news-name')?.value || '').trim();
+        const feed = (document.getElementById('persona-news-feed')?.value || '').trim();
+        if (!name) { toast('Give the topic a name'); return; }
+        await api('/news/topics', { method: 'POST', body: JSON.stringify({ name, feed }) });
+      }
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    await loadNews();
     return;
   }
   if (['outreach-toggle', 'outreach-pause', 'outreach-consider'].includes(target.dataset.personaAction)) {
@@ -694,6 +739,7 @@ export function openPersonaModal() {
   loadAutonomy();
   loadTimeline();
   loadOutreach();
+  loadNews();
   loadLife();
   loadReflections();
 }
