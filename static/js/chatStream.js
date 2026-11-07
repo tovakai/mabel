@@ -4,7 +4,7 @@
 
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import Storage from './storage.js';
-import themeModule from './theme.js?v=20260911organsrain1';
+import themeModule from './theme.js?v=20261108zones1';
 import markdownModule from './markdown.js';
 import sessionModule from './sessions.js';
 import documentModule from './document.js?v=20260916docctx2';
@@ -213,7 +213,7 @@ export function handleUIControl(uiData) {
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'theme' || panel === 'themes') {
-        import('./theme.js?v=20260911organsrain1').then(function(mod) {
+        import('./theme.js?v=20261108zones1').then(function(mod) {
           var fn = mod.togglePopup || (mod.default && mod.default.togglePopup);
           var modal = document.getElementById('theme-modal');
           if (modal && modal.classList.contains('hidden') && fn) fn();

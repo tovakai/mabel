@@ -44,8 +44,19 @@ const FONT_MAP = {
   sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
   opendyslexic: "'OpenDyslexic', sans-serif",
+  inter: "'Inter', system-ui, sans-serif",
+  jetbrains: "'JetBrains Mono', monospace",
+  plex: "'IBM Plex Sans', sans-serif",
+  atkinson: "'Atkinson Hyperlegible', sans-serif",
+  nunito: "'Nunito', sans-serif",
+  quicksand: "'Quicksand', sans-serif",
+  spacegrotesk: "'Space Grotesk', sans-serif",
+  lora: "'Lora', serif",
+  merriweather: "'Merriweather', serif",
 };
 const DEFAULT_FONT = 'mono';
+const DEFAULT_CHAT_SCALE = 1;
+const DEFAULT_CHAT_LINE_HEIGHT = 1.5;
 
 // Compatibility for persisted themes that selected the omitted custom face.
 function normalizeFont(font) {
@@ -228,6 +239,10 @@ const ADV_KEYS = [
   { key: 'codeBg',             css: '--code-bg',           label: 'Code Bg',          group: 'Code Blocks' },
   { key: 'codeFg',             css: '--code-fg',           label: 'Code Text',        group: 'Code Blocks' },
   { key: 'toggleActive',       css: '--toggle-active',     label: 'Toggle On',        group: 'Controls' },
+  { key: 'sidebarText',        css: '--sidebar-fg',        label: 'Sidebar Text',     group: 'Text' },
+  { key: 'welcomeText',        css: '--welcome-fg',        label: 'Welcome Text',     group: 'Text' },
+  { key: 'userText',           css: '--user-msg-fg',       label: 'Your Messages',    group: 'Text' },
+  { key: 'aiText',             css: '--ai-msg-fg',         label: 'Her Messages',     group: 'Text' },
 ];
 
 function computeAdvancedDefaults(colors) {
@@ -248,6 +263,10 @@ function computeAdvancedDefaults(colors) {
     codeBg: syn.bg,
     codeFg: syn.fg,
     toggleActive: red,
+    sidebarText: colors.fg,
+    welcomeText: colors.fg,
+    userText: colors.fg,
+    aiText: colors.fg,
   };
 }
 
@@ -502,6 +521,17 @@ window.addEventListener('memory-visual-state', (event) => {
   if (synapseActive && !document.getElementById('synapse-canvas')) applyBgPattern('synapse');
 });
 
+/** Chat text: its own font ('' = same as the interface), size scale and line spacing. */
+export function applyChatTypography(chatFont, chatScale, chatLineHeight) {
+  const s = document.documentElement.style;
+  const f = chatFont && FONT_MAP[chatFont] ? FONT_MAP[chatFont]
+    : chatFont && _customFonts[chatFont] ? (_injectFontFace(chatFont, _customFonts[chatFont]), "'" + chatFont + "', sans-serif")
+    : '';
+  if (f) s.setProperty('--chat-font-family', f); else s.removeProperty('--chat-font-family');
+  s.setProperty('--chat-font-scale', String(Number(chatScale) || DEFAULT_CHAT_SCALE));
+  s.setProperty('--chat-line-height', String(Number(chatLineHeight) || DEFAULT_CHAT_LINE_HEIGHT));
+}
+
 export function getSaved() {
   const obj = Storage.getJSON(LS_KEY, null);
   // Migration: 'chatgpt' preset was renamed to 'gpt'
@@ -529,6 +559,9 @@ export function save(name, colors, opts) {
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
     if (opts.bgEffectSpeed !== undefined && opts.bgEffectSpeed !== 1) obj.bgEffectSpeed = opts.bgEffectSpeed;
     if (opts.frosted) obj.frosted = true;
+    if (opts.chatFont) obj.chatFont = opts.chatFont;
+    if (opts.chatScale && Number(opts.chatScale) !== DEFAULT_CHAT_SCALE) obj.chatScale = Number(opts.chatScale);
+    if (opts.chatLineHeight && Number(opts.chatLineHeight) !== DEFAULT_CHAT_LINE_HEIGHT) obj.chatLineHeight = Number(opts.chatLineHeight);
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -747,6 +780,12 @@ export function initThemeUI() {
     if (sp) opts.bgEffectSpeed = parseFloat(sp.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
+    const cf = document.getElementById('theme-chat-font-select');
+    const cs = document.getElementById('theme-chat-size-select');
+    const cl = document.getElementById('theme-chat-line-select');
+    if (cf) opts.chatFont = cf.value;
+    if (cs) opts.chatScale = cs.value;
+    if (cl) opts.chatLineHeight = cl.value;
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -1001,6 +1040,10 @@ export function initThemeUI() {
       applyColors(colors);
       syncPickers(colors);
       applyFontDensity(DEFAULT_FONT, DEFAULT_DENSITY);
+      applyChatTypography('', DEFAULT_CHAT_SCALE, DEFAULT_CHAT_LINE_HEIGHT);
+      [['theme-chat-font-select', ''], ['theme-chat-size-select', '1'], ['theme-chat-line-select', '1.5']].forEach(([id, v]) => {
+        const el = document.getElementById(id); if (el) el.value = v;
+      });
       applyBgPattern('none');
       const fs = document.getElementById('theme-font-select');
       const ds = document.getElementById('theme-density-select');
@@ -1168,6 +1211,21 @@ export function initThemeUI() {
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
   applyFontDensity(_initFont, _initDensity);
+  applyChatTypography(saved && saved.chatFont, saved && saved.chatScale, saved && saved.chatLineHeight);
+  for (const [id, value] of [['theme-chat-font-select', (saved && saved.chatFont) || ''],
+                             ['theme-chat-size-select', String((saved && saved.chatScale) || DEFAULT_CHAT_SCALE)],
+                             ['theme-chat-line-select', String((saved && saved.chatLineHeight) || DEFAULT_CHAT_LINE_HEIGHT)]]) {
+    const old = document.getElementById(id);
+    if (!old) continue;
+    const sel = old.cloneNode(true); old.parentNode.replaceChild(sel, old);
+    sel.value = value;
+    sel.addEventListener('change', () => {
+      applyChatTypography(document.getElementById('theme-chat-font-select')?.value,
+                          document.getElementById('theme-chat-size-select')?.value,
+                          document.getElementById('theme-chat-line-select')?.value);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
@@ -1465,6 +1523,13 @@ const _THEME_ZONE_MAP = {
   'adv-toggleActive':  '.mode-toggle-btn.active, .admin-switch input:checked + .admin-slider',
   'adv-accentPrimary': '.send-btn, .icon-rail-btn.active',
   'adv-accentError':   '.toast.error',
+  'adv-sidebarText':   '.sidebar',
+  'adv-welcomeText':   '#welcome-screen',
+  'adv-userText':      '.msg.msg-user .body',
+  'adv-aiText':        '.msg.msg-ai .body',
+  'theme-chat-font-select': '.msg .body',
+  'theme-chat-size-select': '.msg .body',
+  'theme-chat-line-select': '.msg .body',
 };
 
 function _showThemeZoneHighlight(selector) {

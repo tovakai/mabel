@@ -97,6 +97,14 @@ Bundled in `static/fonts/`:
 | [Fira Code](https://github.com/tonsky/FiraCode) 6.2 | SIL Open Font License 1.1 ([full notice](licenses/FiraCode-OFL-1.1.txt)) | Nikita Prokopov & contributors |
 | [Inter](https://github.com/rsms/inter) 4.1 (hinted WOFF2) | SIL Open Font License 1.1 ([full notice](licenses/Inter-OFL-1.1.txt)) | Rasmus Andersson |
 | [OpenDyslexic](https://opendyslexic.org/) (`fonts/OpenDyslexic-{Regular,Bold}.woff2`) | SIL Open Font License 1.1 ([`licenses/OpenDyslexic-OFL.txt`](licenses/OpenDyslexic-OFL.txt)) | Abbie Gonzalez |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (Fontsource 5.3.0, latin 400/700: `fonts/JetBrainsMono-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/JetBrainsMono-OFL-1.1.txt)) | JetBrains |
+| [IBM Plex Sans](https://github.com/IBM/plex) (Fontsource 5.3.0, latin 400/700: `fonts/IBMPlexSans-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/IBMPlexSans-OFL-1.1.txt)) | IBM |
+| [Atkinson Hyperlegible](https://www.brailleinstitute.org/freefont/) (Fontsource 5.3.0, latin 400/700: `fonts/AtkinsonHyperlegible-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/AtkinsonHyperlegible-OFL-1.1.txt)) | Braille Institute of America |
+| [Nunito](https://github.com/googlefonts/nunito) (Fontsource 5.3.0, latin 400/700: `fonts/Nunito-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/Nunito-OFL-1.1.txt)) | Vernon Adams, Cyreal, Jacques Le Bailly |
+| [Quicksand](https://github.com/andrew-paglinawan/QuicksandFamily) (Fontsource 5.3.0, latin 400/700: `fonts/Quicksand-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/Quicksand-OFL-1.1.txt)) | Andrew Paglinawan |
+| [Space Grotesk](https://github.com/floriankarsten/space-grotesk) (Fontsource 5.3.0, latin 400/700: `fonts/SpaceGrotesk-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/SpaceGrotesk-OFL-1.1.txt)) | Florian Karsten |
+| [Lora](https://github.com/cyrealtype/Lora-Cyrillic) (Fontsource 5.3.0, latin 400/700: `fonts/Lora-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/Lora-OFL-1.1.txt)) | Cyreal |
+| [Merriweather](https://github.com/SorkinType/Merriweather) (Fontsource 5.3.0, latin 400/700: `fonts/Merriweather-{400,700}.woff2`) | SIL Open Font License 1.1 ([full notice](licenses/Merriweather-OFL-1.1.txt)) | Sorkin Type |
 
 ## Python dependencies
 

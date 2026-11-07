@@ -8,7 +8,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js?v=20260916largetoolscroll1';
 import sessionModule from './sessions.js';
-import chatRenderer, { renderToolIcon, refreshAgentThreadFold } from './chatRenderer.js?v=20261103actionfold1';
+import chatRenderer, { renderToolIcon, refreshAgentThreadFold } from './chatRenderer.js?v=20261108mabelname2';
 import { classifyChatStreamError } from './chatErrors.js?v=20261103chaterrors1';
 import chatStream from './chatStream.js?v=20260914pdfstrip1';
 import { addAITTSButton } from './tts-ai.js';
@@ -1002,6 +1002,7 @@ import { invalidateSettings } from './appConfig.js';
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
   var _modelRouteLabel = chatRenderer.modelRouteLabel;
+  var _assistantName = chatRenderer.ASSISTANT_NAME || 'M.A.B.E.L.';
   var _sameModelName = chatRenderer.sameModelName;
   var _applyModelColor = chatRenderer.applyModelColor;
   function _setRoleModelLabel(roleEl, requestedModel, actualModel, opts) {
@@ -1018,9 +1019,12 @@ import { invalidateSettings } from './appConfig.js';
       opts.requestedEndpointId,
       opts.actualEndpointId,
     );
+    const modelLabel = label;
+    label = _assistantName;
     if (opts.suffix) label += ' (' + opts.suffix + ')';
     if (opts.characterName) label = opts.characterName;
     roleEl.textContent = label + ' ';
+    roleEl.title = modelLabel;
     _applyModelColor(roleEl, actual || req);
     const endpointChanged = Boolean(
       opts.requestedEndpointId
@@ -2813,7 +2817,7 @@ import { invalidateSettings } from './appConfig.js';
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _modelRouteLabel(modelName, modelName);
+      var roleLabel = _assistantName;
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -4524,7 +4528,7 @@ import { invalidateSettings } from './appConfig.js';
                     var _rEl = _fallbackHolder.querySelector('.role');
                     if (_rEl) {
                       var _tsS = _rEl.querySelector('.role-timestamp');
-                      _rEl.textContent = _ansM + ' (fallback) ';
+                      _rEl.textContent = _assistantName + ' (fallback: ' + _ansM + ') ';
                       _rEl.title = (json.selected_model || '') + ' failed' +
                         (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
                       _applyModelColor(_rEl, json.answered_by);
@@ -6367,7 +6371,7 @@ import { invalidateSettings } from './appConfig.js';
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
     const meta = sessionModule.getSessions().find(s => s.id === sessionId);
-    const roleLabel = _shortModel(meta && meta.model);
+    const roleLabel = _assistantName;
     const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) +
       ' <span class="role-timestamp">' + roleTs + '</span></div>' +
@@ -7621,7 +7625,7 @@ import { invalidateSettings } from './appConfig.js';
       holder.dataset.researchSession = sessionId;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const agentMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const agentModelLabel = _shortModel(agentMeta?.model);
+      const agentModelLabel = _assistantName;
       holder.innerHTML = `<div class="role">${uiModule.esc(agentModelLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), agentMeta?.model);
       box.appendChild(holder);

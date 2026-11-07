@@ -1065,6 +1065,9 @@ function shortEndpointLabel(label) {
   return value.length > 18 ? value.slice(0, 17) + '…' : value;
 }
 
+// Her name on every reply. The model that answered goes in the label's tooltip instead.
+export const ASSISTANT_NAME = 'M.A.B.E.L.';
+
 export function modelRouteLabel(
   requestedModel,
   actualModel,
@@ -2866,7 +2869,7 @@ export function displayMetrics(messageElement, metrics) {
           compactMsg.className = 'msg msg-ai';
           const compactRole = document.createElement('div');
           compactRole.className = 'role';
-          compactRole.textContent = 'M.A.B.E.L.';
+          compactRole.textContent = ASSISTANT_NAME;
           const compactBody = document.createElement('div');
           compactBody.className = 'body';
           compactBody.innerHTML = 'Compacting context <span class="compact-wave">▁▂▃▅▂▁</span>';
@@ -3566,7 +3569,7 @@ export function addMessage(role, content, modelName, metadata) {
     const isCompacted = metadata?.compacted;
     const replyModels = replyModelPair(modelName, metadata);
     const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'M.A.B.E.L.' : modelRouteLabel(
+    var _modelText = role === 'user' || isSlash || isCompacted ? '' : modelRouteLabel(
       replyModels.requestedModel,
       resolvedModel,
       replyModels.requestedEndpointLabel,
@@ -3574,6 +3577,7 @@ export function addMessage(role, content, modelName, metadata) {
       replyModels.requestedEndpointId,
       replyModels.actualEndpointId,
     );
+    var _roleText = role === 'user' ? 'You' : ASSISTANT_NAME;
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -3583,6 +3587,7 @@ export function addMessage(role, content, modelName, metadata) {
       _roleText = metadata.character_name;
     }
     r.textContent = _roleText;
+    if (_modelText) r.title = _modelText;
     if (role === 'user') {
       const pill = userModePill(metadata);
       if (pill) r.appendChild(pill);
@@ -3881,6 +3886,7 @@ export function addMessage(role, content, modelName, metadata) {
 }
 
 const chatRenderer = {
+  ASSISTANT_NAME,
   shortModel,
   sameModelName,
   modelRouteLabel,
