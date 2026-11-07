@@ -2610,6 +2610,104 @@ function initializeEventListeners() {
   })();
 
 
+  // Image prompt helpers: while Images is On, a slim bar above the input shows the tokens left
+  // for the chosen model (preset included) and, for tag-based models, tag suggestions.
+  // Tab or a click accepts a suggestion; arrows move; Esc closes.
+  (function initImagePromptHelpers() {
+    const input = document.getElementById('message');
+    const bar = input && input.closest('.chat-input-bar');
+    if (!bar) return;
+    const box = document.createElement('div');
+    box.id = 'image-prompt-helper';
+    box.style.cssText = 'display:none;font-size:11px;padding:2px 10px;opacity:0.85';
+    box.innerHTML = '<div id="image-prompt-tags" style="display:flex;flex-wrap:wrap;gap:4px"></div><div id="image-prompt-left"></div>';
+    bar.insertBefore(box, bar.firstChild);
+    const leftEl = box.querySelector('#image-prompt-left');
+    const tagsEl = box.querySelector('#image-prompt-tags');
+    let choices = [], fallback = '', suggestions = [], selected = 0, timer = null, sequence = 0;
+    fetch('/api/image-models/choices', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).then(data => {
+      if (data) { choices = data.choices || []; fallback = data.default || ''; }
+      refresh();
+    }).catch(() => {});
+    const state = () => { try { return loadToggleState(); } catch (e) { return {}; } };
+    const model = () => {
+      const saved = state().imageModel;
+      return choices.some(c => c.id === saved) ? saved : (fallback || (choices[0] && choices[0].id) || '');
+    };
+    const fragment = () => {
+      const text = input.value.slice(0, input.selectionStart ?? input.value.length);
+      return text.slice(text.lastIndexOf(',') + 1).trimStart();
+    };
+    function drawTags() {
+      tagsEl.textContent = '';
+      suggestions.forEach((t, i) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.textContent = t.tag;
+        chip.title = `${t.posts.toLocaleString()} posts`;
+        chip.style.cssText = `font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--border, #555);cursor:pointer;background:${i === selected ? 'var(--accent, #666)' : 'transparent'};color:inherit`;
+        chip.addEventListener('pointerdown', e => e.preventDefault());
+        chip.addEventListener('click', () => accept(t.tag));
+        tagsEl.appendChild(chip);
+      });
+    }
+    function clearTags() { suggestions = []; selected = 0; drawTags(); }
+    function accept(tag) {
+      const end = input.selectionStart ?? input.value.length;
+      const before = input.value.slice(0, end);
+      const start = before.lastIndexOf(',') + 1;
+      const lead = start ? ' ' : '';
+      const head = before.slice(0, start) + lead + tag + ', ';
+      input.value = head + input.value.slice(end);
+      input.selectionStart = input.selectionEnd = head.length;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      clearTags();
+      input.focus();
+    }
+    async function refresh() {
+      const on = state().imageMode === 'on' && choices.length > 0;
+      box.style.display = on ? '' : 'none';
+      if (!on) { clearTags(); return; }
+      const mine = ++sequence;
+      const id = model();
+      try {
+        const r = await fetch('/api/image-models/tokens', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: id, prompt: input.value }) });
+        const t = await r.json();
+        if (mine !== sequence) return;
+        leftEl.textContent = t.left >= 0 ? `${t.left} tokens left` : `${-t.left} tokens over: the end will be cut off`;
+        leftEl.style.color = t.left < 0 ? 'var(--red)' : '';
+      } catch (e) { leftEl.textContent = ''; }
+      const current = choices.find(c => c.id === id);
+      const q = fragment();
+      if (!current || !current.tags || q.length < 2) { clearTags(); return; }
+      try {
+        const r = await fetch(`/api/image-models/tags?q=${encodeURIComponent(q)}&limit=8`, { credentials: 'same-origin' });
+        const found = await r.json();
+        if (mine !== sequence) return;
+        suggestions = found.tags || []; selected = 0; drawTags();
+      } catch (e) { clearTags(); }
+    }
+    const later = () => { clearTimeout(timer); timer = setTimeout(refresh, 200); };
+    input.addEventListener('input', later);
+    input.addEventListener('keydown', (e) => {
+      if (!suggestions.length) return;
+      if (e.key === 'Tab') { e.preventDefault(); e.stopImmediatePropagation(); accept(suggestions[selected].tag); }
+      else if (e.key === 'Escape') { e.stopImmediatePropagation(); clearTags(); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        if (input.selectionStart !== input.value.length) return;
+        e.preventDefault();
+        selected = (selected + (e.key === 'ArrowRight' ? 1 : suggestions.length - 1)) % suggestions.length;
+        drawTags();
+      }
+    }, true);
+    ['overflow-image-mode-btn', 'overflow-image-model-btn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => setTimeout(refresh, 0));
+    });
+  })();
+
+
   // ── Compare indicator (sidebar only, no overflow) ──
   const compareIndicatorBtn = el('compare-indicator-btn');
   if (compareIndicatorBtn) {

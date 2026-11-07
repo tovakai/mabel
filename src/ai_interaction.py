@@ -1340,6 +1340,13 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         "size": size,
     }
 
+    if is_local_diffusion:
+        # A model's required tags go in here, whoever wrote the prompt (src/image_presets.py).
+        from src import image_presets
+        payload["prompt"], _negative = image_presets.apply(model_id, prompt)
+        if _negative:
+            payload["negative_prompt"] = _negative
+
     # GPT image models and local diffusion support quality; DALL-E does not
     if is_gpt_image or is_local_diffusion:
         if quality in ("low", "medium", "high", "auto"):

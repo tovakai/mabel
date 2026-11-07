@@ -1,4 +1,4 @@
-// Opt-in local Strata / Gyro-S control in the chat composer.
+// Opt-in local Strata / Gyro-S control in the sidebar.
 // Browser requests always go through Mabel, never directly to Strata.
 import { showError, showToast } from './ui.js?v=20260916largetoolscroll1';
 

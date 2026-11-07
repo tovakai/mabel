@@ -2074,6 +2074,7 @@ def setup_model_routes(model_discovery):
     def image_model_choices(request: Request) -> Dict[str, Any]:
         """Image models the chat menu can pick from: registered ids of enabled image endpoints
         (also the GPU-swapped ones, which are offline until a render starts) and the default."""
+        from src import image_presets
         from src.settings import get_setting
         owner = effective_user(request) or ""
         db = SessionLocal()
@@ -2091,10 +2092,25 @@ def setup_model_routes(model_discovery):
                     except (TypeError, ValueError):
                         pass
                 for mid in dict.fromkeys(ids):
-                    choices.append({"id": mid, "label": ep.name or mid})
+                    choices.append({"id": mid, "label": ep.name or mid,
+                                    "tags": bool(image_presets.preset_for(mid).get("tags"))})
         finally:
             db.close()
         return {"default": str(get_setting("image_model", "") or ""), "choices": choices}
+
+    @router.post("/image-models/tokens")
+    async def image_prompt_tokens(request: Request) -> Dict[str, Any]:
+        """Live budget for the composer: the prompt plus this model's preset, in CLIP tokens."""
+        from src import image_presets
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected a JSON object")
+        return image_presets.tokens(str(body.get("model") or ""), str(body.get("prompt") or "")[:4000])
+
+    @router.get("/image-models/tags")
+    def image_tag_search(q: str = "", limit: int = 8) -> Dict[str, Any]:
+        from src import image_presets
+        return {"tags": image_presets.search(q[:60], max(1, limit))}
 
     @router.get("/model-endpoints")
     def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:

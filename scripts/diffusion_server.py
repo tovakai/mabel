@@ -218,6 +218,7 @@ class ImageRequest(BaseModel):
     quality: str = "medium"
     response_format: str = "b64_json"
     request_id: str = ""
+    negative_prompt: str = ""
 
 
 def _parse_size(size: str) -> tuple[int, int]:
@@ -758,7 +759,8 @@ def generate_image(req: ImageRequest):
     try:
         for image_index in range(req.n):
             progress_offset = image_index * steps
-            negative_prompt = _default_negative_prompt() if _pipeline_accepts_arg("negative_prompt") else None
+            negative_prompt = ((req.negative_prompt or "").strip() or _default_negative_prompt()) \
+                if _pipeline_accepts_arg("negative_prompt") else None
             if _is_inpaint_pipe:
                 # Inpaint pipelines need an image + mask — create blank ones for txt2img
                 from PIL import Image as _PILGen

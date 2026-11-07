@@ -101,6 +101,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             size = "1024x1024"
 
         payload = {"model": model_id, "prompt": prompt, "n": 1, "size": size}
+        if "gpt-image" not in model_id.lower() and "dall-e" not in model_id.lower():
+            from src import image_presets
+            payload["prompt"], _negative = image_presets.apply(model_id, prompt)
+            if _negative:
+                payload["negative_prompt"] = _negative
         if is_gpt_image:
             payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
 

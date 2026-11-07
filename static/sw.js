@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v661-gyro-s-control';
+const CACHE_NAME = 'odysseus-v666-mabel-strata-sidebar';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -40,7 +40,7 @@ const KATEX_FONTS = [
 const PRECACHE = [
   '/',
   '/static/css/00-tokens.css?v=20260929csssplit',
-  '/static/css/01-agent-chat.css?v=20260929csssplit',
+  '/static/css/01-agent-chat.css?v=20261107welcomeicon',
   '/static/css/02-compare.css?v=20260929csssplit',
   '/static/css/03-agent-chat.css?v=20260929csssplit',
   '/static/css/04-memory.css?v=20260929csssplit',
@@ -61,7 +61,7 @@ const PRECACHE = [
   '/static/css/email-calendar-notes-tasks.css?v=20260929csssplit',
   '/static/css/cookbook-research-memory-settings.css?v=20260929csssplit',
   '/static/app.js?v=20260929csssplit',
-  '/static/js/strataControl.js?v=20261103gyro1',
+  '/static/js/strataControl.js?v=20261107sidebar',
   '/static/js/storage.js',
   '/static/js/appConfig.js',
   '/static/js/ui.js?v=20260916largetoolscroll1',
@@ -87,7 +87,7 @@ const PRECACHE = [
   '/static/js/contextMetrics.js',
   '/static/js/debugConsole.js?v=1',
   '/static/css/debugConsole.css?v=1',
-  '/static/css/strata-control.css?v=20261103gyro1',
+  '/static/css/strata-control.css?v=20261107sidebar',
   '/static/js/codeRunner.js?v=20260831richtexttools91',
   '/static/js/chatStream.js?v=20260914pdfstrip1',
   '/static/js/chat.js?v=20261028agentapprovals1',
@@ -190,10 +190,11 @@ const PRECACHE = [
   '/static/lib/katex/katex.min.js',
   '/static/lib/katex/katex.min.css',
   ...KATEX_FONTS,
-  '/static/manifest.json',
-  '/static/icons/icon-192.png',
-  '/static/icons/icon-512.png',
-  '/static/icons/icon-maskable-512.png',
+  '/static/manifest.json?v=mabel3',
+  '/static/icons/mabel-192.png',
+  '/static/icons/mabel-512.png',
+  '/static/icons/mabel-maskable-512.png',
+  '/static/icons/mabel-monochrome-512.png',
 ];
 
 // Lazily-imported panel modules (js/panels.js). Not in index.html by design;

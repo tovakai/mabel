@@ -1923,6 +1923,7 @@ body.bg-pattern-ascii-fireflies {
     @media (max-height: 500px) {
       #welcome-screen { top: 22%; }
       #welcome-screen .welcome-name { font-size: 1.4rem; margin-bottom: 0; }
+      .welcome-boat { display: none; }
       #welcome-screen .welcome-sub { opacity: 0; max-height: 0; margin: 0; }
       .incognito-btn { margin-top: 4px !important; }
     }
@@ -1953,10 +1954,10 @@ body.bg-pattern-ascii-fireflies {
       margin-bottom:10px;
     }
     .welcome-boat {
-      width: 1.8rem;
-      height: 1.8rem;
-      margin-right: 0.4rem;
-      vertical-align: -0.15em;
+      display: block;
+      width: 5rem;
+      height: 5rem;
+      margin: 0 auto 0.5rem;
       color: var(--brand-color, var(--red));
     }
     #welcome-screen .welcome-sub {
@@ -2043,6 +2044,7 @@ body.bg-pattern-ascii-fireflies {
         right: 36px;
       }
       #welcome-screen .welcome-name { font-size:1.8rem; }
+      .welcome-boat { width: 4rem; height: 4rem; }
       #welcome-screen .welcome-sub { font-size:0.8rem; }
       .chat-container.welcome-active .chat-input-bar {
         margin-bottom:0;

@@ -142,9 +142,10 @@ def test_distribution_paths_include_all_notices():
     assert manifest.get('icons')
     assert manifest['display'] == 'standalone'
     expected_icons = [
-        {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-        {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
-        {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        {"src": "icons/mabel-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+        {"src": "icons/mabel-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        {"src": "icons/mabel-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        {"src": "icons/mabel-monochrome-512.png", "sizes": "512x512", "type": "image/png", "purpose": "monochrome"},
     ]
     assert manifest['icons'] == expected_icons
     for icon in manifest['icons']:

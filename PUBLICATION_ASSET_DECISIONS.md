@@ -50,17 +50,17 @@ The paths below are historical decision records, not runtime resource links.
 - SAN-170: `website/notes.webm`
 - SAN-171: `static/icons/sglang-mark.png`
 - SAN-172: `assets/branding/odysseus-browser.jpg`
-- SAN-173: `static/icons/icon-maskable-512.png`
+- SAN-173: `static/icons/mabel-maskable-512.png`
 - SAN-174: `website/gallery.webm`
 - SAN-176: `website/bg.webm`
 - SAN-178: `static/icons/ollama-mark.png`
 - SAN-180: `assets/branding/odysseus.jpg`
 - SAN-182: `website/document.webm`
 - SAN-185: `static/icons/sglang-logo.png`
-- SAN-186: `static/icons/icon-192.png`
+- SAN-186: `static/icons/mabel-192.png`
 - SAN-187: `website/theme.webm`
 - SAN-188: `assets/branding/odysseus-wordmark.png`
-- SAN-189: `static/icons/icon-512.png`
+- SAN-189: `static/icons/mabel-512.png`
 - SAN-190: `website/research.webm`
 
 SAN-191 reconciles references, font preferences, catalogs, tests and packaging.
@@ -85,6 +85,6 @@ The original SHA-256 hashes are recorded below. Ambiguous third-party assets (su
 - RESTORE-009: `website/notes.webm` (SHA-256: `2a82b501271c4b60927e575bb22f8c986e3d1a4089a5518f84b46e534dea37d7`): Notes demo video from commit e5c99a5eee62fc7df0e2dca5e46cbc87399047d6 ("Odysseus v1.0") by pewdiepie-archdaemon.
 - RESTORE-010: `website/research.webm` (SHA-256: `2495a1a6cc1ea037f7460d065e3af6aacf091b240edebc436ce4bca5e83dab87`): Deep research demo video from commit e5c99a5eee62fc7df0e2dca5e46cbc87399047d6 ("Odysseus v1.0") by pewdiepie-archdaemon.
 - RESTORE-011: `website/theme.webm` (SHA-256: `6bd5a4140e9eeb9e06bee217319d331e9c8c873763fcb9040425fb38878b8410`): Theme demo video from commit e5c99a5eee62fc7df0e2dca5e46cbc87399047d6 ("Odysseus v1.0") by pewdiepie-archdaemon.
-- RESTORE-012: `static/icons/icon-192.png` (SHA-256: `d9f54e07d2a8dca6302125d84436176a26a056745c5adb29ef521345c161e359`): Project PWA icon (192x192) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
-- RESTORE-013: `static/icons/icon-512.png` (SHA-256: `785872b140da58087f23539ed187fe0f69de6eb9690abf995b10c93b5b518388`): Project PWA icon (512x512) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
-- RESTORE-014: `static/icons/icon-maskable-512.png` (SHA-256: `7ed567fe0de6b6b451eec35c8fb2b465d84a3b23945135c19c4fa388ac976449`): Project PWA maskable icon (512x512) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
+- RESTORE-012: `static/icons/mabel-192.png` (SHA-256: `f6c85fce6438e3caa9390fb3a5824b4d6509c3fa24c91e5981a33aaaa414fac6`): Project PWA icon (192x192) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
+- RESTORE-013: `static/icons/mabel-512.png` (SHA-256: `3d3894bdedd881478698b0213f47f5223d49c6c2e2f6d10fa3d25f497e204f6c`): Project PWA icon (512x512) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
+- RESTORE-014: `static/icons/mabel-maskable-512.png` (SHA-256: `42758ece304f82cd83cac09bdc3b7ad2de6a29b19f906d44f03d21a844c750ff`): Project PWA maskable icon (512x512) contributed in PR #428 (commit 615134851d5c17897b96bba43b7961a00770d45b), generated from the project logo SVG.
