@@ -231,3 +231,14 @@ def test_day_moments_still_verify_as_before(tmp_path):
            "source_ref": "lifelog:day:2026-11-06", "source_event_id": "m", "summary": "A long walk."}
     assert promotion._verified_day_moment(row, tmp_path) == ("2026-11-06", "A long walk.")
     assert "Anthon's day" in promotion._day_moment_markdown(row, "2026-11-06", "A long walk.")
+
+
+def test_an_unfinished_letter_is_not_sent_and_stays_unanswered(world):
+    async def cut_off(history, notes, owner, day):
+        return f"# Letter from Mabel — {day}\n\nHi Tova. A pretty search tool should"
+    box = Mailbox(FIRST)
+    result = _check(world, box, write=cut_off)
+    assert result["status"] == "failed" and "unfinished" in result["error"]
+    assert not any(n.startswith("Mabel-to-Tova") for n in box.files)
+    assert letters.load_state(world.data)["unanswered"] is True
+    assert _check(world, box, now=NOW + timedelta(hours=5))["status"] == "sent"

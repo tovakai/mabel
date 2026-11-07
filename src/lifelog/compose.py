@@ -65,6 +65,36 @@ def journal_for(day_start: datetime, day_end: datetime, *, vault: Path | None = 
     return notes
 
 
+def calendar_for(day_start: datetime, day_end: datetime, *, owner: str) -> list[dict]:
+    """His calendar events inside the day window, so "wandering the city" can become "at a gig"."""
+    try:
+        from core.database import CalendarCal, CalendarEvent, SessionLocal
+        db = SessionLocal()
+        try:
+            rows = (db.query(CalendarEvent).join(CalendarCal, CalendarEvent.calendar_id == CalendarCal.id)
+                    .filter(CalendarCal.owner == owner).all())
+            out = []
+            for e in rows:
+                if not e.dtstart or str(e.status or "").lower() == "cancelled":
+                    continue
+                start = e.dtstart
+                if start.tzinfo is None:           # stored naive: UTC when flagged, else local wall time
+                    start = start.replace(tzinfo=timezone.utc) if e.is_utc else start.astimezone()
+                if not day_start <= start < day_end:
+                    continue
+                local = start.astimezone()
+                out.append({"at": start, "when": "all day" if e.all_day else local.strftime("%H:%M"),
+                            "title": " ".join(str(e.summary or "an event").split())[:160],
+                            "location": " ".join(str(e.location or "").split())[:160],
+                            "description": " ".join(str(e.description or "").split())[:300]})
+            return sorted(out, key=lambda x: x["at"])
+        finally:
+            db.close()
+    except Exception:
+        logger.warning("[lifelog] calendar unavailable", exc_info=True)
+        return []
+
+
 def _facts(summary: dict) -> str:
     lines = []
     for d in summary["devices"]:
@@ -81,6 +111,10 @@ def _facts(summary: dict) -> str:
         lines.append(f"- place: {p['place']} {p['from']}-{p['to']}")
     if summary["steps"]:
         lines.append(f"- steps: {summary['steps']}")
+    for e in summary.get("calendar") or []:
+        where = f" at {e['location']}" if e.get("location") else ""
+        note = f" (his note: {e['description']})" if e.get("description") else ""
+        lines.append(f"- on his calendar: {e['when']} {e['title']}{where}{note}")
     for c in summary.get("messages") or []:
         when = c["from"] if c["from"] == c["to"] else f"{c['from']}-{c['to']}"
         previews = " | ".join(f"“{p}”" for p in c["previews"])
@@ -95,8 +129,9 @@ async def compose_day(day_start: datetime, *, store=None, ask=None, vault: Path 
     store = store or default_store()
     day_end = day_start + timedelta(days=1)
     summary = summarize(store.spans(day_start, day_end), start=day_start, end=day_end)
+    summary["calendar"] = calendar_for(day_start, day_end, owner=owner)
     journal = journal_for(day_start, day_end, vault=vault)
-    if not summary["span_count"] and not journal:
+    if not summary["span_count"] and not journal and not summary["calendar"]:
         return {"status": "nothing_recorded", "date": day_start.strftime("%Y-%m-%d")}
     facts = _facts(summary)
     notes = "\n\n".join(f"[{n['note']}]\n{n['text']}" for n in journal) or "(no journal entry)"
@@ -137,7 +172,7 @@ Zero to two things from his day you'd like to research for yourself (a game, a s
         pass
     text = await (ask or _ask_mabel)([{"role": "system", "content": system}, {"role": "user", "content": prompt}], owner)
     text = re.sub(r"(?s)<think>.*?</think>", "", str(text or "")).strip()
-    if "## Timeline" not in text:
+    if "## Timeline" not in text or "## Things I might look into" not in text:     # the last section: cut off?
         raise ValueError("the day summary came back without its structure")
     curious = [re.sub(r"^[-*\d.)\s]+", "", line).strip() for line in
                (re.search(r"## Things I'm curious about\s*(.*?)(?=\n## |\Z)", text, re.S) or [None, ""])[1].splitlines()
@@ -209,7 +244,7 @@ def _propose_research(article: str, items: list[dict]) -> int:
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:
     from src import model_roles
-    return await model_roles.call("default", messages, owner=owner, max_tokens=5000, temperature=0.7, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.7, timeout=300)
 
 
 def due_day(local_now: datetime, mabel_vault: Path = _REPO) -> datetime | None:

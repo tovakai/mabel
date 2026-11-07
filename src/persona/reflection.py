@@ -172,7 +172,7 @@ Zero to two ideas for a new mood or way of working you'd want (a name and one se
     messages = [{"role": "system", "content": identity or "You are Mabel."}, {"role": "user", "content": prompt}]
     text = await (ask or _ask_mabel)(messages, owner)
     text = re.sub(r"(?s)<think>.*?</think>", "", str(text or "")).strip()
-    if "## Questions about myself" not in text:
+    if "## Questions about myself" not in text or "## Ideas for who I could become" not in text:
         raise ValueError("the reflection came back without its structure")
     questions = _pairs(text, "Questions about myself")[:3]
     ideas = _pairs(text, "Ideas for who I could become")[:2]
@@ -251,7 +251,7 @@ def _maybe_whisper(questions: list[dict], article: str, data_dir: Path, now: dat
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:
     from src import model_roles
-    return await model_roles.call("default", messages, owner=owner, max_tokens=5000, temperature=0.8, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.8, timeout=300)
 
 
 async def maybe_reflect(owner: str = "tovakai") -> dict | None:

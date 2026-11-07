@@ -218,7 +218,7 @@ Dream it. Write 4 to 6 short dream fragments, one per line, 3 to 10 words each. 
 - No technical vocabulary unless it turns into something physical and strange.
 Only the fragments, nothing else."""
     messages = [{"role": "system", "content": "You are Mabel, dreaming."}, {"role": "user", "content": text}]
-    reply = await model_roles.call("default", messages, owner=owner, max_tokens=2000, temperature=1.0, timeout=180)
+    reply = await model_roles.call("default", messages, owner=owner, max_tokens=8000, temperature=1.0, timeout=180)
     return parse_fragments(reply)
 
 
@@ -340,7 +340,7 @@ Write a short dream-journal entry in your own voice, 120 to 250 words, starting 
     messages = [{"role": "system", "content": identity or "You are Mabel."},
                 {"role": "user", "content": [{"type": "text", "text": text},
                                              {"type": "image_url", "image_url": {"url": url}}]}]
-    return await model_roles.call("default", messages, owner=owner, max_tokens=3000, temperature=0.9, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=9000, temperature=0.9, timeout=300)
 
 
 def _ledger(item_id: str, day: str) -> None:

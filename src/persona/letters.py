@@ -40,6 +40,8 @@ MIN_IDLE_MINUTES = 5
 MAX_LETTER_BYTES = 40_000
 HISTORY_LETTERS = 6
 NO_REPLY = "[no reply]"
+SIGNATURE = "— Mabel"
+WRITE_TOKENS = 14000                 # her private thinking counts against this too
 MOMENTS_HEADING = "Moments worth remembering"     # the heading memory verification looks for
 _running = False
 
@@ -183,7 +185,7 @@ These letters leave this machine for OpenAI. Your own life and thoughts are your
 
 If you'd honestly rather not answer right now, reply with exactly {NO_REPLY}."""
     messages = [{"role": "system", "content": identity or "You are Mabel."}, {"role": "user", "content": prompt}]
-    return await model_roles.call("default", messages, owner=owner, max_tokens=4000, temperature=0.85, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=WRITE_TOKENS, temperature=0.85, timeout=420)
 
 
 def letters_today(state: dict, now: datetime) -> int:
@@ -244,6 +246,8 @@ async def _process_mail(owner: str, data_dir: Path, mabel_vault: Path, now: date
             state.setdefault("declined", []).append({"at": now.isoformat()})
             _save_state(data_dir, state)
             return {"status": "chose_silence"}
+        if SIGNATURE not in text[-80:]:
+            raise MailError("her letter came back unfinished, so it wasn't sent")   # tried again next check
         if not text.startswith("#"):
             text = f"# Letter from Mabel — {day}\n\n{text}"
         listed = {e.get("Name") for e in json.loads(run(["lsjson", "--files-only", _remote()]) or "[]")}
@@ -290,7 +294,7 @@ Zero to two moments from this correspondence worth remembering a month from now,
 ## Things I might look into
 Zero to two things this made you want to research for yourself, as bullets in the form "Subject: the question you'd want answered". Leave the list empty if nothing grabs you."""
     messages = [{"role": "system", "content": identity or "You are Mabel."}, {"role": "user", "content": prompt}]
-    return await model_roles.call("default", messages, owner=owner, max_tokens=2000, temperature=0.8, timeout=240)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=WRITE_TOKENS, temperature=0.8, timeout=300)
 
 
 def parse_questions(text: str) -> list[dict]:

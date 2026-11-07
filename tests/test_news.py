@@ -227,3 +227,23 @@ def test_gate_is_once_a_day_after_the_hour_when_shes_free(world, monkeypatch):
     monkeypatch.setattr(news, "_setting", lambda k, d: 25 if k == "news_hour" else d)
     state = news.load_state(world.data); state.pop("last_day"); state.pop("last_attempt"); news._save_state(world.data, state)
     assert "too early" in g()
+
+
+def test_the_message_prompt_talks_to_him_not_about_him():
+    import inspect
+    source = inspect.getsource(news._write)
+    assert 'sent straight to Anthon' in source and 'talking to him as "you"' in source
+    assert "What you'd actually tell Anthon" not in source
+
+
+def test_news_message_prompt_explains_before_reacting():
+    import inspect
+    assert "say what actually happened and who's involved before you react" in inspect.getsource(news._write)
+
+
+def test_research_messages_teach_first_with_the_facts_in_hand():
+    import inspect
+    from src.initiative import outreach
+    described = outreach._describe(1, {"source": "research", "title": "T", "found": "OLM animates Pokémon.", "take": "Mine."})
+    assert "What you found: OLM animates Pokémon." in described
+    assert "teach first" in inspect.getsource(outreach.review) and outreach.MESSAGE_LIMIT >= 900

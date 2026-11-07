@@ -34,7 +34,8 @@ COOLDOWN = timedelta(hours=48)          # after an unanswered message
 REVIEW_GAP = timedelta(hours=12)        # re-review an unchanged candidate set at most this often
 ARTICLE_WINDOW = timedelta(days=3)
 PATTERN_WINDOW = timedelta(days=7)
-MESSAGE_LIMIT = 500
+MESSAGE_LIMIT = 1600
+PUSH_LIMIT = 350                        # the notification shows the start; the chat has it all
 MAX_CANDIDATES = 6
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -142,8 +143,9 @@ def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO
                 continue
             text = art["path"].read_text(encoding="utf-8")
             take = " ".join(_section(text, "What I make of it").split())[:700]
+            found = " ".join(_section(text, "What I found").split())
             out.append({"key": f"article:{art['path'].name}", "source": "research", "subject": art.get("subject"),
-                        "title": art["path"].stem, "question": art.get("question"), "take": take,
+                        "title": art["path"].stem, "question": art.get("question"), "take": take, "found": found,
                         "open_questions": (art.get("open_questions") or [])[:3],
                         "article": f"knowledge/research/{art['path'].name}", "at": art.get("created")})
     except Exception:
@@ -261,6 +263,8 @@ def _describe(i: int, c: dict) -> str:
     bits = [f"{i}. [{c['source']}] {c.get('title')}"]
     if c.get("question"):
         bits.append(f"   You researched: {c['question']}")
+    if c.get("found"):
+        bits.append(f"   What you found: {c['found'][:1500]}")
     if c.get("take"):
         bits.append(f"   What stuck with you: {c['take'][:500]}")
     if c.get("observation"):
@@ -278,9 +282,11 @@ async def review(candidates: list[dict], *, owner: str, ask=None) -> dict:
         "expecting it. Here's what's been on your mind:\n\n" + listing + "\n\n"
         "Pick the one thing (if any) you'd genuinely like to share or ask him about, or decide not to "
         "message at all; staying quiet is a perfectly good choice when nothing feels worth interrupting him "
-        "for. If you write, make it a text from you: one to three sentences, casual, in your own voice, "
-        "about the thing itself (maybe a question for him). Don't apologise for texting, don't be needy, "
-        "and don't ask him to reply.\n"
+        "for. If you write, make it a text from you, casual and in your own voice. He hasn't read what you "
+        "read and may not know any of it, so teach first: say what you just learnt, who or what the people "
+        "and things you mention are, and enough background for it to make sense on its own. Then give your "
+        "take, and only then any question for him. A short paragraph or two is fine. Don't apologise for "
+        "texting, don't be needy, and don't ask him to reply.\n"
         'Reply with only JSON: {"send": true or false, "pick": <number>, "message": "...", "why": "one honest sentence"}')
     system = "You are Mabel."
     try:
@@ -310,7 +316,7 @@ async def review(candidates: list[dict], *, owner: str, ask=None) -> dict:
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:
     from src import model_roles
-    return await model_roles.call("default", messages, owner=owner, max_tokens=2500, temperature=0.8, timeout=180)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=8000, temperature=0.8, timeout=180)
 
 
 # --- send ----------------------------------------------------------------------------------
@@ -436,7 +442,9 @@ async def run_once(*, owner: str, now: datetime | None = None, force_review: boo
         "outreach_id": outreach_id, "outreach_source": cand["source"],
         "background_tool_result": _context_payload(outreach_id, cand, mabel_vault)})
     link = chat_link(session_id)
-    delivered = send_notification(decision["message"], link, outreach_id)
+    message = decision["message"]
+    preview = message if len(message) <= PUSH_LIMIT else message[:PUSH_LIMIT].rsplit(" ", 1)[0] + "…"
+    delivered = send_notification(preview, link, outreach_id)
     record["outreach"] = outreach_id
     data["reviews"].append(record)
     data["sent"].append({"id": outreach_id, "at": now.isoformat(), "key": cand["key"], "source": cand["source"],

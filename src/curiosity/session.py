@@ -262,7 +262,7 @@ class Session:
         if forced is not None:
             prompt += f"\n\n(Operator note: this run is restricted to item {forced}.)"
         reply = await _ask([{"role": "system", "content": _core_identity()}, {"role": "user", "content": prompt}],
-                           max_tokens=3000, owner=self.paths.owner)
+                           max_tokens=8000, owner=self.paths.owner)
         choice = _json_object(reply)
         pick = int(forced if forced is not None else choice.get("pick") or 0)
         picked = pool[pick - 1] if 1 <= pick <= len(pool) else None

@@ -243,3 +243,34 @@ def test_sample_game_ignores_a_leftover_launch_even_if_steam_says_it_runs(tmp_pa
     assert mod.sample_game() is None
     registry.write_text('"RunningAppID"\t\t"777"\n')       # another app Steam reports is still believed
     assert mod.sample_game()["detail"]["appid"] == "777"
+
+
+def _day_reply(end="## Things I might look into\n"):
+    return "# Anthon's day\n\n## Timeline\nA day.\n\n## What stood out to me\nStuff.\n\n" + end
+
+
+def test_calendar_events_reach_her_facts():
+    from src.lifelog.compose import _facts
+    from src.lifelog.summary import summarize
+    from datetime import datetime, timedelta, timezone
+    start = datetime(2026, 11, 6, 6, tzinfo=timezone.utc)
+    summary = summarize([], start=start, end=start + timedelta(days=1))
+    summary["calendar"] = [{"when": "22:00", "title": "A band", "location": "A club", "description": "Got invited."}]
+    assert "- on his calendar: 22:00 A band at A club (his note: Got invited.)" in _facts(summary)
+
+
+def test_a_cut_off_day_account_is_refused_so_it_gets_retried(tmp_path, monkeypatch):
+    import asyncio
+    import pytest
+    from datetime import datetime, timezone
+    from src.lifelog import compose
+    from src.lifelog.store import Store
+    monkeypatch.setattr(compose, "calendar_for", lambda *a, **k: [{"when": "9", "title": "x"}])
+
+    async def cut_off(messages, owner):
+        return "# Anthon's day\n\n## Timeline\nA day.\n\n## What stood out to me\nHe left home and"
+    day = datetime(2026, 11, 6, 6, tzinfo=timezone.utc)
+    with pytest.raises(ValueError):
+        asyncio.run(compose.compose_day(day, store=Store(tmp_path / "l.sqlite"), ask=cut_off, vault=tmp_path,
+                                        mabel_vault=tmp_path))
+    assert not list(tmp_path.joinpath("journal").glob("**/*.md")) if tmp_path.joinpath("journal").exists() else True

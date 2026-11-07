@@ -354,7 +354,7 @@ Zero to two things from today's news you'd genuinely like to research properly, 
 
 {MESSAGE_HEADING}
 
-What you'd actually tell Anthon about today's news, the way a friend who read the paper would over coffee: plain conversational prose, a few sentences up to a short paragraph or two, picking what's worth mentioning to him. No bullet points, no headings, no list of topics, and don't try to cover everything."""
+This part is sent straight to Anthon, word for word, so write the message itself, talking to him as "you", the way a friend who read the paper would over coffee. Never call him Anthon or "he" here, and don't describe what you're doing ("I'd tell you...", "the news today is..."): just say it. He hasn't read any of this, so for each thing you bring up, say what actually happened and who's involved before you react to it. Plain conversational prose, a few sentences up to a short paragraph or two, picking what's worth mentioning. No bullet points, no headings, no list of topics, and don't try to cover everything."""
     messages = [{"role": "system", "content": _identity()}, {"role": "user", "content": prompt}]
     return await model_roles.call("default", messages, owner=owner, max_tokens=WRITE_TOKENS, temperature=0.8, timeout=420)
 
