@@ -39,8 +39,22 @@ def _enabled() -> bool:
 
 
 def _headers() -> dict[str, str]:
-    key = os.getenv("STRATA_API_KEY", "").strip()
+    key = os.getenv("STRATA_API_KEY", "").strip() or _endpoint_key()
     return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def _endpoint_key() -> str:
+    """Without STRATA_API_KEY, use the key Mabel already stores for her Gyro-S endpoint,
+    so the control button and chat share one key."""
+    try:
+        from src.ai_interaction import _resolve_model
+        _url, _model, headers = _resolve_model(EXPECTED_MODEL)
+        if not str(_url).startswith(STRATA_URL):
+            return ""
+        return str((headers or {}).get("Authorization", "")).removeprefix("Bearer ").strip()
+    except Exception:
+        logger.debug("No stored Gyro-S endpoint key", exc_info=True)
+        return ""
 
 
 def _expected_model(model: object) -> bool:

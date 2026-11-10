@@ -1256,11 +1256,16 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "imap_starttls": settings.get("imap_starttls", True),
         "from_address": settings.get("email_from", os.environ.get("EMAIL_FROM", "")),
     }
-    if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
-        logger.warning("SMTP not configured — add an Email Account in Settings or set env vars")
-    if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
-        logger.warning("IMAP not configured — add an Email Account in Settings or set env vars")
+    # Polled several times a minute by the UI; say it once per process, not 180 times an hour.
+    for proto, ok in (("SMTP", cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]),
+                      ("IMAP", cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"])):
+        if not ok and proto not in _warned_unconfigured:
+            _warned_unconfigured.add(proto)
+            logger.warning("%s not configured — add an Email Account in Settings or set env vars", proto)
     return cfg
+
+
+_warned_unconfigured: set[str] = set()
 
 
 def _list_email_accounts() -> list[dict]:
