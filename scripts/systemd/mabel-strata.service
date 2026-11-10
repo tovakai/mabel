@@ -1,0 +1,17 @@
+[Unit]
+Description=Strata serving Gyro-S for Mabel (what mabelup's first half does)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+# Already serving (started by hand, by a dream's GPU swap or by game mode)? Then skip, not fail.
+ExecCondition=/bin/sh -c '! strata runtime status --profile launch-gyro-s-64k | grep -q ": ready"'
+# The same runtime config the GPU swap and game mode use (with the 1700 MiB VRAM reserve).
+ExecStart=%h/.local/bin/strata runtime start --profile launch-gyro-s-64k --wait 900
+ExecStop=%h/.local/bin/strata runtime stop --profile launch-gyro-s-64k
+TimeoutStartSec=960
+TimeoutStopSec=180
+
+[Install]
+WantedBy=default.target

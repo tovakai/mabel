@@ -1,0 +1,16 @@
+[Unit]
+Description=Mabel game mode: unload her model while a Steam game runs
+After=graphical-session.target
+
+[Service]
+WorkingDirectory=%h/Documents/mabel
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/Documents/mabel/.venv-arch/bin/python scripts/game_mode.py
+Restart=always
+RestartSec=30
+# It reloads Strata after a game, so Strata can end up in this service's process tree:
+# a restart of game mode must never take her model down with it.
+KillMode=process
+
+[Install]
+WantedBy=default.target

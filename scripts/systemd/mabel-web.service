@@ -1,0 +1,18 @@
+[Unit]
+Description=Mabel (the web app on 127.0.0.1:7000, what mabelup's second half does)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/Documents/mabel
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/Documents/mabel/.venv-arch/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7000
+Restart=on-failure
+RestartSec=10
+# A dream's GPU swap restarts Strata from inside the app, so Strata can end up in this
+# service's process tree: on stop/restart, only end the app itself, never her model.
+KillMode=process
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
