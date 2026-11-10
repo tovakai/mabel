@@ -205,6 +205,7 @@ async def check_mail(*, owner: str = "tovakai", data_dir: Path | None = None, ma
         result = await _process_mail(owner, data_dir, mabel_vault, now, run, write)
         if result.get("status") != "failed":
             result["taken_in"] = await _take_in(owner, data_dir, mabel_vault, now, think)
+        await _remember(result, owner, data_dir, mabel_vault, now)
         return result
     finally:
         _running = False
@@ -266,6 +267,24 @@ async def _process_mail(owner: str, data_dir: Path, mabel_vault: Path, now: date
         _save_state(data_dir, state)
         logger.warning("[letters] mail check failed: %s", exc)
         return {"status": "failed", "error": str(exc)[:300]}
+
+
+async def _remember(result: dict, owner: str, data_dir: Path, mabel_vault: Path, now: datetime) -> None:
+    """Her line about the mail, written from her own note and letter, never from Tova's text."""
+    taken = result.get("taken_in") or {}
+    sent = result.get("status") == "sent"
+    if taken.get("status") != "noted" and not sent:
+        return
+    parts = []
+    if taken.get("note"):
+        parts.append((mabel_vault / taken["note"]).read_text(encoding="utf-8"))
+    if sent:
+        parts.append("And the letter you wrote back:\n\n"
+                     + (_letters_dir(mabel_vault) / result["name"]).read_text(encoding="utf-8"))
+    fallback = "Tova wrote, and I wrote back." if sent else "Tova wrote; I haven't answered yet."
+    from . import recent
+    await recent.remember("Tova's letters", "told", "\n\n".join(parts), fallback=fallback, owner=owner,
+                          ref=result.get("name") or taken.get("note") or "", now=now, data_dir=data_dir)
 
 
 # ── taking it in: memories and curiosities ──────────────────────────────

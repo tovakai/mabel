@@ -83,6 +83,9 @@ class CandidateDraft:
             _bounded(getattr(self, label), label, max_length)
         if not isinstance(self.interpretation, str) or len(self.interpretation) > 1200:
             raise CandidateAdmissionError("Interpretation exceeds 1200 characters")
+        from src.provenance import can_be_fact, of_candidate
+        if not can_be_fact(of_candidate(origin=self.origin, source_kind=self.source_kind, source_ref=self.source_ref)):
+            raise CandidateAdmissionError("Her reflections and dreams can't become factual memories")
         return self
 
 

@@ -6,6 +6,7 @@ few minutes). Progress is the session's own checkpoint: which steps are done.
 from __future__ import annotations
 
 import asyncio
+import re
 import logging
 from datetime import datetime, timezone
 
@@ -41,7 +42,8 @@ def status() -> dict:
 
 async def _run(session: Session) -> None:
     try:
-        await session.run()
+        result = await session.run()
+        await _remember(session, result)
     except asyncio.CancelledError:
         # Yielded (Anthon came back, a game started, time cap): finished steps are
         # checkpointed, so a resume continues where it stopped.
@@ -51,6 +53,23 @@ async def _run(session: Session) -> None:
         _state["error"] = str(error)[:300]
     finally:
         _state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def _remember(session: Session, result: dict | None) -> None:
+    """Her line about the session, from her own take in the article (never twice for one article)."""
+    from src.persona import recent
+    article = (result or {}).get("article")
+    if not article or any(line.get("ref") == article for line in recent.load()):
+        return
+    choice = session.done("choice") or {}
+    try:
+        text = (session.paths.mabel_vault / article).read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    take = re.search(r"## What I make of it\s*(.*?)(?=\n## |\Z)", text, re.S)
+    excerpt = f"Your question: {choice.get('question', '')}\n\n" + (take.group(1) if take else "")
+    await recent.remember("a research session", "experienced", excerpt,
+                          fallback=f"I researched {choice.get('subject') or 'something'} on my own.", ref=article)
 
 
 def start(*, resume: str | None = None, autonomous: bool = False) -> dict:

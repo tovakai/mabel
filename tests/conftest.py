@@ -255,6 +255,41 @@ def _isolated_effects_store(_effects_store_root):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_recent_lines(tmp_path_factory):
+    """Her recent-lines hooks run inside the writers: keep them off the real model and data dir."""
+    from src.persona import recent
+
+    root = tmp_path_factory.mktemp("recent")
+    previous_path, previous_ask = recent._path, recent._ask
+
+    def _path(data_dir=None):
+        return previous_path(data_dir) if data_dir is not None else root / "recent.json"
+
+    async def _ask(*_args, **_kwargs):
+        raise RuntimeError("no model in tests")
+
+    from src.persona import pace
+    previous_pace = pace._path
+
+    def _pace_path(data_dir=None):
+        return previous_pace(data_dir) if data_dir is not None else root / "pace.json"
+
+    from src.heartbeat import why
+    previous_why = why._path
+
+    def _why_path(data_dir=None):
+        return previous_why(data_dir) if data_dir is not None else root / "why.jsonl"
+
+    recent._path, recent._ask, pace._path, why._path = _path, _ask, _pace_path, _why_path
+    why._last.clear()
+    why._last_pulse.clear()
+    try:
+        yield
+    finally:
+        recent._path, recent._ask, pace._path, why._path = previous_path, previous_ask, previous_pace, previous_why
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_module_stubs():
     """Fail the test that leaves a bare ``src.*``/``core.*`` stub behind.
 

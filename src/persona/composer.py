@@ -45,12 +45,14 @@ class Composition:
     fallback: str | None = None
     whisper_id: str | None = None
     gap_hours: float | None = None
+    recent: int = 0                 # her own recent lines available (served only when persona_recent=on)
+    recent_served: bool = False
 
     def summary(self) -> dict:
         return {"mode": self.mode, "function": self.function, "function_reason": self.function_reason,
                 "mood": self.mood, "mood_source": self.mood_source, "modules": self.refs,
                 "errors": self.errors, "overhead_chars": self.overhead_chars, "fallback": self.fallback,
-                "whisper": self.whisper_id,
+                "whisper": self.whisper_id, "recent": self.recent, "recent_served": self.recent_served,
                 "gap_hours": round(self.gap_hours, 1) if self.gap_hours is not None else None}
 
 
@@ -150,8 +152,26 @@ class Composer:
                 parts.append(("mood", f"Mood right now: {projection.mood} ({_first_sentence(mood.body)})"))
         if influence == "high":
             gap = projection.gap_hours
-            if gap is not None and gap >= GAP_NOTE_HOURS:
+            try:
+                from . import pace
+                slow = pace.note(session_id, now=local_now, max_minutes=GAP_NOTE_HOURS * 60)
+            except Exception:
+                slow = None
+            if slow:                               # he took a while; for her first messages this replaces the gap note
+                comp.refs.append("pace:slow_first" if slow["first"] else "pace:slow_reply")
+                parts.append(("pace", slow["text"]))
+            elif gap is not None and gap >= GAP_NOTE_HOURS:
                 parts.append(("gap", f"It's been {_gap_text(gap)} since your last conversation."))
+            try:
+                from . import recent
+                lines = recent.servable(local_now)
+                comp.recent = len(lines)
+                if lines and recent.mode() == "on":
+                    comp.recent_served = True
+                    comp.refs.append(f"recent:{len(lines)}")
+                    parts.append(("recent", recent.fragment(lines)))
+            except Exception:
+                pass
             try:
                 whisper = self.whispers.servable(local_now)
             except Exception:
@@ -170,6 +190,9 @@ class Composer:
             if name == "whisper":
                 comp.whisper_id = None
                 comp.refs = [r for r in comp.refs if not r.startswith("whisper:")]
+            if name == "recent":
+                comp.recent_served = False
+                comp.refs = [r for r in comp.refs if not r.startswith("recent:")]
         if dropped:
             comp.fallback = "dropped_for_budget:" + ",".join(dropped)
         fragment = "\n\n".join(t for _, t in parts)

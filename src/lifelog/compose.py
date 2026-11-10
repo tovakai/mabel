@@ -198,6 +198,10 @@ Zero to two things from his day you'd like to research for yourself (a game, a s
     path.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000) + "---\n" + text + "\n",
                     encoding="utf-8")
     rel = str(path.relative_to(mabel_vault))
+    from src.persona import recent
+    stood_out = re.search(r"## What stood out to me\s*(.*?)(?=\n## |\Z)", text, re.S)
+    await recent.remember(f"my account of Anthon's {label}", "observed", stood_out.group(1) if stood_out else "",
+                          fallback=f"I wrote up Anthon's {label}.", owner=owner, ref=rel)
     return {"status": "written", "date": meta["date"], "path": rel, "curious": curious,
             "memories": _propose_memories(meta["date"], meta["moments"], owner),
             "research": _propose_research(rel, meta["look_into"])}

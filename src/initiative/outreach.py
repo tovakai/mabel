@@ -490,9 +490,22 @@ async def loop(owner: str = "tovakai") -> None:
         try:
             last_result.clear()
             last_result.update(await run_once(owner=owner), at=_now().isoformat())
+            _why(last_result)
         except Exception:
             logger.warning("[outreach] pass failed", exc_info=True)
         await asyncio.sleep(LOOP_EVERY_S)
+
+
+def _why(result: dict) -> None:
+    """Keep what held her back from reaching out, or what came of it (src/heartbeat/why.py)."""
+    from src.heartbeat import why
+    status = str(result.get("status") or "")
+    if status == "gated":
+        why.record("outreach", result.get("reasons") or [])
+    elif status in ("sent", "in_app_only", "silence"):
+        why.done("outreach", status + (f": {result['why']}" if result.get("why") else ""))
+    else:                                        # nothing to share / already considered: clear, just quiet
+        why.record("outreach", [status.replace("_", " ")] if status else [])
 
 
 def consider_now(owner: str = "tovakai") -> bool:

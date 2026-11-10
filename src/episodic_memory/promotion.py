@@ -382,6 +382,11 @@ def promote_verified(queue: CandidateQueue, candidate_id: str, *, db, vault_root
                      policy: CapturePolicy, approved: bool = False) -> dict:
     """Promote whichever kind of candidate this is (conversation turn or day moment)."""
     row = queue.get(candidate_id)
+    if row is not None:
+        from src.provenance import can_be_fact, of_candidate
+        if not can_be_fact(of_candidate(origin=str(row.get("origin") or ""), source_kind=str(row.get("source_kind") or ""),
+                                        source_ref=str(row.get("source_ref") or ""))):
+            raise CandidateAdmissionError("Her reflections and dreams can't become factual memories")
     if row is not None and str(row.get("source_ref") or "").startswith(NOTE_SOURCE_PREFIXES):
         return promote_verified_day_moment(queue, candidate_id, vault_root=vault_root,
                                            protected_roots=protected_roots, policy=policy, approved=approved)

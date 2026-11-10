@@ -131,14 +131,35 @@ def pick_source(data_dir: Path, now: datetime, *, inbox=None, mabel_vault: Path 
     return newest(items or letters)
 
 
+EVIDENCE_CUT = 158                    # the Dreamer keeps 160 chars of each excerpt (src/subconscious/dreamer.py)
+
+
+def _is_tag_list(text: str) -> bool:
+    """An image prompt pasted into chat ("1girl, solo, pale skin, ..."): tags, not something said."""
+    pieces = [p.strip() for p in text.split(",") if p.strip()]
+    return len(pieces) >= 6 and sum(len(p.split()) for p in pieces) / len(pieces) <= 3.5
+
+
+def clean_evidence(text: str) -> str:
+    """A chat excerpt for dreaming: tag lists dropped, a mid-word cut trimmed back to whole words."""
+    text = " ".join(text.split())
+    if not text or _is_tag_list(text):
+        return ""
+    if len(text) >= EVIDENCE_CUT and not re.search(r"[.!?…\"”')]$", text):      # cut off by the Dreamer
+        end = max(text.rfind(". "), text.rfind("? "), text.rfind("! "))
+        text = text[:end + 1] if end >= len(text) // 2 else text.rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    return text
+
+
 def source_text(item: dict) -> str:
     """The note as it reads in the inbox (or the letter as she received it), raw."""
     if item.get("text"):
         return str(item["text"]).strip()
     parts = [f"Pattern: {item['title']}", item.get("summary") or ""]
     for ev in item.get("evidence") or []:
-        if ev.get("context"):
-            parts.append(str(ev["context"]))
+        context = clean_evidence(str(ev.get("context") or ""))
+        if context:
+            parts.append(context)
     curiosity = (item.get("payload") or {}).get("curiosity")
     if curiosity:
         parts.append(f"Curiosity: {curiosity}")
@@ -288,6 +309,9 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
             "first_line": _first_line(entry)}]
         _save_state(data_dir, state)
         _ledger(item["id"], day)
+        from . import recent
+        await recent.remember("a dream", "dreamt", entry, fallback=f"I dreamt, from {item['title']}.",
+                              owner=owner, ref=str(note.relative_to(mabel_vault)), now=now, data_dir=data_dir)
         return {"status": "dreamt", "note": str(note.relative_to(mabel_vault)), "style": style, "prompt": prompt,
                 "fragments": fragments, "image_url": result["image_url"]}
     finally:

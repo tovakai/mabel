@@ -228,3 +228,17 @@ def test_old_or_dreamt_letters_are_not_picked_again(world):
     old = (world.now - timedelta(days=9)).timestamp()
     os.utime(path, (old, old))
     assert dreams.pick_source(world.data, world.now, mabel_vault=world.vault)["title"] == "Local AI Systems"
+
+
+def test_dream_source_drops_tag_lists_and_cut_words():
+    from src.persona.dreams import clean_evidence, source_text
+    tags = "1cat, solo, orange fur, green eyes, sitting, windowsill, sunlight, curtains, potted plant, cozy room, "
+    assert clean_evidence(tags) == ""
+    cut = "Okay, maybe not exactly that, but weren't you the one who brought up the old lighthouse first, back then? Didn't it sound like you were worried about it? I try t"
+    assert clean_evidence(cut).endswith("worried about it?")
+    long_cut = "The lighthouse keeper never wrote down the storms, but rather, he wrote down " + "x " * 45 + "the last ti"
+    assert clean_evidence(long_cut).endswith("the last…")
+    assert clean_evidence("Imagine an autonomous node") == "Imagine an autonomous node"
+    assert clean_evidence("A whole sentence.") == "A whole sentence."
+    text = source_text({"title": "T", "evidence": [{"context": tags}, {"context": "I said hi."}]})
+    assert "1girl" not in text and "I said hi." in text

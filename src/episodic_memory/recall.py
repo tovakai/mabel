@@ -148,7 +148,8 @@ def search_verified_episodes(
                                 "lexical_score": score, "user_excerpt": (f"(from your letters with Tova, {date}) {moment}"
                                                  if candidate["source_ref"].startswith("letter:")
                                                  else f"(from his day, {date}) {moment}"),
-                                "assistant_excerpt": ""})
+                                "assistant_excerpt": "", "moment": moment,
+                                "provenance": "told" if candidate["source_ref"].startswith("letter:") else "observed"})
             continue
         if (
             candidate["source_kind"] != "conversation"

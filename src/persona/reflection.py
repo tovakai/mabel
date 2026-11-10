@@ -185,6 +185,9 @@ Zero to two ideas for a new mood or way of working you'd want (a name and one se
     path.write_text("---\n" + yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000) + "---\n" + text + "\n",
                     encoding="utf-8")
     rel = str(path.relative_to(mabel_vault))
+    from . import recent
+    await recent.remember("a self-reflection", "reflected", text, fallback="I sat down and reflected on myself.",
+                          owner=owner, ref=rel, now=now, data_dir=data_dir)
     return {"status": "written", "path": rel, "questions": len(questions), "ideas": len(ideas),
             "backlog_added": _to_backlog(rel, questions, data_dir), "proposals": _to_inbox(rel, ideas, data_dir),
             "whisper": _maybe_whisper(questions, rel, data_dir, now)}

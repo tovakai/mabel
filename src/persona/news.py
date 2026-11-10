@@ -477,6 +477,9 @@ async def read_news(*, owner: str = "tovakai", data_dir: Path | None = None, mab
             "failed": failed, "note": note, "message": message[:300], **curiosity, **result}]
         _save_state(data_dir, state)
         _ledger(day, result.get("delivery", ""))
+        from . import recent
+        await recent.remember("the news", "observed", journal, fallback="I read the news.", owner=owner,
+                              ref=note, now=now, data_dir=data_dir)
         return {"status": "read", "note": note, "items": count, "opened": len(opened), "failed": failed,
                 "message": message, **curiosity, **result}
     except Exception as exc:

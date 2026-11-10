@@ -19,7 +19,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from . import policy, power, signals
+from . import policy, power, signals, why
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     from src.curiosity import runner
     from src.persona import dreams
     now = now or datetime.now().astimezone()
+    why.pulse(now=now)
     if dreams.running():                          # her model is stepped aside for a dream; decide nothing
         _last.update(at=now.isoformat(), running=False, dreaming=True)
         return _last
@@ -108,12 +109,15 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         yielded = runner.status().get("yielded")
         if runner.session_finished(sid):
             _ledger("job.completed", sid, "completed", "article_written")
+            why.done("research", "article written", now=now)
             state["yielded"] = None
         elif yielded and yielded.get("session") == sid:
             state["yielded"] = {"session": sid, "reason": yielded["reason"], "at": now.isoformat()}
             _ledger("job.yielded", sid, "yielded", yielded["reason"])
+            why.done("research", "yielded: " + str(yielded["reason"]), now=now)
         else:
             _ledger("job.failed", sid, "failed", str(runner.status().get("error") or "unknown")[:60])
+            why.done("research", "failed: " + str(runner.status().get("error") or "unknown")[:60], now=now)
             state["yielded"] = None                # don't retry a failing session forever
         state["active_session"] = None
         power.release_sleep()
@@ -126,6 +130,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
                              research_running=bool(runner.status().get("running")))
     _last.update(at=now.isoformat(), signals=sig.as_dict(), decision=decision.as_dict(), running=False,
                  yield_reason=None, dreaming=False)
+    _record_why(sig, now, decision)
     if not decision.allow:
         research_running = bool(runner.status().get("running"))
         if not _maybe_check_letters(sig, now, research_running=research_running) \
@@ -151,6 +156,38 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     return _last
 
 
+def _record_why(sig, now: datetime, decision) -> None:
+    """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
+    from src.curiosity import runner
+    from src.persona import dreams, letters, news
+    from src.constants import DATA_DIR
+    why.record("research", [] if decision.allow else decision.reasons, now=now)
+    research_running = bool(runner.status().get("running"))
+    busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task}
+    for job, module in (("letters", letters), ("news", news), ("dream", dreams)):
+        if busy[job] and not busy[job].done():
+            continue                                   # running: its outcome is recorded when it ends
+        try:
+            reasons = module.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running)
+        except Exception as exc:
+            reasons = [f"gate failed: {type(exc).__name__}"]
+        if decision.allow:
+            reasons = list(reasons) + ["research gets to go first"]
+        why.record(job, reasons, now=now)
+
+
+def _outcome(job: str):
+    def callback(task):
+        if task.cancelled():
+            why.done(job, "cancelled")
+        elif task.exception():
+            why.done(job, f"failed: {task.exception()}")
+        else:
+            result = task.result() or {}
+            why.done(job, str(result.get("status") or "done") if isinstance(result, dict) else "done")
+    return callback
+
+
 def _maybe_check_letters(sig, now: datetime, *, research_running: bool) -> bool:
     """Check the mail from Tova when she'd otherwise be idle (src/persona/letters.py). True while busy with it."""
     global _letter_task
@@ -165,6 +202,7 @@ def _maybe_check_letters(sig, now: datetime, *, research_running: bool) -> bool:
         logger.debug("[heartbeat] letter gate failed", exc_info=True)
         return False
     _letter_task = asyncio.create_task(letters.check_mail(now=now))
+    _letter_task.add_done_callback(_outcome("letters"))
     _letter_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] mail check failed: %s", t.exception()))
     return True
@@ -184,6 +222,7 @@ def _maybe_read_news(sig, now: datetime, *, research_running: bool) -> bool:
         logger.debug("[heartbeat] news gate failed", exc_info=True)
         return False
     _news_task = asyncio.create_task(news.read_news(now=now))
+    _news_task.add_done_callback(_outcome("news"))
     _news_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] reading the news failed: %s", t.exception()))
     return True
@@ -203,6 +242,7 @@ def _maybe_start_dream(sig, now: datetime, *, research_running: bool) -> None:
         logger.debug("[heartbeat] dream gate failed", exc_info=True)
         return
     _dream_task = asyncio.create_task(dreams.maybe_dream(sig, now=now, research_running=research_running))
+    _dream_task.add_done_callback(_outcome("dream"))
     _dream_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] dream failed: %s", t.exception()))
 
@@ -210,6 +250,10 @@ def _maybe_start_dream(sig, now: datetime, *, research_running: bool) -> None:
 async def heartbeat() -> None:
     from src.curiosity import runner
     await asyncio.sleep(START_DELAY_S)
+    try:
+        await asyncio.to_thread(why.trim)
+    except Exception:
+        logger.debug("[heartbeat] why log not trimmed", exc_info=True)
     power.release_sleep()                         # a leftover inhibitor from a crash
     state = load_state()
     if state.get("active_session"):               # the server restarted mid-session: resume it later

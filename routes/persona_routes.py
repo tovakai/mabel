@@ -341,6 +341,17 @@ def setup_persona_routes() -> APIRouter:
         items = await asyncio.to_thread(build, data_dir=Path(DATA_DIR), days=max(1, min(int(days), 30)))
         return {"items": items}
 
+    @router.get("/why")
+    async def why_not(request: Request, job: str = "", hours: float = 24,
+                      _user: str = Depends(require_user)) -> dict[str, Any]:
+        """Roadmap 2.0 trace: what held each of her own activities back, and when they ran."""
+        import asyncio
+        from src.heartbeat import why
+        if job and job not in why.JOBS:
+            raise HTTPException(400, f"job must be one of {', '.join(why.JOBS)}")
+        report = await asyncio.to_thread(why.explain, job or None, hours=max(1.0, min(float(hours), 24 * 14)))
+        return {**report, "text": why.render(report)}
+
     # --- Reaching out (Phase 6) ---------------------------------------------------------------
 
     @router.get("/outreach")
