@@ -13,6 +13,7 @@ Set EMBEDDING_URL in .env, e.g.:
 """
 
 import os
+import time
 
 from src.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
 
@@ -29,7 +30,7 @@ if os.name == "nt":
 import logging
 import numpy as np
 import httpx
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.runtime_paths import get_app_root
 
@@ -114,12 +115,25 @@ class EmbeddingClient:
                 return self._post_embeddings([trimmed])
             raise
 
+    # After a failed connect, fail fast for a minute instead of paying the connect
+    # timeout again on every lookup (these calls can run on the event loop, so an
+    # offline embedding PC otherwise stalls the whole app for each memory search).
+    DOWN_FOR_S = 60.0
+    _down_until: Dict[str, float] = {}
+
     def _post_embeddings(self, batch: List[str]) -> List[List[float]]:
-        resp = self._client.post(
-            self.url,
-            headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-            json={"input": batch, "model": self.model},
-        )
+        if time.monotonic() < EmbeddingClient._down_until.get(self.url, 0.0):
+            raise httpx.ConnectError(f"embedding endpoint {self.url} unreachable (retrying shortly)")
+        try:
+            resp = self._client.post(
+                self.url,
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+                json={"input": batch, "model": self.model},
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            EmbeddingClient._down_until[self.url] = time.monotonic() + self.DOWN_FOR_S
+            raise
+        EmbeddingClient._down_until.pop(self.url, None)
         resp.raise_for_status()
         data = resp.json()
 
