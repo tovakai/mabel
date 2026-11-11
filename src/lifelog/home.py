@@ -41,6 +41,10 @@ def spans_from_states(states: list[dict], *, person: str, now: datetime | None =
     now = now or datetime.now(timezone.utc)
     trackers = [s["entity_id"].split(".", 1)[1] for s in states if s["entity_id"].startswith("device_tracker.")]
     phones = [t for t in trackers if "phone" in t] or trackers
+    # In a zone (home or a named place), the zone says where he is; the geocoded
+    # address would only add whichever neighbouring street address GPS jitter lands on.
+    person_state = next((str(s.get("state") or "") for s in states if s["entity_id"] == person), "")
+    in_zone = person_state not in ("", "unknown", "unavailable", "not_home")
     out = []
     for s in states:
         eid, state = s["entity_id"], str(s.get("state") or "")
@@ -73,6 +77,8 @@ def spans_from_states(states: list[dict], *, person: str, now: datetime | None =
                 out.append({"id": f"media:{eid}:{changed}", "kind": "media", "start": changed, "end": now.isoformat(),
                             "title": title, "app": "phone"})
             elif kind == "place":
+                if in_zone:
+                    break
                 out.append({"id": f"place:address:{changed}", "kind": "place", "start": changed, "end": now.isoformat(),
                             "title": re.sub(r"\s+", " ", state)[:200], "app": "geocoded"})
             else:

@@ -274,3 +274,16 @@ def test_a_cut_off_day_account_is_refused_so_it_gets_retried(tmp_path, monkeypat
         asyncio.run(compose.compose_day(day, store=Store(tmp_path / "l.sqlite"), ask=cut_off, vault=tmp_path,
                                         mabel_vault=tmp_path))
     assert not list(tmp_path.joinpath("journal").glob("**/*.md")) if tmp_path.joinpath("journal").exists() else True
+
+
+def test_no_street_address_while_in_a_zone():
+    from src.lifelog.home import spans_from_states
+    def states(person_state):
+        return [{"entity_id": "person.me", "state": person_state, "last_changed": "2026-11-11T10:00:00+00:00"},
+                {"entity_id": "device_tracker.my_phone", "state": person_state},
+                {"entity_id": "sensor.my_phone_geocoded_location", "state": "Example Street 38",
+                 "last_changed": "2026-11-11T10:00:00+00:00"}]
+    at_home = [s["title"] for s in spans_from_states(states("home"), person="person.me") if s["kind"] == "place"]
+    away = [s["title"] for s in spans_from_states(states("not_home"), person="person.me") if s["kind"] == "place"]
+    assert at_home == ["home"]
+    assert away == ["away from home", "Example Street 38"]
