@@ -22,8 +22,14 @@ class AuditRequirement:
     include_control_dirs: bool = False
 
 
+PASTE_MIN_CHARS = 2000      # a message this long *and* this many lines is pasted material,
+PASTE_MIN_LINES = 40        # not a request to audit files (real audit requests are a sentence or two)
+
+
 def audit_requirement(text):
     if not isinstance(text, str):
+        return None
+    if len(text) >= PASTE_MIN_CHARS and text.count('\n') >= PASTE_MIN_LINES:
         return None
     positive = re.sub(r"\b(?:do not|don't|never|without|no)\b[^.;,\n]*", '', text, flags=re.I)
     if re.search(r'\b(?:manage_notes|manage_documents|manage_calendar|manage_tasks)\b|\b(?:use|run|execute)\b[^.;\n]{0,30}\b(?:bash|python|host_shell)\b', positive, re.I):
@@ -36,8 +42,10 @@ def audit_requirement(text):
     if not re.search(r'\b(?:markdown|notes?|files?|library|collection|vault|folder|directory|frontmatter|metadata)\b|\w+/\w+', text, re.I):
         return None
     literal = re.search(r'\b([A-Za-z_][\w-]*)\s*:\s*(?:true|false)\b', text, re.I)
-    named = re.search(r'\b(?:property|field|key)\s+(?:(?:named|called)\s+)?[`"\']?([A-Za-z_][\w-]*)', text, re.I)
-    preceding = re.search(r'[`"\']?([A-Za-z_][\w-]*)[`"\']?\s+(?:property|field|key)\b', text, re.I)
+    # "property/field/key" as a word, not an ALL-CAPS heading ("FIELD NOTES" names a document).
+    keyword = r'(?:[Pp]roperty|[Ff]ield|[Kk]ey)'
+    named = re.search(r'\b' + keyword + r'\s+(?:(?:named|called)\s+)?[`"\']?([A-Za-z_][\w-]*)', text)
+    preceding = re.search(r'[`"\']?([A-Za-z_][\w-]*)[`"\']?\s+' + keyword + r'\b', text)
     stopwords = {'across', 'in', 'of', 'for', 'and', 'values', 'is', 'has', 'the', 'yaml', 'frontmatter'}
     key = literal[1] if literal else named[1] if named and named[1].casefold() not in stopwords else preceding[1] if preceding and preceding[1].casefold() not in stopwords else 'owned' if re.search(r'\bowned\b|\bownership\b', text, re.I) else None
     if not key:
