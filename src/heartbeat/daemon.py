@@ -28,6 +28,8 @@ IDLE_TICK_S = 60
 RUN_TICK_S = 5
 _last: dict = {}
 _dream_task: asyncio.Task | None = None
+_revisit_task: asyncio.Task | None = None
+_book_task: asyncio.Task | None = None
 _letter_task: asyncio.Task | None = None
 _news_task: asyncio.Task | None = None
 
@@ -136,6 +138,10 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         if not _maybe_check_letters(sig, now, research_running=research_running) \
                 and not _maybe_read_news(sig, now, research_running=research_running):
             _maybe_start_dream(sig, now, research_running=research_running)
+            if not (_dream_task and not _dream_task.done()):
+                _maybe_revisit(sig, now, research_running=research_running)
+            if not (_dream_task and not _dream_task.done()) and not (_revisit_task and not _revisit_task.done()):
+                _maybe_read_book(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
         try:
@@ -159,12 +165,12 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
 def _record_why(sig, now: datetime, decision) -> None:
     """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
     from src.curiosity import runner
-    from src.persona import dreams, letters, news
+    from src.persona import books, dreams, letters, news, revisit
     from src.constants import DATA_DIR
     why.record("research", [] if decision.allow else decision.reasons, now=now)
     research_running = bool(runner.status().get("running"))
-    busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task}
-    for job, module in (("letters", letters), ("news", news), ("dream", dreams)):
+    busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task}
+    for job, module in (("letters", letters), ("news", news), ("dream", dreams), ("revisit", revisit), ("book", books)):
         if busy[job] and not busy[job].done():
             continue                                   # running: its outcome is recorded when it ends
         try:
@@ -245,6 +251,44 @@ def _maybe_start_dream(sig, now: datetime, *, research_running: bool) -> None:
     _dream_task.add_done_callback(_outcome("dream"))
     _dream_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] dream failed: %s", t.exception()))
+
+
+def _maybe_revisit(sig, now: datetime, *, research_running: bool) -> None:
+    """Looking back at something of her own (src/persona/revisit.py), when she'd otherwise just be idle."""
+    global _revisit_task
+    from src.persona import revisit
+    if _revisit_task and not _revisit_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if revisit.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return
+    except Exception:
+        logger.debug("[heartbeat] revisit gate failed", exc_info=True)
+        return
+    _revisit_task = asyncio.create_task(revisit.maybe_revisit(sig, now=now, research_running=research_running))
+    _revisit_task.add_done_callback(_outcome("revisit"))
+    _revisit_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] looking back failed: %s", t.exception()))
+
+
+def _maybe_read_book(sig, now: datetime, *, research_running: bool) -> None:
+    """A session with the book she's reading (src/persona/books.py), when she'd otherwise just be idle."""
+    global _book_task
+    from src.persona import books
+    if _book_task and not _book_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if books.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return
+    except Exception:
+        logger.debug("[heartbeat] book gate failed", exc_info=True)
+        return
+    _book_task = asyncio.create_task(books.maybe_read(sig, now=now, research_running=research_running))
+    _book_task.add_done_callback(_outcome("book"))
+    _book_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] reading failed: %s", t.exception()))
 
 
 async def heartbeat() -> None:

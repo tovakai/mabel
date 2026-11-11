@@ -212,6 +212,26 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
     except Exception:
         pass
 
+    try:
+        import yaml
+        for path in sorted((Path(__file__).resolve().parents[2] / "journal" / "revisits").glob("*.md"))[-14:]:
+            text = path.read_text(encoding="utf-8")
+            meta = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")) if text.startswith("---\n") else {}
+            if meta and meta.get("written"):
+                items.append(_item(meta["written"], "revisit", f"Looked back at her {meta.get('source_kind', 'past')}",
+                                   str(meta.get("source") or ""), f"journal/revisits/{path.name}"))
+    except Exception:
+        pass
+
+    try:
+        state = json.loads((data_dir / "persona" / "books.json").read_text())
+        for b in [state.get("current")] + list(state.get("shelf") or []):
+            if b and b.get("last_read"):
+                items.append(_item(b["last_read"], "book", f"Read some of “{b.get('title', 'a book')}”",
+                                   f"session {b.get('sessions', '?')}" + (f", {b['status']}" if b.get("status") else ""), None))
+    except (OSError, ValueError, AttributeError):
+        pass
+
     items = [i for i in items if i and _when(i["at"]) >= since]
     items.sort(key=lambda i: i["at"], reverse=True)
     return items[:limit]
