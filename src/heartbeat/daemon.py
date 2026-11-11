@@ -32,6 +32,7 @@ _revisit_task: asyncio.Task | None = None
 _book_task: asyncio.Task | None = None
 _letter_task: asyncio.Task | None = None
 _news_task: asyncio.Task | None = None
+_music_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -141,6 +142,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
             if not (_dream_task and not _dream_task.done()):
                 _maybe_revisit(sig, now, research_running=research_running)
             if not (_dream_task and not _dream_task.done()) and not (_revisit_task and not _revisit_task.done()):
+                _maybe_compose(sig, now, research_running=research_running)
+            if not any(t and not t.done() for t in (_dream_task, _revisit_task, _music_task)):
                 _maybe_read_book(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
@@ -165,12 +168,14 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
 def _record_why(sig, now: datetime, decision) -> None:
     """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
     from src.curiosity import runner
-    from src.persona import books, dreams, letters, news, revisit
+    from src.persona import books, dreams, letters, music, news, revisit
     from src.constants import DATA_DIR
     why.record("research", [] if decision.allow else decision.reasons, now=now)
     research_running = bool(runner.status().get("running"))
-    busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task}
-    for job, module in (("letters", letters), ("news", news), ("dream", dreams), ("revisit", revisit), ("book", books)):
+    busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task,
+            "music": _music_task}
+    for job, module in (("letters", letters), ("news", news), ("dream", dreams), ("revisit", revisit),
+                        ("music", music), ("book", books)):
         if busy[job] and not busy[job].done():
             continue                                   # running: its outcome is recorded when it ends
         try:
@@ -270,6 +275,25 @@ def _maybe_revisit(sig, now: datetime, *, research_running: bool) -> None:
     _revisit_task.add_done_callback(_outcome("revisit"))
     _revisit_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] looking back failed: %s", t.exception()))
+
+
+def _maybe_compose(sig, now: datetime, *, research_running: bool) -> None:
+    """Offering her a piece of music to compose (src/persona/music.py), when she'd otherwise just be idle."""
+    global _music_task
+    from src.persona import music
+    if _music_task and not _music_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if music.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return
+    except Exception:
+        logger.debug("[heartbeat] music gate failed", exc_info=True)
+        return
+    _music_task = asyncio.create_task(music.maybe_compose(sig, now=now, research_running=research_running))
+    _music_task.add_done_callback(_outcome("music"))
+    _music_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] composing failed: %s", t.exception()))
 
 
 def _maybe_read_book(sig, now: datetime, *, research_running: bool) -> None:

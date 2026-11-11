@@ -35,7 +35,7 @@ const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['rese
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
-  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5', news: '#6fb7e0', revisit: '#b49bd8', book: '#d8a35a' };
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5', news: '#6fb7e0', revisit: '#b49bd8', book: '#d8a35a', music: '#5ad8a6' };
 let autonomyTimer = null;
 let news = null;
 let inboxTimer = null;
@@ -301,7 +301,8 @@ function timelineCard() {
       <span style="font-size:11px;opacity:0.6;min-width:38px;padding-top:1px">${esc(d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))}</span>
       <span style="width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;background:${TIMELINE_DOT[item.kind] || '#999'}"></span>
       <div style="min-width:0"><div style="font-size:12px">${esc(item.title)}</div>
-      ${item.detail ? `<div class="admin-toggle-sub" style="margin:1px 0 0">${esc(item.detail)}</div>` : ''}</div></div>`;
+      ${item.detail ? `<div class="admin-toggle-sub" style="margin:1px 0 0">${esc(item.detail)}</div>` : ''}
+      ${item.kind === 'music' && item.ref ? `<div style="display:flex;gap:6px;margin-top:3px"><button type="button" class="theme-io-btn" data-persona-action="music-play" data-file="${esc(String(item.ref).split('/').pop())}" style="height:22px;font-size:11px">Play on synth</button><button type="button" class="theme-io-btn" data-persona-action="music-stop" style="height:22px;font-size:11px">Stop</button></div>` : ''}</div></div>`;
   }
   return card('Timeline', `<div class="admin-toggle-sub" style="margin-top:0">What she's been up to over the last week, newest first.</div>${html}`);
 }
@@ -590,6 +591,14 @@ async function onClick(event) {
   }
   const target = event.target.closest('[data-persona-mode], [data-persona-save], [data-persona-action]');
   if (!target || target.disabled) return;
+  if (['music-play', 'music-stop'].includes(target.dataset.personaAction)) {
+    try {
+      if (target.dataset.personaAction === 'music-stop') { await api('/music/stop', { method: 'POST' }); return; }
+      const res = await api('/music/play', { method: 'POST', body: JSON.stringify({ file: target.dataset.file }) });
+      toast(`Playing on ${res.playing.port}`);
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    return;
+  }
   if (target.dataset.personaAction === 'open-article') {
     event.preventDefault();
     const file = target.dataset.file;

@@ -224,6 +224,14 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         pass
 
     try:
+        from . import music
+        for piece in music.pieces()[:14]:
+            items.append(_item(piece["written"], "music", f"Composed “{piece['title']}”", piece.get("about") or "",
+                               f"journal/music/{piece['midi']}"))
+    except Exception:
+        pass
+
+    try:
         state = json.loads((data_dir / "persona" / "books.json").read_text())
         for b in [state.get("current")] + list(state.get("shelf") or []):
             if b and b.get("last_read"):

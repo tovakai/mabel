@@ -63,6 +63,11 @@ class DecisionBody(BaseModel):
     reason: str = Field(default="", max_length=300)
 
 
+class PlayBody(BaseModel):
+    file: str = Field(default="", max_length=200)
+    port: str = Field(default="", max_length=100)
+
+
 class OverrideBody(BaseModel):
     mood: str
     hours: float = Field(default=2.0, gt=0, le=24)
@@ -496,6 +501,37 @@ def setup_persona_routes() -> APIRouter:
         if not path.is_file():
             raise HTTPException(404, "Unknown letter")
         return {"name": name, "markdown": _letter_body(path)}
+
+    @router.get("/music")
+    async def music_overview(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona import music
+        return {"pieces": music.pieces()[:50], "ports": music.ports(), "playing": music.player.now_playing,
+                "running": music.running(), "can_manage": _is_admin(request)}
+
+    @router.post("/music/play")
+    async def music_play(body: PlayBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona import music
+        pieces = music.pieces()
+        name = body.file or (pieces[0]["midi"] if pieces else "")
+        try:
+            path = music.midi_path(name)
+        except FileNotFoundError:
+            raise HTTPException(404, "Unknown piece")
+        port = music.pick_port(body.port or None)
+        if not port:
+            raise HTTPException(409, "No MIDI synth is connected")
+        try:
+            return {"playing": music.player.play(path, port)}
+        except (OSError, ValueError) as error:
+            raise HTTPException(500, f"Couldn't play it: {error}")
+
+    @router.post("/music/stop")
+    async def music_stop(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        _require_admin(request)
+        from src.persona import music
+        music.player.stop()
+        return {"stopped": True}
 
     @router.post("/reflect")
     async def reflect_now(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
