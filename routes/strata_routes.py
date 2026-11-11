@@ -43,18 +43,37 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
+_KEY_TTL_S = 300.0
+_key_cache: dict = {"key": "", "at": -_KEY_TTL_S}
+
+
 def _endpoint_key() -> str:
-    """Without STRATA_API_KEY, use the key Mabel already stores for her Gyro-S endpoint,
-    so the control button and chat share one key."""
+    """Without STRATA_API_KEY, use the key Mabel already stores for her Strata endpoint,
+    so the control button and chat share one key.
+
+    Read straight from the saved endpoint row: no network. (Resolving the model
+    instead probed every saved endpoint's model list on the event loop, so with
+    Dottie's PC offline each status poll froze the whole app for ~15 s.)"""
+    now = time.monotonic()
+    if now - _key_cache["at"] < _KEY_TTL_S:
+        return _key_cache["key"]
+    key = ""
     try:
-        from src.ai_interaction import _resolve_model
-        _url, _model, headers = _resolve_model(EXPECTED_MODEL)
-        if not str(_url).startswith(STRATA_URL):
-            return ""
-        return str((headers or {}).get("Authorization", "")).removeprefix("Bearer ").strip()
+        from src.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import resolve_endpoint_runtime, same_endpoint_base
+        db = SessionLocal()
+        try:
+            for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():  # noqa: E712
+                if same_endpoint_base(ep.base_url, f"{STRATA_URL}/v1"):
+                    key = str(resolve_endpoint_runtime(ep)[1] or "").strip()
+                    if key:
+                        break
+        finally:
+            db.close()
     except Exception:
-        logger.debug("No stored Gyro-S endpoint key", exc_info=True)
-        return ""
+        logger.debug("No stored Strata endpoint key", exc_info=True)
+    _key_cache.update(key=key, at=now)
+    return key
 
 
 def _expected_model(model: object) -> bool:

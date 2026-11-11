@@ -96,3 +96,41 @@ def test_offline_start_uses_pinned_preset_without_shell(monkeypatch):
     assert argv == ["/fake/strata", "launch", "--preset", "gyro-s-64k", "--no-tui", "--yes"]
     assert options["start_new_session"] is True
     assert "shell" not in options
+
+
+def test_endpoint_key_reads_the_saved_row_without_probing_endpoints(monkeypatch):
+    """With another saved endpoint offline, the status poll must not probe model lists
+    on the event loop (it froze the app ~15 s per poll on 2026-11-11)."""
+    import src.ai_interaction as ai
+    import src.database as database
+
+    class _Ep:
+        def __init__(self, base, key):
+            self.base_url, self.api_key, self.provider_auth_id = base, key, None
+
+    rows = [_Ep("http://100.64.0.9:50052/v1", "other"), _Ep("http://127.0.0.1:8080/v1", "strata-key")]
+
+    class _Query:
+        def filter(self, *a):
+            return self
+
+        def all(self):
+            return rows
+
+    class _Db:
+        def query(self, _model):
+            return _Query()
+
+        def close(self):
+            pass
+
+    def _no_probe(*a, **k):
+        raise AssertionError("must not resolve the model by probing endpoints")
+
+    monkeypatch.setattr(database, "SessionLocal", lambda: _Db())
+    monkeypatch.setattr(ai, "_resolve_model", _no_probe)
+    monkeypatch.setattr(strata, "_key_cache", {"key": "", "at": -1e9})
+    monkeypatch.delenv("STRATA_API_KEY", raising=False)
+    assert strata._headers() == {"Authorization": "Bearer strata-key"}
+    rows.clear()                                    # cached: no second DB read either
+    assert strata._endpoint_key() == "strata-key"
