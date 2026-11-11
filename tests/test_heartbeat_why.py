@@ -45,3 +45,16 @@ def test_trim_keeps_two_weeks(tmp_path):
     why.record("news", ["new"], now=_at(0), data_dir=tmp_path)
     why.trim(now=_at(1), data_dir=tmp_path)
     assert [e["reasons"] for e in why.load(since=T0 - timedelta(days=30), data_dir=tmp_path)] == [["new"]]
+
+
+def test_counter_only_changes_read_as_one_span(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from src.heartbeat import why
+    why._last.clear()
+    t0 = datetime(2026, 11, 11, 0, 5, tzinfo=timezone.utc)
+    for i in range(3):
+        why.record("research", [f"last session started {5 + i} min ago (gap 3 h)"], now=t0 + timedelta(minutes=i), data_dir=tmp_path)
+    why.record("research", ["already 2 sessions today"], now=t0 + timedelta(minutes=3), data_dir=tmp_path)
+    periods = why.explain("research", hours=1, now=t0 + timedelta(minutes=10), data_dir=tmp_path)["jobs"]["research"]
+    assert [p["reasons"] for p in periods] == [["last session started 7 min ago (gap 3 h)"], ["already 2 sessions today"]]
+    assert periods[0]["to"] == (t0 + timedelta(minutes=3)).isoformat(timespec="seconds")

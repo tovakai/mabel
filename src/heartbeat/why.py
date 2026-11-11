@@ -14,6 +14,7 @@ CLI: ``python -m src.heartbeat.why [job] [hours]``.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import sys
 import threading
@@ -140,8 +141,26 @@ def explain(job: str | None = None, *, hours: float = 24, now: datetime | None =
         if current:
             current["from"] = max(datetime.fromisoformat(current["from"]), since).isoformat(timespec="seconds")
             periods.append(current)
-        jobs[name] = sorted(periods, key=lambda p: p.get("from") or p.get("at"))
+        jobs[name] = _merge_counters(sorted(periods, key=lambda p: datetime.fromisoformat(p.get("from") or p.get("at"))))
     return {"since": since.isoformat(timespec="seconds"), "asleep": asleep, "jobs": jobs}
+
+
+def _shape(reasons: list[str]) -> tuple:
+    return tuple(re.sub(r"\d+", "#", r) for r in reasons)
+
+
+def _merge_counters(periods: list[dict]) -> list[dict]:
+    """One span for "unanswered (38 h)", "(39 h)", …: same reasons apart from their numbers.
+    The merged span keeps the latest wording, so the counter reads as of its end."""
+    out: list[dict] = []
+    for p in periods:
+        prev = out[-1] if out else None
+        if (prev and "ran" not in p and "ran" not in prev and prev.get("to") == p["from"]
+                and _shape(prev["reasons"]) == _shape(p["reasons"])):
+            prev.update(to=p["to"], reasons=p["reasons"])
+        else:
+            out.append(dict(p))
+    return out
 
 
 def _hm(value: str | None) -> str:
