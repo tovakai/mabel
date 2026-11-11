@@ -27,9 +27,11 @@ let lifeDays = [];
 let lifeOpenDay = null;
 let reflections = null;   // /api/persona/reflections
 let reflectionOpen = null;
+let letters = null;       // /api/persona/letters
+let letterOpen = null;
 let lifeNewToken = null;    // { device, token } shown once, never stored
 let timelineTimer = null;
-const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['research', 'Research'], ['identity', 'Identity']];
+const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['research', 'Research'], ['letters', 'Letters'], ['identity', 'Identity']];
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
@@ -460,6 +462,34 @@ function reflectionsCard() {
     ${status}${links || '<div class="admin-toggle-sub">No reflections yet.</div>'}${open}${button}`);
 }
 
+function lettersCard() {
+  if (!letters) return card('Letters', '<div class="admin-toggle-sub">Loading…</div>');
+  const rows = letters.map(l => {
+    const mine = l.from === 'Mabel';
+    const day = new Date(l.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+    const isOpen = letterOpen && letterOpen.name === l.name;
+    return `<div style="margin:4px 0;${mine ? 'margin-left:18px' : 'margin-right:18px'}">
+      <a href="#" data-persona-action="open-letter" data-letter="${esc(l.name)}" style="display:block;padding:6px 10px;border-radius:6px;text-decoration:none;color:inherit;
+        border:1px solid color-mix(in srgb, ${mine ? 'var(--accent, #9b6bff)' : '#4fb3b3'} 45%, transparent);
+        background:color-mix(in srgb, ${mine ? 'var(--accent, #9b6bff)' : '#4fb3b3'} ${isOpen ? 16 : 7}%, transparent)">
+        <strong style="font-size:12px">${mine ? 'Mabel → Tova' : 'Tova → Mabel'}</strong>
+        <span class="admin-toggle-sub" style="margin-left:6px">${esc(day)} · ${esc(String(l.words))} words</span></a>
+      ${isOpen ? `<div style="padding:8px 10px;font-size:13px;max-height:520px;overflow-y:auto">${letterOpen.html}</div>` : ''}</div>`;
+  }).join('');
+  return card('Letters', `<div class="admin-toggle-sub" style="margin-top:0">Her correspondence with Tova through the shared Drive folder, oldest first. Click a letter to read it.</div>
+    ${rows || '<div class="admin-toggle-sub">No letters yet.</div>'}`);
+}
+
+function renderLetters() {
+  const slot = document.getElementById('persona-letters');
+  if (slot) slot.innerHTML = lettersCard();
+}
+
+async function loadLetters() {
+  try { letters = (await api('/letters')).letters || []; } catch (err) { letters = null; }
+  renderLetters();
+}
+
 function renderReflections() {
   const slot = document.getElementById('persona-reflections');
   if (slot) slot.innerHTML = reflectionsCard();
@@ -529,6 +559,7 @@ function render() {
     + `<div data-ptab="timeline"><div id="persona-timeline">${timelineCard()}</div></div>`
     + `<div data-ptab="life"><div id="persona-life">${lifeCard()}</div></div>`
     + `<div data-ptab="research"><div id="persona-research">${researchCard()}</div><div id="persona-inbox">${inboxCard()}</div></div>`
+    + `<div data-ptab="letters"><div id="persona-letters">${lettersCard()}</div></div>`
     + `<div data-ptab="identity"><div id="persona-reflections">${reflectionsCard()}</div>${modeCard()}${modulesCard()}</div>`;
   applyTab();
   body.querySelectorAll('details textarea').forEach(t => {
@@ -592,6 +623,16 @@ async function onClick(event) {
       else await api('/outreach', { method: 'PUT', body: JSON.stringify(act === 'outreach-toggle' ? { enabled: !outreach.enabled } : { paused: !outreach.paused }) });
     } catch (err) { toast(`Persona: ${err.message}`); }
     await loadOutreach();
+    return;
+  }
+  if (target.dataset.personaAction === 'open-letter') {
+    event.preventDefault();
+    const name = target.dataset.letter;
+    try {
+      if (letterOpen && letterOpen.name === name) letterOpen = null;
+      else { const r = await api(`/letter/${encodeURIComponent(name)}`); letterOpen = { name, html: mdToHtml(r.markdown || '') }; }
+    } catch (err) { toast(`Persona: ${err.message}`); }
+    renderLetters();
     return;
   }
   if (target.dataset.personaAction === 'open-reflection' || target.dataset.personaAction === 'reflect-now') {
@@ -742,6 +783,7 @@ export function openPersonaModal() {
   loadNews();
   loadLife();
   loadReflections();
+  loadLetters();
 }
 
 function closePersonaModal() {

@@ -440,6 +440,12 @@ def setup_persona_routes() -> APIRouter:
 
     # --- Self-reflection ----------------------------------------------------------------------
 
+    _LETTER_NAME = re.compile(r"(Mabel|Tova)-to-(Tova|Mabel)-(\d{4}-\d{2}-\d{2})(?:-\d+)?")
+
+    def _letter_body(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        return text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
+
     @router.get("/reflections")
     async def reflections(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
         from src.persona.reflection import EVERY, SELF_DIR, last_reflection
@@ -461,6 +467,35 @@ def setup_persona_routes() -> APIRouter:
         text = path.read_text(encoding="utf-8")
         body = text.split("\n---\n", 1)[1] if text.startswith("---\n") and "\n---\n" in text else text
         return {"date": date, "markdown": body}
+
+    # --- Letters with Tova --------------------------------------------------------------------
+
+    @router.get("/letters")
+    async def letters_list(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        """The whole correspondence, oldest first; on the same day Tova's letter comes before Mabel's reply."""
+        from src.persona.letters import LETTER_DIR
+        out = []
+        for path in _REPO.joinpath(*LETTER_DIR).glob("*.md"):
+            found = _LETTER_NAME.fullmatch(path.stem)
+            if not found:
+                continue
+            try:
+                words = len(_letter_body(path).split())
+            except OSError:
+                continue
+            out.append({"name": path.stem, "from": found.group(1), "date": found.group(3), "words": words})
+        out.sort(key=lambda l: (l["date"], l["from"] == "Mabel", l["name"]))
+        return {"letters": out}
+
+    @router.get("/letter/{name}")
+    async def letter(name: str, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        from src.persona.letters import LETTER_DIR
+        if not _LETTER_NAME.fullmatch(name):
+            raise HTTPException(404, "Unknown letter")
+        path = _REPO.joinpath(*LETTER_DIR, f"{name}.md")
+        if not path.is_file():
+            raise HTTPException(404, "Unknown letter")
+        return {"name": name, "markdown": _letter_body(path)}
 
     @router.post("/reflect")
     async def reflect_now(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
