@@ -254,7 +254,7 @@ def _maybe_whisper(questions: list[dict], article: str, data_dir: Path, now: dat
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:
     from src import model_roles
-    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.8, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.8, timeout=480)  # ~39 tok/s: 14000 needs ~6 min
 
 
 async def maybe_reflect(owner: str = "tovakai") -> dict | None:

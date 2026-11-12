@@ -158,7 +158,7 @@ A few honest observations: patterns, moods, what he seemed into. Your take, kind
 One to three concrete moments from this day that would be worth remembering a month from now, one sentence each, as a bullet list. Only from what's recorded or in his journal.
 
 ## Things I'm curious about
-One to three things you'd genuinely like to ask him about, as a bullet list.
+One to three things you'd genuinely like to ask him about, as a bullet list. Only what he alone can answer (why, what for, how it went, what it meant to him); what something is can be looked up, so that goes under the next heading instead.
 
 ## Things I might look into
 Zero to two things from his day you'd like to research for yourself (a game, a show, a place, an idea), as bullets in the form "Subject: the question you'd want answered". Leave the list empty if nothing grabs you."""
@@ -248,7 +248,7 @@ def _propose_research(article: str, items: list[dict]) -> int:
 
 async def _ask_mabel(messages: list[dict], owner: str) -> str:
     from src import model_roles
-    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.7, timeout=300)
+    return await model_roles.call("default", messages, owner=owner, max_tokens=14000, temperature=0.7, timeout=480)  # ~39 tok/s: 14000 needs ~6 min
 
 
 def due_day(local_now: datetime, mabel_vault: Path = _REPO) -> datetime | None:

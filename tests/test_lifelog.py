@@ -287,3 +287,28 @@ def test_no_street_address_while_in_a_zone():
     away = [s["title"] for s in spans_from_states(states("not_home"), person="person.me") if s["kind"] == "place"]
     assert at_home == ["home"]
     assert away == ["away from home", "Example Street 38"]
+
+
+def test_span_times_stay_inside_the_day_window():
+    """A place entered before 06:00 or still open when she writes shows the window's edges, not 02:06-10:19."""
+    start = datetime(2026, 11, 11, 6, 0, tzinfo=TZ)
+    end = start + timedelta(days=1)
+    spans = [
+        {"device": "phone", "kind": "place", "app": "home_assistant", "title": "home", "site": "", "detail": {},
+         "start": "2026-11-11T01:06:00+00:00", "end": "2026-11-11T11:00:00+00:00"},       # 02:06 -> 12:00 local
+        {"device": "desktop", "kind": "focus", "app": "firefox", "title": "", "site": "", "detail": {},
+         "start": "2026-11-11T17:00:00+00:00", "end": "2026-11-12T09:22:00+00:00"}]       # still open the next morning
+    s = summarize(spans, start=start, end=end)
+    assert s["places"][0]["from"] == "06:00" and s["places"][0]["to"] == "12:00"
+    desktop = next(d for d in s["devices"] if d["device"] == "desktop")
+    assert desktop["first"] == "18:00" and desktop["last"] == "06:00"
+
+
+def test_a_desktop_launched_through_steam_is_not_a_game():
+    """Frametop on the Steam Frame starts as a non-Steam shortcut; it's desktop time, not hours of gaming."""
+    start = datetime(2026, 11, 8, 6, 0, tzinfo=TZ)
+    spans = [{"device": "steam-frame", "kind": "game", "app": "steam", "title": "Steam app 2369866399", "site": "",
+              "detail": {"appid": "2369866399"}, "start": "2026-11-09T00:22:00+00:00", "end": "2026-11-09T01:22:00+00:00"}]
+    s = summarize(spans, start=start, end=start + timedelta(days=1), relabel={"2369866399": "Frametop (Frame desktop)"})
+    assert s["games"] == [] and s["apps"] == [{"name": "Frametop (Frame desktop)", "minutes": 60}]
+    assert s["devices"][0]["active_minutes"] == 60

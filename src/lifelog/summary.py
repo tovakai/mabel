@@ -29,7 +29,24 @@ def _top(totals: dict, n: int = TOP) -> list[dict]:
     return [{"name": k, "minutes": round(v)} for k, v in sorted(totals.items(), key=lambda kv: -kv[1])[:n] if v >= 1]
 
 
-def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
+def _clipped(iso: str, start: datetime, end: datetime) -> datetime:
+    """A span edge as local time, held inside the day window (spans can begin before it or still be open)."""
+    return min(max(datetime.fromisoformat(iso), start.astimezone(timezone.utc)), end.astimezone(timezone.utc)).astimezone()
+
+
+def not_games() -> dict[str, str]:
+    """Steam app ids that are launched like games but aren't (e.g. a desktop environment on the Steam Frame),
+    mapped to what to call them. Setting ``lifelog_not_games``: {"<appid>": "<label>"}."""
+    try:
+        from src.settings import get_setting
+        value = get_setting("lifelog_not_games", {}) or {}
+        return {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def summarize(spans: list[dict], *, start: datetime, end: datetime, relabel: dict[str, str] | None = None) -> dict:
+    relabel = not_games() if relabel is None else relabel
     apps, games, media, phone_apps, activity = (defaultdict(float) for _ in range(5))
     sites: dict[str, int] = defaultdict(int)
     titles: list[str] = []
@@ -39,12 +56,17 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
     chats: dict[tuple, dict] = {}
     for s in spans:
         mins = _minutes(s, start, end)
-        local_start = datetime.fromisoformat(s["start"]).astimezone()
+        local_start = _clipped(s["start"], start, end)
+        local_end = _clipped(s["end"], start, end)
         dev = devices.setdefault(s["device"], {"device": s["device"], "first": local_start, "last": local_start,
                                                "active_minutes": 0.0})
         dev["first"] = min(dev["first"], local_start)
-        dev["last"] = max(dev["last"], datetime.fromisoformat(s["end"]).astimezone())
+        dev["last"] = max(dev["last"], local_end)
         kind = s["kind"]
+        appid = str((s.get("detail") or {}).get("appid") or "") if kind == "game" else ""
+        if appid and appid in relabel:                 # not a game: count it as time in that app
+            s = {**s, "kind": "focus", "app": relabel[appid]}
+            kind = "focus"
         if kind == "focus":
             apps[s["app"] or "unknown"] += mins
             dev["active_minutes"] += mins
@@ -65,7 +87,7 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime) -> dict:
             activity[s["title"] or "unknown"] += mins
         elif kind == "place":
             places.append({"place": s["title"], "from": local_start.strftime("%H:%M"),
-                           "to": datetime.fromisoformat(s["end"]).astimezone().strftime("%H:%M"),
+                           "to": local_end.strftime("%H:%M"),
                            "minutes": round(mins)})
         elif kind == "message":
             chat = chats.setdefault((s["app"], s["title"]), {"app": s["app"], "chat": s["title"], "count": 0,
