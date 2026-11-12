@@ -102,6 +102,23 @@ def recent_life_minutes(local_now: datetime, window_minutes: int = 90) -> float 
         return None
 
 
+_WHISPER_FROM = {"research": "your research", "news": "the news you read", "self": "your own reflection",
+                 "life": "his day", "conversation": "an earlier conversation", "calendar": "his calendar",
+                 "mail": "his mail", "manual": "a topic the user suggested"}
+
+
+def _whisper_origin(whisper: dict) -> str:
+    """Where the thought came from, so she can say what it's about when asked (instead of guessing)."""
+    origin = f"about {whisper.get('topic') or 'something'}"
+    source = _WHISPER_FROM.get(whisper.get("source") or "")
+    if source:
+        origin += f", from {source}"
+    note = Path(str(whisper.get("reference") or "")).stem
+    if note and note.lower() != str(whisper.get("topic") or "").lower():
+        origin += f" (your note \"{note[:120]}\")"
+    return origin
+
+
 def _first_sentence(text: str) -> str:
     match = re.match(r"(.+?[.!?])(?:\s|$)", " ".join(text.split()))
     return match.group(1) if match else text[:160]
@@ -180,8 +197,8 @@ class Composer:
                 comp.whisper_id = whisper["id"]
                 comp.refs.append(f"whisper:{whisper['id']}")
                 parts.append(("whisper", "Something you've been mulling over lately (your own thought, not "
-                              f"something the user asked about): {whisper['thought']} Bring it up only if the "
-                              "conversation naturally connects to it; never force it."))
+                              f"something the user asked about; {_whisper_origin(whisper)}): {whisper['thought']} "
+                              "Bring it up only if the conversation naturally connects to it; never force it."))
         # Over budget: drop optional parts from the least important end, keeping the first.
         dropped = []
         while len("\n\n".join(t for _, t in parts)) > FRAGMENT_LIMIT and len(parts) > 1:

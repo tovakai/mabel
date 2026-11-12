@@ -128,7 +128,8 @@ def recently_talked_about(subject: str, *, owner: str, now: datetime, hours: int
     return False
 
 
-def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO, data_dir: Path | None = None) -> list[dict]:
+def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO, data_dir: Path | None = None,
+           library_vault: Path | None = None) -> list[dict]:
     now = now or _now()
     from src.constants import DATA_DIR
     data_dir = Path(data_dir or DATA_DIR)
@@ -207,7 +208,21 @@ def gather(*, owner: str, now: datetime | None = None, mabel_vault: Path = _REPO
             continue                                        # he already brought it up
         kept.append(c)
     kept.sort(key=lambda c: str(c.get("at") or ""), reverse=True)
-    return kept[:MAX_CANDIDATES]
+    kept = kept[:MAX_CANDIDATES]
+    try:                                                    # has he read/watched it already? (his own library)
+        from src.initiative import his_library
+        vault = his_library.default_vault() if library_vault is None else library_vault
+        library = his_library.entries(vault) if kept else []
+        for c in kept:
+            if c["source"] not in ("research", "whisper"):          # his day / her reflections aren't about works
+                continue
+            text = " ".join(str(c.get(k) or "") for k in ("subject", "title", "question"))
+            facts = his_library.facts_for(text, vault, library)
+            if facts:
+                c["his_library"] = facts
+    except Exception:
+        logger.debug("[outreach] his library unavailable", exc_info=True)
+    return kept
 
 
 def default_store_for(data_dir: Path) -> Store:
@@ -271,6 +286,8 @@ def _describe(i: int, c: dict) -> str:
         bits.append(f"   Dottie noticed: {c['observation']}")
     for q in c.get("open_questions") or []:
         bits.append(f"   Left open: {q}")
+    for f in c.get("his_library") or []:
+        bits.append(f"   In his own library: {f}")
     return "\n".join(bits)
 
 
@@ -284,8 +301,9 @@ async def review(candidates: list[dict], *, owner: str, ask=None) -> dict:
         "message at all; staying quiet is a perfectly good choice when nothing feels worth interrupting him "
         "for. If you write, make it a text from you, casual and in your own voice. He hasn't read what you "
         "read and may not know any of it, so teach first: say what you just learnt, who or what the people "
-        "and things you mention are, and enough background for it to make sense on its own. Then give your "
-        "take, and only then any question for him. A short paragraph or two is fine. Don't apologise for "
+        "and things you mention are, and enough background for it to make sense on its own. Where his own "
+        "library shows he already knows a work, he knows it better than your research does: skip the "
+        "introduction and don't ask whether he's seen it. Then give your take, and only then any question for him. A short paragraph or two is fine. Don't apologise for "
         "texting, don't be needy, and don't ask him to reply.\n"
         'Reply with only JSON: {"send": true or false, "pick": <number>, "message": "...", "why": "one honest sentence"}')
     system = "You are Mabel."

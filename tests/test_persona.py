@@ -437,3 +437,13 @@ def test_she_stays_up_when_he_does():
     assert select_mood("tired", {}, life_minutes=10) == ("tired", "time_of_day")
     assert select_mood("relaxed", {}, life_minutes=120) == ("relaxed", "time_of_day"), "only in her sleepy hours"
     assert select_mood("tired", {}, life_minutes=None) == ("tired", "time_of_day")
+
+
+def test_whisper_says_where_the_thought_came_from(tmp_path):
+    """A bare thought ("the book turns chaos into a puzzle") left her guessing what book it was."""
+    composer = Composer(_library(tmp_path), tmp_path / "affect.json")
+    now = datetime(2026, 11, 5, 20, 0, tzinfo=TZ)
+    composer.whispers.propose("research", "Ada Example", "The notebook turns a sprawling plot into a puzzle.", now=now,
+                              reference="knowledge/research/How Ada Example Builds a Puzzle Box.md")
+    fragment = composer.compose("hey, what's up?", set(), "a", local_now=now, mode="on").fragment
+    assert "about Ada Example, from your research (your note \"How Ada Example Builds a Puzzle Box\")" in fragment

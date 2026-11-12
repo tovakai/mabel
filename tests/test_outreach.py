@@ -10,6 +10,12 @@ from src.initiative import outreach
 NOW = datetime(2026, 11, 5, 15, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_library(monkeypatch):
+    from src.initiative import his_library
+    monkeypatch.setattr(his_library, "default_vault", lambda: None)     # never read the real vault in tests
+
+
 def _data(*sent):
     return {"sent": list(sent), "reviews": []}
 
@@ -124,3 +130,33 @@ def test_silence_is_recorded_and_not_reasked(tmp_path, monkeypatch):
                                            store=store, mabel_vault=vault))
     assert first == {"status": "silence", "why": "he is probably busy; it can wait"}
     assert second["status"] == "already_considered" and len(calls) == 1
+
+
+def _work(library, folder, name, **meta):
+    (library / folder).mkdir(parents=True, exist_ok=True)
+    lines = "".join(f"{k}: {v}\n" for k, v in meta.items())
+    (library / folder / f"{name}.md").write_text(f"---\nName: {name}\n{lines}---\n", encoding="utf-8")
+
+
+def test_his_library_says_he_already_knows_the_work(tmp_path):
+    """She asked "have you read it?" about a manga he had finished and rated 10/10."""
+    library = tmp_path / "vault" / "Library"
+    _work(library, "Manga", "Gull Knight", Type="Comic", Year=1999, Progress="249/249", **{"My Rating": 10},
+          Creator='\n  - "[[Ada Example]]"')
+    _work(library, "Manga", "Harbour Lights", Type="Comic", Progress="12/40", Creator='\n  - "[[Ada Example]]"')
+    _work(library, "Games", "Up", Type="Game", **{"My Rating": 7})                    # too short to match on
+    _work(library, "Movies", "Home", Type="Movie")
+    research = tmp_path / "mabel" / "knowledge" / "research"
+    _article(research, "Ada Example.md", NOW - timedelta(hours=3))
+    cands = outreach.gather(owner="a", now=NOW, mabel_vault=tmp_path / "mabel", data_dir=tmp_path / "data",
+                            library_vault=tmp_path / "vault")
+    assert cands[0]["his_library"] == ["Gull Knight (manga, 1999): finished, he rated it 10/10",
+                                       "Harbour Lights (manga): progress 12/40, not rated"]
+    seen = []
+
+    async def ask(messages, owner):
+        seen.append(messages[-1]["content"])
+        return '{"send": false, "why": "x"}'
+    asyncio.run(outreach.review(cands, owner="a", ask=ask))
+    assert "In his own library: Gull Knight (manga, 1999): finished, he rated it 10/10" in seen[0]
+    assert "don't ask whether he's seen it" in seen[0]
