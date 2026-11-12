@@ -309,6 +309,13 @@ async def dream(*, owner: str = "tovakai", data_dir: Path | None = None, mabel_v
             "first_line": _first_line(entry)}]
         _save_state(data_dir, state)
         _ledger(item["id"], day)
+        if _setting("dream_print_enabled", True):
+            try:                                   # on paper too; the heartbeat prints it when the printer is on
+                from . import printer
+                printer.enqueue("dream", str(note.relative_to(mabel_vault)), title=_label(now), data_dir=data_dir,
+                                now=now)
+            except Exception:
+                logger.warning("[dreams] couldn't queue the dream for printing", exc_info=True)
         from . import recent
         await recent.remember("a dream", "dreamt", entry, fallback=f"I dreamt, from {item['title']}.",
                               owner=owner, ref=str(note.relative_to(mabel_vault)), now=now, data_dir=data_dir)

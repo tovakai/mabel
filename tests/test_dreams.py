@@ -120,6 +120,9 @@ def test_a_dream_writes_image_and_entry_and_counts_for_the_day(world):
     assert dreams.gate(_sig(), data_dir=world.data, now=world.now, research_running=False) == ["already dreamt today"]
     left = dreams.pick_source(world.data, world.now, mabel_vault=world.vault)
     assert left is None or left["title"] != "Local AI Systems"
+    from src.persona import printer                  # and it waits for the desk printer
+    assert [(j["kind"], j["ref"]) for j in printer.load_state(world.data)["pending"]] == \
+        [("dream", f"journal/dreams/{day}.md")]
 
 
 def test_she_still_keeps_the_dream_if_she_cant_describe_it(world):

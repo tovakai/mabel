@@ -232,6 +232,22 @@ def build(*, data_dir: Path, days: int = 7, limit: int = LIMIT, now: datetime | 
         pass
 
     try:
+        from . import morning
+        for entry in (morning.load_state(data_dir).get("history") or [])[-14:]:
+            items.append(_item(entry["at"], "morning", "Printed his morning page",
+                               " / ".join(x for x in (entry.get("project"), entry.get("song")) if x), entry.get("note")))
+    except Exception:
+        pass
+
+    try:
+        from . import paper
+        for note in paper.notes()[:14]:
+            items.append(_item(note["written"], "paper", "Left him a note on paper", note["first_line"][:160],
+                               f"journal/paper/{note['file']}"))
+    except Exception:
+        pass
+
+    try:
         state = json.loads((data_dir / "persona" / "books.json").read_text())
         for b in [state.get("current")] + list(state.get("shelf") or []):
             if b and b.get("last_read"):

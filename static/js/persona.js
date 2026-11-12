@@ -35,7 +35,7 @@ const TABS = [['now', 'Now'], ['timeline', 'Timeline'], ['life', 'Life'], ['rese
 let activeTab = (() => { try { return localStorage.getItem('persona-tab') || 'now'; } catch { return 'now'; } })();
 const TIMELINE_DOT = { wake: '#7c9cff', yield: '#e0a040', done: '#59b36a', failed: 'var(--red)', research_choice: '#b07cff',
   article: '#59b36a', inbox_review: '#b07cff', inbox_user: '#999', dottie: '#4fb3b3', mood: '#e07cb0', whisper: '#e0c040',
-  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5', news: '#6fb7e0', revisit: '#b49bd8', book: '#d8a35a', music: '#5ad8a6' };
+  outreach: '#ff8c5a', outreach_reply: '#ff8c5a', silence: '#bbb', day: '#5ab0ff', reflection: '#c890ff', dream: '#9b6bff', letter: '#e08fb5', news: '#6fb7e0', revisit: '#b49bd8', book: '#d8a35a', music: '#5ad8a6', paper: '#e8dcc0', morning: '#ffd36b' };
 let autonomyTimer = null;
 let news = null;
 let inboxTimer = null;

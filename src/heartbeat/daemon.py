@@ -33,6 +33,9 @@ _book_task: asyncio.Task | None = None
 _letter_task: asyncio.Task | None = None
 _news_task: asyncio.Task | None = None
 _music_task: asyncio.Task | None = None
+_paper_task: asyncio.Task | None = None
+_print_task: asyncio.Task | None = None
+_morning_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -92,10 +95,12 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     from src.persona import dreams
     now = now or datetime.now().astimezone()
     why.pulse(now=now)
+    _maybe_print(now)
     if dreams.running():                          # her model is stepped aside for a dream; decide nothing
         _last.update(at=now.isoformat(), running=False, dreaming=True)
         return _last
     sig = await asyncio.to_thread(read)
+    _maybe_morning(sig, now)
     state = load_state()
     active = state.get("active_session")
 
@@ -144,6 +149,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
             if not (_dream_task and not _dream_task.done()) and not (_revisit_task and not _revisit_task.done()):
                 _maybe_compose(sig, now, research_running=research_running)
             if not any(t and not t.done() for t in (_dream_task, _revisit_task, _music_task)):
+                _maybe_write_paper(sig, now, research_running=research_running)
+            if not any(t and not t.done() for t in (_dream_task, _revisit_task, _music_task, _paper_task)):
                 _maybe_read_book(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
@@ -168,14 +175,14 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
 def _record_why(sig, now: datetime, decision) -> None:
     """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
     from src.curiosity import runner
-    from src.persona import books, dreams, letters, music, news, revisit
+    from src.persona import books, dreams, letters, morning, music, news, paper, revisit
     from src.constants import DATA_DIR
     why.record("research", [] if decision.allow else decision.reasons, now=now)
     research_running = bool(runner.status().get("running"))
     busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task,
-            "music": _music_task}
+            "music": _music_task, "paper": _paper_task, "morning": _morning_task}
     for job, module in (("letters", letters), ("news", news), ("dream", dreams), ("revisit", revisit),
-                        ("music", music), ("book", books)):
+                        ("music", music), ("paper", paper), ("morning", morning), ("book", books)):
         if busy[job] and not busy[job].done():
             continue                                   # running: its outcome is recorded when it ends
         try:
@@ -294,6 +301,67 @@ def _maybe_compose(sig, now: datetime, *, research_running: bool) -> None:
     _music_task.add_done_callback(_outcome("music"))
     _music_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] composing failed: %s", t.exception()))
+
+
+def _maybe_write_paper(sig, now: datetime, *, research_running: bool) -> None:
+    """Offering her the printer on his desk (src/persona/paper.py), when she'd otherwise just be idle."""
+    global _paper_task
+    from src.persona import paper
+    if _paper_task and not _paper_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if paper.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return
+    except Exception:
+        logger.debug("[heartbeat] paper gate failed", exc_info=True)
+        return
+    _paper_task = asyncio.create_task(paper.maybe_offer(sig, now=now, research_running=research_running))
+    _paper_task.add_done_callback(_outcome("paper"))
+    _paper_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] writing on paper failed: %s", t.exception()))
+
+
+def _maybe_morning(sig, now: datetime) -> None:
+    """His morning page (src/persona/morning.py): notice him waking up, then write and print it once a day."""
+    global _morning_task
+    from src.persona import morning
+    if _morning_task and not _morning_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        morning.observe(sig, data_dir=Path(DATA_DIR), now=now)
+        if morning.gate(sig, data_dir=Path(DATA_DIR), now=now):
+            return
+    except Exception:
+        logger.debug("[heartbeat] morning gate failed", exc_info=True)
+        return
+    _morning_task = asyncio.create_task(morning.maybe_write(sig, now=now))
+    _morning_task.add_done_callback(_outcome("morning"))
+    _morning_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] the morning page failed: %s", t.exception()))
+
+
+def _maybe_print(now: datetime) -> None:
+    """Print whatever is queued for the printer (src/persona/printer.py). Needs no model, so it runs every tick."""
+    global _print_task
+    from src.persona import printer
+    if _print_task and not _print_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if printer.has_due(Path(DATA_DIR), now):
+            work = printer.flush
+        elif printer.keepalive_due(Path(DATA_DIR), now):
+            work = printer.keepalive          # it switches itself off after a while; keep it awake
+        else:
+            return
+    except Exception:
+        logger.debug("[heartbeat] printer queue unreadable", exc_info=True)
+        return
+    _print_task = asyncio.create_task(asyncio.to_thread(work, now=now))
+    _print_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] printing failed: %s", t.exception()))
 
 
 def _maybe_read_book(sig, now: datetime, *, research_running: bool) -> None:
