@@ -30,6 +30,7 @@ _BINARY_VISUAL_MEDIA_SUFFIXES = {
 _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "get_weather": ("location",),
+    "print_on_paper": ("text",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -360,6 +361,21 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"location": {"type": "string", "description": "City or place, optionally with region/country"}},
                 "required": ["location"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "print_on_paper",
+            "description": "Print text on the small thermal receipt printer on Anthon's desk (32 characters wide, text only). Use when he asks you to print something: a list, a recipe, a note, something you wrote. Put exactly what should be on the paper in text; plain text, no markdown. It prints right away, or as soon as he switches the printer on.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "What to print, as plain text (up to 4000 characters)"},
+                    "title": {"type": "string", "description": "Optional short heading printed above it"}
+                },
+                "required": ["text"]
             }
         }
     },

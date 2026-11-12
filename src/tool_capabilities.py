@@ -221,6 +221,12 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"print_on_paper"},
+    ToolEffect.EXTERNAL_SIDE_EFFECT,
+    ToolEffect.WRITE_PRIVATE,
+    result_integrity=ResultIntegrity.SYSTEM,
+)
+_register(
     {"edit_image", "generate_image", "trigger_research"},
     ToolEffect.NETWORK_EGRESS,
     ToolEffect.WRITE_PRIVATE,

@@ -8160,6 +8160,12 @@ Bounded read-only Obsidian vault research through the configured Research/Dottie
 ```
 Get current conditions and a three-day forecast using Open-Meteo. Use this for weather questions before searching the web. No API key is required; include the returned source and local observation time in the answer.""",
 
+    "print_on_paper": """\
+```print_on_paper
+{"text": "milk\\neggs\\ncoffee", "title": "Shopping"}
+```
+Print text on the thermal receipt printer on Anthon's desk (32 columns, plain text, no markdown). Use when he asks you to print something; put exactly what belongs on the paper in `text`. Say what the result says: printed now, or waiting until he switches the printer on.""",
+
     "private_browser": """\
 ```private_browser
 {"action": "session_info"}

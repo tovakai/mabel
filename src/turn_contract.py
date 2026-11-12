@@ -86,6 +86,7 @@ FAMILY_TOOLS = {
     "contacts": frozenset({"resolve_contact", "manage_contact"}),
     "sessions": frozenset({"list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "pipeline"}),
     "image_generation": frozenset({"generate_image"}),
+    "printer": frozenset({"print_on_paper"}),
     "image_editing": frozenset({"edit_image"}),
     "transcription": frozenset({"transcribe_media"}),
     "media_inspection": frozenset({"inspect_media"}),
@@ -724,7 +725,7 @@ def _warm_recall_parts(value: str, *, with_followup: bool = False) -> tuple[str,
 _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
-    "image_generation": "generate_image", "image_editing": "edit_image",
+    "image_generation": "generate_image", "image_editing": "edit_image", "printer": "print_on_paper",
     "transcription": "transcribe_media", "media_inspection": "inspect_media", "ocr": "extract_text",
 }
 
@@ -749,6 +750,14 @@ _MEDIA_REQUESTS = tuple(
         ("media_inspection", r"inspect\b.{0,120}(?:\b(?:images?|pictures?|photos?|video|pdf|svg)\b"
          r"|\S+\.(?:png|jpg|jpeg|webp|gif|svg|pdf|mp4|webm|mov)\b)"),
     )
+) + (
+    # "Mabel, can you print my list" / "print out the recipe": the receipt printer on his desk.
+    # Not code ("print the output of ls", "print(x)", "print hello world in python").
+    ("printer", re.compile(
+        r"^\s*(?:(?:hey|hi|ok(?:ay)?)\s+)?(?:mabel[\s,!:—–-]+)?" + _REQUEST_PREFIX
+        + r"print(?:\s+(?:it|this|that))?(?:\s+out)?\b(?!\s*\()"
+        r"(?!.{0,80}\b(?:python|bash|shell|console|terminal|stdout|stderr|variables?|functions?|scripts?|code|"
+        r"logs?|output\s+of|statements?|json|env(?:ironment)?|traceback|stack)\b)", re.I)),
 )
 
 
