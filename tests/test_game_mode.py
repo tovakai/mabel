@@ -72,3 +72,40 @@ def test_ignored_games_dont_count(monkeypatch):
     assert game_mode.current_game() is None
     monkeypatch.setattr(game_mode, "settings", lambda: {"enabled": True, "ignore_appids": [], "notify": False})
     assert game_mode.current_game() == GAME
+
+
+def test_whitelist_saved_from_the_web_ui_keeps_the_rest_of_the_config(monkeypatch, tmp_path):
+    """The Life tab's Game mode card writes ignore_appids; game mode reads it on its next poll."""
+    import json
+    (tmp_path / "gpu_swap.json").write_text(json.dumps({"strata_profile": "p", "game_mode": {"notify": False}}))
+    monkeypatch.setattr(gpu_swap, "_data_dir", lambda: tmp_path)
+    gpu_swap.update_game_mode(ignore_appids=["4140451158"])
+    saved = json.loads((tmp_path / "gpu_swap.json").read_text())
+    assert saved["strata_profile"] == "p" and saved["game_mode"] == {"notify": False, "ignore_appids": ["4140451158"]}
+    monkeypatch.setattr("lifelog_collector.sample_game",
+                        lambda: {"title": "LessonsInLove", "detail": {"appid": "4140451158"}}, raising=False)
+    assert game_mode.current_game() is None            # a visual novel on the list: she stays loaded
+
+
+def test_played_games_listed_once_per_app():
+    from datetime import datetime, timezone
+    from routes.lifelog_routes import _played_games
+
+    class Store:
+        def spans(self, start, end, kinds=None):
+            return [{"title": "Koikatu", "detail": {"appid": "2589549703"},
+                     "start": "2026-11-10T20:00:00+00:00", "end": "2026-11-10T21:00:00+00:00"},
+                    {"title": "LessonsInLove0.61.0", "detail": {"appid": "4140451158"},
+                     "start": "2026-11-12T01:00:00+00:00", "end": "2026-11-12T01:30:00+00:00"},
+                    {"title": "Koikatu", "detail": {"appid": "2589549703"},
+                     "start": "2026-11-11T20:00:00+00:00", "end": "2026-11-11T20:30:00+00:00"},
+                    {"title": "no id", "detail": {}, "start": "2026-11-11T20:00:00+00:00", "end": "2026-11-11T20:30:00+00:00"},
+                    {"title": "Steam app 2369866399", "detail": {"appid": "2369866399"}, "device": "steam-frame",
+                     "start": "2026-11-12T01:00:00+00:00", "end": "2026-11-12T01:04:00+00:00"}]
+
+    class DesktopStore(Store):
+        def spans(self, start, end, kinds=None):
+            return [{**s, "device": s.get("device", "desktop")} for s in super().spans(start, end, kinds)]
+
+    games = _played_games(DesktopStore(), datetime(2026, 11, 12, 12, tzinfo=timezone.utc), device="desktop")
+    assert [(g["appid"], g["minutes"]) for g in games] == [("4140451158", 30), ("2589549703", 90)]   # not the Frame's

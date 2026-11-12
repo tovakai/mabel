@@ -23,6 +23,7 @@ let autonomy = null;      // /api/persona/autonomy
 let timeline = null;      // /api/persona/timeline
 let outreach = null;      // /api/persona/outreach
 let life = null;          // /api/lifelog/overview
+let games = null;         // /api/lifelog/games (game mode)
 let lifeDays = [];
 let lifeOpenDay = null;
 let reflections = null;   // /api/persona/reflections
@@ -436,9 +437,24 @@ function lifeCard() {
     ${manage}`);
 }
 
+function gamesCard() {
+  if (!games) return '';
+  const G = games;
+  const ago = (iso) => { if (!iso) return 'not seen lately'; const d = Math.round((Date.now() - new Date(iso)) / 86400000); return d < 1 ? 'today' : d < 2 ? 'yesterday' : `${d} days ago`; };
+  const resting = G.resting ? `<div style="font-size:12px;margin:4px 0"><strong>Resting now</strong> while you play ${esc(G.resting.game || 'a game')}.</div>` : '';
+  const rows = (G.games || []).map(g => `<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin:3px 0;cursor:${G.can_manage ? 'pointer' : 'default'}">
+      <input type="checkbox" data-persona-action="game-awake" data-appid="${esc(g.appid)}" ${g.awake ? 'checked' : ''} ${G.can_manage ? '' : 'disabled'}>
+      <span style="flex:1">${esc(g.title)} <span style="opacity:0.6">(${esc(String(g.minutes))} min, ${esc(ago(g.last))})</span></span>
+      <span style="opacity:0.7">${g.awake ? 'she stays awake' : 'she rests'}</span></label>`).join('');
+  const toggle = G.can_manage ? `<div style="margin-top:8px"><button type="button" class="theme-io-btn" data-persona-action="game-mode-toggle" style="height:26px;font-size:12px">${G.enabled ? 'Turn game mode off' : 'Turn game mode on'}</button></div>` : '';
+  return card('Game mode', `<div class="admin-toggle-sub" style="margin-top:0">While a Steam game runs, her model is unloaded so the game gets the GPU, and loaded again ~20 s after it closes. Tick the light games (visual novels and the like) she can stay awake for: chat keeps working while you play them. Changes apply within a few seconds, even mid-game.</div>
+    <div style="font-size:12px;margin:4px 0"><strong>${G.enabled ? 'On' : 'Off'}</strong></div>${resting}
+    ${rows || '<div class="admin-toggle-sub">No games recorded in the last 60 days.</div>'}${toggle}`);
+}
+
 function renderLife() {
   const slot = document.getElementById('persona-life');
-  if (slot) slot.innerHTML = lifeCard();
+  if (slot) slot.innerHTML = lifeCard() + gamesCard();
 }
 
 async function loadLife() {
@@ -447,6 +463,10 @@ async function loadLife() {
       fetch(`${window.location.origin}/api/lifelog/days`, { credentials: 'same-origin' }).then(r => r.json())]);
     life = overview; lifeDays = days.days || [];
   } catch (err) { life = null; }
+  try {
+    const r = await fetch(`${window.location.origin}/api/lifelog/games`, { credentials: 'same-origin' });
+    games = r.ok ? await r.json() : null;
+  } catch (err) { games = null; }
   renderLife();
 }
 
@@ -657,6 +677,18 @@ async function onClick(event) {
       }
     } catch (err) { toast(`Persona: ${err.message}`); }
     await loadReflections();
+    return;
+  }
+  if (['game-awake', 'game-mode-toggle'].includes(target.dataset.personaAction)) {
+    const body = target.dataset.personaAction === 'game-mode-toggle' ? { enabled: !games.enabled } : {
+      awake_appids: [...document.querySelectorAll('[data-persona-action="game-awake"]')].filter(b => b.checked).map(b => b.dataset.appid) };
+    try {
+      const r = await fetch(`${window.location.origin}/api/lifelog/games`, { method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+      toast('Saved');
+    } catch (err) { toast(`Game mode: ${err.message}`); }
+    await loadLife();
     return;
   }
   if (target.dataset.personaAction === 'life-token-copy') {

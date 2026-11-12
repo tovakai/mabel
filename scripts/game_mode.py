@@ -64,7 +64,7 @@ def _save_state(state: dict | None) -> None:
 
 def settings() -> dict:
     from src import gpu_swap
-    return {"enabled": True, "ignore_appids": [], "notify": True, **(gpu_swap.load_config().get("game_mode") or {})}
+    return gpu_swap.game_mode_settings()           # the Life tab's Game mode card edits these
 
 
 def notify(text: str) -> None:

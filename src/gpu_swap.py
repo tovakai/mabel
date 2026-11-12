@@ -63,6 +63,25 @@ def load_config() -> dict:
         return {}
 
 
+GAME_MODE_DEFAULTS = {"enabled": True, "ignore_appids": [], "notify": True}
+
+
+def game_mode_settings() -> dict:
+    """Game mode's settings (scripts/game_mode.py re-reads them every poll, so changes apply live)."""
+    return {**GAME_MODE_DEFAULTS, **(load_config().get("game_mode") or {})}
+
+
+def update_game_mode(**changes) -> dict:
+    """Merge ``changes`` into gpu_swap.json's "game_mode" block, written atomically, keeping everything else."""
+    path = _data_dir() / "gpu_swap.json"
+    cfg = load_config()
+    cfg["game_mode"] = {**(cfg.get("game_mode") or {}), **changes}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return game_mode_settings()
+
+
 def _strata_bin(cfg: dict) -> str:
     return cfg.get("strata_bin") or shutil.which("strata") or str(Path.home() / ".local/bin/strata")
 

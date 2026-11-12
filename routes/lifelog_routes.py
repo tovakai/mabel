@@ -24,6 +24,42 @@ class IngestBody(BaseModel):
     spans: list[dict] = Field(default_factory=list)
 
 
+class GameModeBody(BaseModel):
+    enabled: bool | None = None
+    awake_appids: list[str] | None = None        # games she stays loaded for (game mode's ignore_appids)
+
+
+GAMES_DAYS = 60
+
+
+def _local_device() -> str:
+    """The name this PC's own collector reports under (game mode only sees games on this PC, not the Frame's)."""
+    import json
+    import os
+    path = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "mabel-collector" / "config.json"
+    try:
+        return str(json.loads(path.read_text(encoding="utf-8")).get("device") or "desktop")
+    except (OSError, ValueError, AttributeError):
+        return "desktop"
+
+
+def _played_games(store, now: datetime, device: str | None = None) -> list[dict]:
+    """Games a collector has seen lately, one per Steam app id, most recently played first."""
+    games: dict[str, dict] = {}
+    for s in store.spans(now - timedelta(days=GAMES_DAYS), now, kinds=["game"]):
+        if device and s.get("device") != device:
+            continue
+        appid = str((s.get("detail") or {}).get("appid") or "").strip()
+        if not appid:
+            continue
+        g = games.setdefault(appid, {"appid": appid, "title": "", "minutes": 0.0, "last": ""})
+        start, end = datetime.fromisoformat(s["start"]), datetime.fromisoformat(s["end"])
+        g["minutes"] += max(0.0, (end - start).total_seconds() / 60)
+        if s["end"] >= g["last"]:
+            g["last"], g["title"] = s["end"], s["title"] or g["title"] or f"Steam app {appid}"
+    return [{**g, "minutes": round(g["minutes"])} for g in sorted(games.values(), key=lambda g: g["last"], reverse=True)]
+
+
 class LifelogSettings(BaseModel):
     paused: bool | None = None
     exclude_sites: list[str] | None = None
@@ -111,5 +147,38 @@ def setup_lifelog_routes() -> APIRouter:
         save_settings(current)
         return {"paused": current.get("lifelog_paused", False), "exclude_sites": current.get("lifelog_exclude_sites", []),
                 "exclude_apps": current.get("lifelog_exclude_apps", [])}
+
+    @router.get("/games")
+    async def games(request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        """Game mode: which games unload her model, and which she stays awake for."""
+        import json
+        from src import gpu_swap
+        from src.lifelog.store import default_store
+        cfg = gpu_swap.game_mode_settings()
+        awake = {str(a) for a in cfg["ignore_appids"]}
+        played = _played_games(default_store(), datetime.now(timezone.utc), device=_local_device())
+        known = {g["appid"] for g in played}
+        played += [{"appid": a, "title": f"Steam app {a}", "minutes": 0, "last": ""} for a in sorted(awake - known)]
+        try:
+            resting = json.loads((gpu_swap._data_dir() / "gpu_swap" / "game_mode.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            resting = None
+        return {"can_manage": _is_admin(request), "enabled": bool(cfg["enabled"]),
+                "games": [{**g, "awake": g["appid"] in awake} for g in played],
+                "resting": {"game": resting.get("game"), "since": resting.get("since")} if resting else None}
+
+    @router.put("/games")
+    async def update_games(body: GameModeBody, request: Request, _user: str = Depends(require_user)) -> dict[str, Any]:
+        if not _is_admin(request):
+            raise HTTPException(403, "Only an admin can change game mode")
+        from src import gpu_swap
+        changes: dict[str, Any] = {}
+        if body.enabled is not None:
+            changes["enabled"] = body.enabled
+        if body.awake_appids is not None:
+            ids = {a.strip() for a in body.awake_appids if a.strip().isdigit() and len(a.strip()) <= 20}
+            changes["ignore_appids"] = sorted(ids, key=int)[:200]
+        cfg = gpu_swap.update_game_mode(**changes) if changes else gpu_swap.game_mode_settings()
+        return {"enabled": bool(cfg["enabled"]), "awake_appids": [str(a) for a in cfg["ignore_appids"]]}
 
     return router
