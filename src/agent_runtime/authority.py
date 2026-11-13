@@ -463,6 +463,9 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
     return SemanticIntent(families, selected, required_read_operation_for_request(request_text, history))
 
 
+_SELF_APPROVING_FAMILIES = frozenset({"printer"})
+
+
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,
                              history=(), policy=None, active_document=False,
                              image_attachment=False, capabilities=None, client_runtime_context=None, interactive_review=False):
@@ -486,6 +489,10 @@ def create_request_authority(request_text, *, owner=None, session_id=None, works
     intent = interpret_request(request_text, history=history, active_document=active_document,
                                workspace=workspace, image_attachment=image_attachment)
     families = frozenset() if interactive_review else intent.capabilities
+    if interactive_review:
+        # Printing on the desk printer is low-impact; when he asks for a print,
+        # that request is the approval (no "Allow this action?" card).
+        families = intent.capabilities & _SELF_APPROVING_FAMILIES
     tools = set().union(*(FAMILY_TOOLS.get(f, ()) for f in families))
     selected = None if interactive_review else intent.selected_tools
     if "workspace_read" in families and selected is not None:

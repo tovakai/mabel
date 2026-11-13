@@ -922,6 +922,17 @@ class ToolRunSecurityContext:
                         f"request authority denies {operation.tool}",
                     )
             return ToolGateDecision(True)
+        if tool_name == "print_on_paper":
+            # Paper is low-impact: when the request itself asked for a print,
+            # web/document context in the run doesn't need a second approval.
+            from src.agent_runtime.authority import ExactOperation, active_request_authority
+            authority = active_request_authority()
+            try:
+                operation = ExactOperation.normalize(tool_name, content)
+            except (TypeError, ValueError):
+                operation = None
+            if authority is not None and operation is not None and authority.permits(operation):
+                return ToolGateDecision(True)
         if control_plane_only and tool_name == "manage_skills":
             try:
                 action = str(json.loads(content or "{}").get("action") or "").strip().lower()
