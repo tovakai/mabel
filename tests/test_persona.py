@@ -290,6 +290,15 @@ def test_whisper_validation_and_mentions(tmp_path):
     assert not mentions("Serial Experiments Lain", "what's for dinner")
 
 
+def test_a_long_whisper_topic_counts_as_mentioned_by_its_head_words():
+    # 2026-11-13: she brought this one into a chat about Putin, but the turn never
+    # cooled it off, because naming 3 of its 9 words wasn't "most of" them.
+    topic = "Kyoto Animation’s in-house pipeline and Clannad After Story’s emotional continui"
+    assert mentions(topic, "that maps onto the thing I've been chewing on about Kyoto Animation — "
+                           "emotional continuity turns out to be boring staff continuity")
+    assert not mentions(topic, "the animation in that trailer looked cheap")
+
+
 def test_whisper_serves_in_social_cools_off_and_expires(tmp_path):
     composer = Composer(_library(tmp_path), tmp_path / "affect.json")
     now = datetime(2026, 11, 5, 20, 0, tzinfo=TZ)

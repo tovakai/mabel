@@ -61,7 +61,11 @@ def _keywords(topic: str) -> list[str]:
 
 
 def mentions(topic: str, text: str) -> bool:
-    """True when ``text`` names the topic: the whole phrase, or most of its distinctive words."""
+    """True when ``text`` names the topic: the whole phrase, or most of its distinctive words.
+
+    Long research topics ("Kyoto Animation's in-house pipeline and Clannad After Story's
+    emotional continuity") get named by their head words, so three hits are enough.
+    """
     haystack = " ".join(str(text or "").lower().split())
     if not haystack:
         return False
@@ -71,7 +75,7 @@ def mentions(topic: str, text: str) -> bool:
     if not words:
         return False
     hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}\b", haystack))
-    return hits >= max(1, (len(words) + 1) // 2)
+    return hits >= max(1, min(3, (len(words) + 1) // 2))
 
 
 class WhisperStore:
