@@ -773,7 +773,8 @@ body.bg-pattern-ascii-fireflies {
     #tool-library-btn.rail-minimized::after,
     #tool-gallery-btn.rail-minimized::after,
     #tool-compare-btn.rail-minimized::after,
-    #tool-calendar-btn.rail-minimized::after { right: 12px; }
+    #tool-calendar-btn.rail-minimized::after,
+    #tool-gremlin-btn.rail-minimized::after { right: 12px; }
             @media (max-width: 768px) {
       /* On mobile the list-items are taller (touch-sized), so the tabbed-down
          pulsing dot reads a hair low and right. Email uses its own dot and is

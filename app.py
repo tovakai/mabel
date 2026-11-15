@@ -742,6 +742,8 @@ from routes.persona_routes import setup_persona_routes
 app.include_router(setup_persona_routes())
 from routes.lifelog_routes import setup_lifelog_routes
 app.include_router(setup_lifelog_routes())
+from routes.hub_routes import setup_hub_routes
+app.include_router(setup_hub_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)

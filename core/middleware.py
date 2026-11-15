@@ -146,7 +146,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "img-src 'self' data: blob: https:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
-                "frame-src 'self'; "
+                f"frame-src 'self' {_hub_frame_sources(request)}; "
                 "frame-ancestors 'none'"
             )
         return response
+
+
+def _hub_frame_sources(request: Request) -> str:
+    """The hub's service windows (src/hub_services.py); empty if that fails."""
+    try:
+        from src.hub_services import frame_sources
+        return frame_sources(request.headers.get("host"))
+    except Exception:
+        return ""

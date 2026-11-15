@@ -16,6 +16,8 @@ export function initSectionCollapse(Storage) {
 
     // Skip email section — it doesn't collapse (title opens popup instead)
     if (section.id === 'email-section') return;
+    // Hub rows (Calendar, Gremlin Index…) are single launchers, same as email
+    if (section.classList.contains('hub-section')) return;
 
     // Add chevron (always visible — rotates when collapsed)
     header.insertAdjacentHTML('beforeend', _chevronHtml);

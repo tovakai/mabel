@@ -17,8 +17,11 @@ export const UI_VIS_MAP = {
   'sessions-section':   '#sessions-section',
   'email-section':       '#email-section, #rail-email',
   'tools-section':       '#tools-section',
+  // Hub rows live outside #tools-section (own rows like Email), so the Tools
+  // switch doesn't hide them; keys keep the tool- prefix for saved prefs.
+  'tool-calendar':       '#calendar-section, #rail-calendar',
+  'tool-gremlin':        '#gremlin-section, #rail-gremlin',
   // Per-tool entries pair the sidebar button with its rail launcher.
-  'tool-calendar':       '#tool-calendar-btn, #rail-calendar',
   'tool-compare':        '#tool-compare-btn, #rail-compare',
   'tool-cookbook':       '#tool-cookbook-btn, #rail-cookbook',
   'tool-research':       '#tool-research-btn, #rail-research',
@@ -49,6 +52,9 @@ export const UI_VIS_MAP = {
 // Keys hidden by default on first run (no localStorage yet).
 export const UI_VIS_DEFAULT_OFF = new Set(['rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
 
+// Keys with a tool- prefix that are NOT inside #tools-section.
+const OUTSIDE_TOOLS = new Set(['tool-calendar', 'tool-gremlin']);
+
 /**
  * Resolve every UI_VIS_MAP selector to visible (true) or hidden (false) for the
  * given saved state. Pure: no DOM, no localStorage — app.js applies the result.
@@ -67,7 +73,7 @@ export const resolveVisibility = (state = {}) => {
   const out = {};
   for (const [key, selector] of Object.entries(UI_VIS_MAP)) {
     let visible = key in state ? state[key] !== false : !UI_VIS_DEFAULT_OFF.has(key);
-    if (!toolsOn && key.startsWith('tool-')) visible = false;
+    if (!toolsOn && key.startsWith('tool-') && !OUTSIDE_TOOLS.has(key)) visible = false;
     out[selector] = visible;
   }
   return out;

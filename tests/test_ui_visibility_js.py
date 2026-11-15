@@ -43,7 +43,8 @@ def _map():
 # Selectors (kept in one place so the tests read as plain assertions).
 EMAIL = "#email-section, #rail-email"
 TOOLS = "#tools-section"
-CAL = "#tool-calendar-btn, #rail-calendar"
+CAL = "#calendar-section, #rail-calendar"
+GREMLIN = "#gremlin-section, #rail-gremlin"
 COMPARE = "#tool-compare-btn, #rail-compare"
 LIB = "#tool-library-btn, #rail-archive"
 RESEARCH = "#tool-research-btn, #rail-research"
@@ -56,6 +57,7 @@ RAG = "#overflow-rag-btn"
 EXPECTED_RAIL_PAIRS = {
     "email-section": "#rail-email",
     "tool-calendar": "#rail-calendar",
+    "tool-gremlin": "#rail-gremlin",
     "tool-compare": "#rail-compare",
     "tool-cookbook": "#rail-cookbook",
     "tool-research": "#rail-research",
@@ -113,21 +115,29 @@ def test_library_off_hides_archive_rail():
 def test_tools_off_hides_every_tool_rail_but_not_email():
     m = _resolve({"tools-section": False})
     assert m[TOOLS] is False
-    for sel in (CAL, COMPARE, LIB, RESEARCH):
+    for sel in (COMPARE, LIB, RESEARCH):
         assert m[sel] is False, sel
     assert m[EMAIL] is True  # email is independent of the Tools section
 
 
+def test_hub_rows_live_outside_tools():
+    # Calendar and Gremlin Index are their own rows (like Email), not in Tools.
+    m = _resolve({"tools-section": False})
+    assert m[CAL] is True and m[GREMLIN] is True
+    m = _resolve({"tool-gremlin": False})
+    assert m[GREMLIN] is False and m[CAL] is True
+
+
 def test_tools_off_overrides_per_tool_on():
     # A tool individually "on" must still hide when its parent Tools is off.
-    m = _resolve({"tools-section": False, "tool-calendar": True})
-    assert m[CAL] is False
+    m = _resolve({"tools-section": False, "tool-compare": True})
+    assert m[COMPARE] is False
 
 
 def test_tools_on_with_tool_off_hides_only_that_tool():
     m = _resolve({"tools-section": True, "tool-research": False})
     assert m[RESEARCH] is False
-    assert m[CAL] is True
+    assert m[COMPARE] is True
 
 
 def test_rail_new_chat_off_hides_new_session():

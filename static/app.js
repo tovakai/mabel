@@ -32,6 +32,7 @@ import sessionModule from './js/sessions.js';
 import { startBackgroundToolJobs } from './js/backgroundToolJobs.js';
 import memoryModule from './js/memory.js';
 import './js/persona.js?v=20261112gamemode';
+import './js/hub.js?v=20261115hub2';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js?v=20260910promptcopy1';
@@ -184,6 +185,7 @@ function initRailHoverLabels() {
     'rail-research': 'Research',
     'rail-email': 'Email',
     'rail-gallery': 'Gallery',
+    'rail-gremlin': 'Gremlin',
     'rail-archive': 'Library',
     'rail-memory': 'Memory',
     'rail-notes': 'Notes',
@@ -4026,6 +4028,7 @@ function startOdysseusApp() {
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-research':  'tool-research-btn',
     'rail-gallery':   'tool-gallery-btn',
+    'rail-gremlin':   'tool-gremlin-btn',
     'rail-archive':   'tool-library-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-persona':   'tool-persona-btn',
