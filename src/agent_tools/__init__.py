@@ -41,6 +41,7 @@ from src.agent_runtime.tool_catalog import discover_tools
 from .media_lookup_tool import MediaLookupTool
 from .printer_tool import PrintTool
 from .gremlin_tool import GremlinTool
+from .music_tool import MusicTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -51,6 +52,7 @@ TOOL_HANDLERS = {
     "media_lookup": MediaLookupTool().execute,
     "print_on_paper": PrintTool().execute,
     "manage_gremlin": GremlinTool().execute,
+    "control_music": MusicTool().execute,
     "web_fetch": WebFetchTool().execute,
     "pdf_extract": PdfExtractTool().execute,
     "youtube_tool": YouTubeTool().execute,

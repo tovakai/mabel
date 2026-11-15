@@ -465,7 +465,8 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
 
 
 # Checkout/return in the Gremlin Index is undoable bookkeeping he asked for in words.
-_SELF_APPROVING_FAMILIES = frozenset({"printer", "gremlin"})
+# Music only changes what plays in his own browser tab.
+_SELF_APPROVING_FAMILIES = frozenset({"printer", "gremlin", "music"})
 
 
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,

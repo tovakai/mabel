@@ -74,6 +74,9 @@ _PASSIVE_PREFIXES = (
     "/api/chat/stream_status",
     "/api/health",
     "/api/prefs",
+    # Music playing must not pause her background work.
+    "/api/music/stream",
+    "/api/music/cover",
 )
 
 

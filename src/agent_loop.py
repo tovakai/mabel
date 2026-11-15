@@ -8166,6 +8166,12 @@ Get current conditions and a three-day forecast using Open-Meteo. Use this for w
 ```
 The Gremlin Index, Anthon's inventory of his physical things. Actions: find, where, out (what's checked out), checkout ("to", "reason" optional), return. Use it whenever he asks where something is or says he's taking or returning something; answer from the result, never guess a place. If it lists several matches, ask him which one.""",
 
+    "control_music": """\
+```control_music
+{"action": "play", "query": "Boards of Canada"}
+```
+Play and control music from Anthon's Navidrome library in Mabel's web player (the tab he's chatting from). Actions: play (replace the queue), queue (add to the end), play_next, pause, resume, next, previous, now_playing, search, genres. "query" names an artist/album/song/playlist/genre; optional "kind" (song, album, artist, playlist, genre, random, starred, latest) and "shuffle". For a mood ("something chill"), look at search or genres first, then play. Say only what the result says it found.""",
+
     "print_on_paper": """\
 ```print_on_paper
 {"text": "milk\\neggs\\ncoffee", "title": "Shopping"}

@@ -184,6 +184,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
+    "/api/music/stream",    # a song plays for minutes
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
     "/api/model-endpoints", # /probe sub-route also iterates models
@@ -744,6 +745,8 @@ from routes.lifelog_routes import setup_lifelog_routes
 app.include_router(setup_lifelog_routes())
 from routes.hub_routes import setup_hub_routes
 app.include_router(setup_hub_routes())
+from routes.music_routes import setup_music_routes
+app.include_router(setup_music_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)

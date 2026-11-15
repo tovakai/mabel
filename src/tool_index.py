@@ -113,6 +113,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "web_search": "Private quick web lookup through Odysseus' configured search backend, normally SearXNG. Use for facts, current events, latest/current information, and ordinary 'search the web/look up/find online' requests. Use this instead of browser navigation to Google/DuckDuckGo/Bing or bash/curl/python/requests scraping. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "media_lookup": "Structured lookups for anime/manga (AniList), visual novels (VNDB) and fan wikis (any MediaWiki: Fandom, wiki.gg, Wikipedia): scores, genres, studios, dates, recommendations. Prefer over web_search for these topics.",
     "manage_gremlin": "The Gremlin Index, the user's inventory of their physical stuff (tools, parts, bins, media): find things, say where something lives, list what is checked out, and check items out or return them. Use when they ask where something is or say they are taking/returning something.",
+    "control_music": "Play music for the user from their Navidrome library in Mabel's web player: play/queue an artist, album, song, playlist, genre, their starred songs, the latest added albums or a random mix; pause, resume, skip, go back; say what's playing; search the library or list genres. Use when they ask you to play, put on, queue or control music.",
     "print_on_paper": "Print text on the thermal receipt printer on the user's desk (lists, recipes, notes, something you wrote). Use when they ask you to print something.",
     "get_weather": "Get current weather and a three-day forecast for a city or place from Open-Meteo without an API key. Use for weather lookups before web_search.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
@@ -513,6 +514,9 @@ class ToolIndex:
         frozenset({"gremlin", "gremlin index", "inventory", "tk-index", "checked out", "returning",
                    "put back", "put it back", "where is my", "where's my", "where did i put", "borrowing"}):
             {"manage_gremlin"},
+        frozenset({"play music", "put on some music", "music", "song", "songs", "playlist", "navidrome",
+                   "skip this song", "pause the music", "now playing", "what's playing"}):
+            {"control_music"},
         frozenset({"anime", "manga", "visual novel", "vndb", "anilist", "myanimelist",
                    "fandom", "wiki", "light novel", "manhwa"}):
             {"media_lookup"},

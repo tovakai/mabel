@@ -21,6 +21,8 @@ export const UI_VIS_MAP = {
   // switch doesn't hide them; keys keep the tool- prefix for saved prefs.
   'tool-calendar':       '#calendar-section, #rail-calendar',
   'tool-gremlin':        '#gremlin-section, #rail-gremlin',
+  // Music off hides the row and the player (sidebar + rail) too.
+  'tool-music':          '#music-section, #rail-music, #music-mini, #rail-music-play',
   // Per-tool entries pair the sidebar button with its rail launcher.
   'tool-compare':        '#tool-compare-btn, #rail-compare',
   'tool-cookbook':       '#tool-cookbook-btn, #rail-cookbook',
@@ -53,7 +55,7 @@ export const UI_VIS_MAP = {
 export const UI_VIS_DEFAULT_OFF = new Set(['rag-toggle-btn', 'text-emojis', 'chat-fullwidth']);
 
 // Keys with a tool- prefix that are NOT inside #tools-section.
-const OUTSIDE_TOOLS = new Set(['tool-calendar', 'tool-gremlin']);
+const OUTSIDE_TOOLS = new Set(['tool-calendar', 'tool-gremlin', 'tool-music']);
 
 /**
  * Resolve every UI_VIS_MAP selector to visible (true) or hidden (false) for the

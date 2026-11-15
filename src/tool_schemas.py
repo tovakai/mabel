@@ -32,6 +32,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "get_weather": ("location",),
     "print_on_paper": ("text",),
     "manage_gremlin": ("action",),
+    "control_music": ("action",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -377,6 +378,24 @@ FUNCTION_TOOL_SCHEMAS = [
                     "item": {"type": "string", "description": "What he called it, or its 8-digit ID (not needed for out)"},
                     "to": {"type": "string", "description": "checkout: where it went or who has it (optional)"},
                     "reason": {"type": "string", "description": "checkout: what it's for (optional)"}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "control_music",
+            "description": "Play and control music from Anthon's Navidrome library in Mabel's web player (it plays in the Mabel tab he's chatting from). play replaces the queue and starts; queue adds to the end; play_next puts it right after the current song. What to play: query (an artist, album, song, playlist or genre name) and optionally kind to say which; kind random = a random mix (query may name a genre), starred = his starred songs, latest = the newest albums in the library. pause/resume/next/previous control playback. now_playing says what's on. search and genres look through the library without playing, useful for picking something for a mood. Artists and genres shuffle by default; set shuffle to override. Only describe what the result says was found.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["play", "queue", "play_next", "pause", "resume", "next", "previous", "now_playing", "search", "genres"]},
+                    "query": {"type": "string", "description": "What to play or search for: an artist, album, song, playlist or genre name"},
+                    "kind": {"type": "string", "enum": ["auto", "song", "album", "artist", "playlist", "genre", "random", "starred", "latest"], "description": "What query names (default auto: the best match)"},
+                    "shuffle": {"type": "boolean", "description": "Shuffle the songs (default: yes for artists/genres/starred, no for albums/playlists)"},
+                    "count": {"type": "integer", "description": "random/latest: roughly how many songs (default 50, max 200)"}
                 },
                 "required": ["action"]
             }

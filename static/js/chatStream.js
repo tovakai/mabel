@@ -237,6 +237,14 @@ export function handleUIControl(uiData) {
         } else if (btn) btn.click();
       }
 
+    } else if (uiEvent === 'music' || uiData.ui_event === 'music') {
+      // control_music: the command rides on the full ui_control result; the
+      // tool_output copy has no music_command and is ignored here. music.js
+      // also drops a nonce it has already applied.
+      if (uiData.music_command) {
+        window.dispatchEvent(new CustomEvent('mabel-music-command', { detail: uiData.music_command }));
+      }
+
     } else if (uiEvent === 'open_email_reply' || uiData.ui_event === 'open_email_reply') {
       try {
         var activeCtx = documentModule && documentModule.getActiveEmailComposerContext

@@ -88,6 +88,7 @@ FAMILY_TOOLS = {
     "image_generation": frozenset({"generate_image"}),
     "printer": frozenset({"print_on_paper"}),
     "gremlin": frozenset({"manage_gremlin"}),
+    "music": frozenset({"control_music"}),
     "image_editing": frozenset({"edit_image"}),
     "transcription": frozenset({"transcribe_media"}),
     "media_inspection": frozenset({"inspect_media"}),
@@ -727,7 +728,7 @@ _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
     "image_generation": "generate_image", "image_editing": "edit_image", "printer": "print_on_paper",
-    "gremlin": "manage_gremlin",
+    "gremlin": "manage_gremlin", "music": "control_music",
     "transcription": "transcribe_media", "media_inspection": "inspect_media", "ocr": "extract_text",
 }
 
@@ -773,6 +774,26 @@ _MEDIA_REQUESTS = tuple(
         r"[\w×-]+(?:\s+(?!(?:from|at|in|on|of|for|with|to)\b)[\w×-]+){0,4}\s*\??\s*$"
         r"|\bwhere\s+(?:does|do)\s+(?:the|my|this|that|these|those)\s+[\w\s×-]{1,40}?\s+(?:go|belong|live)\b"
         r"|\bwhat(?:['’]s|\s+is|\s+do\s+i\s+have)\s+(?:still\s+)?checked\s+out\b", re.I)),
+    # Music in Mabel's player (Navidrome): "play Boards of Canada", "put on something chill",
+    # "queue the new album", "pause the music", "skip this song", "what's playing?".
+    # Not games/role-play ("play a game", "play chess", "role-play"), not "put X on my calendar".
+    ("music", re.compile(
+        r"^\s*(?:(?:hey|hi|ok(?:ay)?)\s+)?(?:mabel[\s,!:—–-]+)?" + _REQUEST_PREFIX + r"(?:"
+        r"(?:play|shuffle|queue(?:\s+up)?|(?:put|throw|stick)\s+on)\b(?!\s*\()"
+        r"(?!\s+(?:(?:a|an|the|some|another|this|that|my|me)\s+)?(?:games?|round|match|roles?|part|trick|jokes?|pranks?|"
+        r"chess|cards?|tennis|football|soccer|board\s+games?|video\s*games?|minecraft|steam|it\b|along|around|with|"
+        r"pretend|dead|fair|catch|dumb|hard\s+to\s+get|devil)\b)"
+        r"(?!.{0,60}\b(?:calendar|agenda|schedule|to-?do|notes?|list|tasks?|jobs?|research|downloads?|prints?|"
+        r"jackets?|coats?|shoes?|clothes|kettle|weight|hold|deck|order|game)\b)"
+        r"|(?:pause|stop|resume|unpause|mute)\s+(?:the\s+|this\s+|my\s+)?(?:music|songs?|tracks?|playback|player|tunes)\b"
+        r"|skip(?:\s+(?:this|the|that))?(?:\s+(?:song|track))?\s*[.!?]*\s*$"
+        r"|(?:next|previous|last)\s+(?:song|track)\b"
+        r")"
+        r"|\bskip\s+(?:this|the|that)\s+(?:song|track)\b"
+        r"|\bwhat(?:['’]s|\s+is)\s+(?:this\s+song|playing|(?:currently\s+|now\s+)playing|on\s+right\s+now)\b"
+        r"|\bwhat\s+(?:song|track)\s+is\s+(?:this|playing)\b"
+        r"|\b(?:play|put\s+on|queue(?:\s+up)?)\b[^.?!]{0,60}\b(?:music|songs?|tracks?|album|playlist|tunes)\b"
+        r"(?![^.?!]{0,20}\b(?:games?|video)\b)", re.I)),
 )
 
 

@@ -58,6 +58,7 @@ EXPECTED_RAIL_PAIRS = {
     "email-section": "#rail-email",
     "tool-calendar": "#rail-calendar",
     "tool-gremlin": "#rail-gremlin",
+    "tool-music": "#rail-music",
     "tool-compare": "#rail-compare",
     "tool-cookbook": "#rail-cookbook",
     "tool-research": "#rail-research",
@@ -126,6 +127,9 @@ def test_hub_rows_live_outside_tools():
     assert m[CAL] is True and m[GREMLIN] is True
     m = _resolve({"tool-gremlin": False})
     assert m[GREMLIN] is False and m[CAL] is True
+    music = "#music-section, #rail-music, #music-mini, #rail-music-play"
+    assert _resolve({"tools-section": False})[music] is True
+    assert _resolve({"tool-music": False})[music] is False
 
 
 def test_tools_off_overrides_per_tool_on():

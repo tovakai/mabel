@@ -226,6 +226,12 @@ _register(
     ToolEffect.WRITE_PRIVATE,
 )
 _register(
+    # Navidrome lookups + changing what plays in his browser tab.
+    {"control_music"},
+    ToolEffect.READ_PRIVATE,
+    ToolEffect.UI_SIDE_EFFECT,
+)
+_register(
     {"print_on_paper"},
     ToolEffect.EXTERNAL_SIDE_EFFECT,
     ToolEffect.WRITE_PRIVATE,
@@ -354,6 +360,7 @@ _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "manage_calendar": frozenset({"list_calendars", "list_events"}),
         "manage_gremlin": frozenset({"find", "where", "out"}),
+        "control_music": frozenset({"now_playing", "search", "genres"}),
         "manage_contact": frozenset({"list", "search", "find"}),
         "manage_documents": frozenset({"list", "read", "view", "open", "get"}),
         "manage_memory": frozenset({"list", "search"}),
@@ -378,6 +385,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         ),
         "manage_contact": frozenset({"add", "update", "edit", "delete"}),
         "manage_gremlin": frozenset({"checkout", "return"}),
+        "control_music": frozenset({"play", "queue", "play_next", "pause", "resume", "next", "previous"}),
         "manage_documents": frozenset({"delete", "tidy"}),
         "manage_memory": frozenset({"add", "edit", "delete"}),
         "manage_notes": frozenset({"add", "update", "delete", "toggle_item"}),
@@ -442,6 +450,7 @@ _ACTION_DEFAULTS: Mapping[str, str] = MappingProxyType(
     {
         "manage_calendar": "list_events",
         "manage_gremlin": "find",
+        "control_music": "play",
         "manage_documents": "list",
         "manage_research": "list",
         "manage_tasks": "list",
@@ -463,6 +472,14 @@ _ACTION_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType(
                 "search": "find", "lookup": "find", "locate": "where", "list_out": "out", "away": "out",
                 "check_out": "checkout", "borrow": "checkout",
                 "returned": "return", "back": "return", "put_back": "return",
+            }
+        ),
+        "control_music": MappingProxyType(
+            {
+                "add": "queue", "enqueue": "queue", "add_to_queue": "queue", "up_next": "play_next",
+                "stop": "pause", "unpause": "resume", "continue": "resume", "skip": "next",
+                "prev": "previous", "back": "previous", "current": "now_playing", "find": "search",
+                "shuffle": "play",
             }
         ),
         "manage_notes": MappingProxyType(
@@ -937,8 +954,8 @@ class ToolRunSecurityContext:
                         f"request authority denies {operation.tool}",
                     )
             return ToolGateDecision(True)
-        if tool_name == "print_on_paper":
-            # Paper is low-impact: when the request itself asked for a print,
+        if tool_name in {"print_on_paper", "control_music"}:
+            # Paper and music are low-impact: when the request itself asked for a print,
             # web/document context in the run doesn't need a second approval.
             from src.agent_runtime.authority import ExactOperation, active_request_authority
             authority = active_request_authority()

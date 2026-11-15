@@ -266,6 +266,7 @@
   <link rel="stylesheet" href="/static/css/16-calendar.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/17-research.css?v=20260929csssplit">
   <link rel="stylesheet" href="/static/css/18-hub.css?v=20261115hub1">
+  <link rel="stylesheet" href="/static/css/19-music.css?v=20261115music1">
   <!-- Panel stylesheets split out of style.css for maintainability. They are
        eager and their order is load-bearing: the cascade is the concatenation of
        these files in this order, so they must stay in this order here and in the
@@ -834,6 +835,7 @@
     <button class="icon-rail-btn" id="rail-gremlin" title="Gremlin Index"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg></button>
     <button class="icon-rail-btn" id="rail-archive" title="Library"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></button>
     <button class="icon-rail-btn" id="rail-memory" title="Memory"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
+    <button class="icon-rail-btn" id="rail-music" title="Music"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
     <button class="icon-rail-btn" id="rail-notes" title="Notes"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg></button>
     <button class="icon-rail-btn" id="rail-persona" title="Persona"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
     <button class="icon-rail-btn" id="rail-skills" title="Skills"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
@@ -841,6 +843,7 @@
     <button class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <div style="flex:1"></div>
     <!-- Static: bottom -->
+    <button class="icon-rail-btn" id="rail-music-play" title="Play / pause" hidden><svg class="mp-icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg><svg class="mp-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg></button>
     <button class="icon-rail-btn" id="rail-settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
 
@@ -951,6 +954,11 @@
         <div class="section-header-flex">
           <span class="section-title" id="tool-gremlin-btn" style="cursor:pointer;" title="Open Gremlin Index"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg><span>Gremlin Index</span></span>
         </div>
+      <div class="section hub-section" id="music-section">
+        <div class="section-header-flex">
+          <span class="section-title" id="tool-music-btn" style="cursor:pointer;" title="Open Music (search, albums, queue, lyrics)"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Music</span><span class="music-row-eq" id="music-row-eq" hidden><i></i><i></i><i></i></span></span>
+        </div>
+      </div>
       </div>
 
       <div class="section" id="tools-section">
@@ -1072,6 +1080,23 @@
           <span class="strata-toggle-dot" aria-hidden="true"></span>
         </button>
       </div>
+    </div>
+    <!-- Music mini-player (static/js/music.js); shown once something is queued -->
+    <div class="music-mini" id="music-mini" hidden>
+      <div class="music-mini-seek" id="music-mini-seek" role="slider" aria-label="Seek" tabindex="0"><div class="music-mini-seek-fill"></div></div>
+      <div class="music-mini-row">
+        <button type="button" class="music-mini-art" id="music-mini-art" title="Open Music"><img alt="" hidden></button>
+        <div class="music-mini-meta" id="music-mini-meta" title="Open the queue">
+          <div class="music-mini-title">Nothing playing</div>
+          <div class="music-mini-sub"></div>
+        </div>
+        <div class="music-mini-controls">
+          <button type="button" data-music="prev" title="Previous" aria-label="Previous"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+          <button type="button" data-music="toggle" class="music-mini-play" title="Play / pause" aria-label="Play / pause"><svg class="mp-icon-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg><svg class="mp-icon-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg></button>
+          <button type="button" data-music="next" title="Next" aria-label="Next"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        </div>
+      </div>
+      <div class="music-mini-time"><span id="music-mini-pos">0:00</span><span id="music-mini-dur">0:00</span></div>
     </div>
     <div class="sidebar-user-bar" id="sidebar-user-bar">
       <div class="user-bar-left" id="user-bar-profile">
@@ -1512,6 +1537,31 @@
         <button class="close-btn" id="close-persona-modal" aria-label="Close persona modal">✖</button>
       </div>
       <div class="modal-body memory-modal-body" id="persona-body" style="overflow-y:auto"></div>
+    </div>
+  </div>
+
+  <!-- Music window (static/js/music.js): Navidrome through Mabel's backend -->
+  <div id="music-modal" class="modal hidden">
+    <div class="modal-content music-modal-content" role="dialog" aria-label="Music" style="background:var(--bg)">
+      <div class="modal-header">
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Music</h4>
+        <div class="music-search-wrap"><input type="search" id="music-search" placeholder="Search artists, albums, songs…" autocomplete="off" spellcheck="false"></div>
+        <button class="close-btn" id="close-music-modal" aria-label="Close Music">✖</button>
+      </div>
+      <div class="modal-body music-body">
+        <nav class="music-nav" id="music-nav">
+          <button data-view="home" class="active">Home</button>
+          <button data-view="latest">Latest</button>
+          <button data-view="playlists">Playlists</button>
+          <button data-view="starred">Starred</button>
+          <button data-view="queue">Queue</button>
+          <button data-view="lyrics">Lyrics</button>
+          <div class="music-nav-spacer"></div>
+          <label class="music-volume" title="Volume"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg><input type="range" id="music-volume" min="0" max="1" step="0.01" value="1"></label>
+          <button data-view="connection" class="music-nav-small">Connection</button>
+        </nav>
+        <div class="music-main" id="music-main"></div>
+      </div>
     </div>
   </div>
 
@@ -2051,6 +2101,11 @@
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg></span>
                 <span class="vis-label">Gremlin Index</span>
                 <input type="checkbox" checked data-ui-key="tool-gremlin"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+                <span class="vis-label">Music</span>
+                <input type="checkbox" checked data-ui-key="tool-music"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
