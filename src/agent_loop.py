@@ -8160,6 +8160,12 @@ Bounded read-only Obsidian vault research through the configured Research/Dottie
 ```
 Get current conditions and a three-day forecast using Open-Meteo. Use this for weather questions before searching the web. No API key is required; include the returned source and local observation time in the answer.""",
 
+    "manage_gremlin": """\
+```manage_gremlin
+{"action": "where", "item": "soldering iron"}
+```
+The Gremlin Index, Anthon's inventory of his physical things. Actions: find, where, out (what's checked out), checkout ("to", "reason" optional), return. Use it whenever he asks where something is or says he's taking or returning something; answer from the result, never guess a place. If it lists several matches, ask him which one.""",
+
     "print_on_paper": """\
 ```print_on_paper
 {"text": "milk\\neggs\\ncoffee", "title": "Shopping"}

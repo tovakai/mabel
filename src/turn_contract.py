@@ -87,6 +87,7 @@ FAMILY_TOOLS = {
     "sessions": frozenset({"list_sessions", "manage_session", "create_session", "send_to_session", "chat_with_model", "pipeline"}),
     "image_generation": frozenset({"generate_image"}),
     "printer": frozenset({"print_on_paper"}),
+    "gremlin": frozenset({"manage_gremlin"}),
     "image_editing": frozenset({"edit_image"}),
     "transcription": frozenset({"transcribe_media"}),
     "media_inspection": frozenset({"inspect_media"}),
@@ -726,6 +727,7 @@ _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
     "image_generation": "generate_image", "image_editing": "edit_image", "printer": "print_on_paper",
+    "gremlin": "manage_gremlin",
     "transcription": "transcribe_media", "media_inspection": "inspect_media", "ocr": "extract_text",
 }
 
@@ -758,6 +760,19 @@ _MEDIA_REQUESTS = tuple(
         + r"print(?:\s+(?:it|this|that))?(?:\s+out)?\b(?!\s*\()"
         r"(?!.{0,80}\b(?:python|bash|shell|console|terminal|stdout|stderr|variables?|functions?|scripts?|code|"
         r"logs?|output\s+of|statements?|json|env(?:ironment)?|traceback|stack)\b)", re.I)),
+    # The Gremlin Index (his inventory): "where's my soldering iron", "returning the M3 bin",
+    # "I'm borrowing the multimeter", "what's still checked out". Not code ("check out this repo").
+    ("gremlin", re.compile(
+        r"\bgremlin(?:\s+index)?\b|\btk[\s-]?index\b|\b(?:my|the)\s+inventory\b"
+        r"|\b(?:i['’]?m\s+|im\s+|i\s+am\s+)?(?:returning|putting\s+back|borrowing)\s+(?:the|my|that|this)\b"
+        r"(?!\s+(?:favou?r|call|calls|email|message|text|book\s+to\s+the\s+library|money)\b)"
+        r"|\bput\s+(?:the|my|that|this)\s+[\w\s×-]{1,40}?\s+back\b"
+        r"|\bwhere(?!.{0,80}\b(?:files?|folders?|director(?:y|ies)|config|functions?|bugs?|code|scripts?|repo|"
+        r"tabs?|windows?|settings?|buttons?|pages?|links?|errors?|logs?|variables?)\b)"
+        r"(?:['’]s|\s+(?:is|are|did\s+i\s+(?:put|leave)|do\s+i\s+keep))\s+(?:my|the)\s+(?!(?:nearest|closest|best)\b)"
+        r"[\w×-]+(?:\s+(?!(?:from|at|in|on|of|for|with|to)\b)[\w×-]+){0,4}\s*\??\s*$"
+        r"|\bwhere\s+(?:does|do)\s+(?:the|my|this|that|these|those)\s+[\w\s×-]{1,40}?\s+(?:go|belong|live)\b"
+        r"|\bwhat(?:['’]s|\s+is|\s+do\s+i\s+have)\s+(?:still\s+)?checked\s+out\b", re.I)),
 )
 
 

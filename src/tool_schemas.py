@@ -31,6 +31,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "web_search": ("query", "queries"),
     "get_weather": ("location",),
     "print_on_paper": ("text",),
+    "manage_gremlin": ("action",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
     "private_browser": ("action",),
@@ -361,6 +362,23 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {"location": {"type": "string", "description": "City or place, optionally with region/country"}},
                 "required": ["location"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_gremlin",
+            "description": "The Gremlin Index: Anthon's inventory of his physical things (tools, parts, Gridfinity bins, shelves, media), each with an 8-digit ID and a home address. find = search by name/nickname/spec/ID; where = where one item lives (its home, what holds it, whether it's out); out = everything checked out right now; checkout = mark an item as taken out (its home stays); return = it's back home. If several items match, the result lists them: ask him which and use the ID. Writes are undoable in his web UI. Never invent places or IDs; say what the index says.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["find", "where", "out", "checkout", "return"]},
+                    "item": {"type": "string", "description": "What he called it, or its 8-digit ID (not needed for out)"},
+                    "to": {"type": "string", "description": "checkout: where it went or who has it (optional)"},
+                    "reason": {"type": "string", "description": "checkout: what it's for (optional)"}
+                },
+                "required": ["action"]
             }
         }
     },

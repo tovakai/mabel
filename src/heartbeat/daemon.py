@@ -36,6 +36,7 @@ _music_task: asyncio.Task | None = None
 _paper_task: asyncio.Task | None = None
 _print_task: asyncio.Task | None = None
 _morning_task: asyncio.Task | None = None
+_gremlin_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -101,6 +102,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         return _last
     sig = await asyncio.to_thread(read)
     _maybe_morning(sig, now)
+    _maybe_gremlin_checkin(sig, now)
     state = load_state()
     active = state.get("active_session")
 
@@ -340,6 +342,27 @@ def _maybe_morning(sig, now: datetime) -> None:
     _morning_task.add_done_callback(_outcome("morning"))
     _morning_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] the morning page failed: %s", t.exception()))
+
+
+def _maybe_gremlin_checkin(sig, now: datetime) -> None:
+    """Evening check-in on what's still checked out of the Gremlin Index (src/initiative/gremlin_checkin.py)."""
+    global _gremlin_task
+    from src.initiative import gremlin_checkin
+    if _gremlin_task and not _gremlin_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        from src.curiosity import runner
+        model_free = not sig.chat_active and not runner.status().get("running") and bool(sig.strata)
+        if gremlin_checkin.gate(data_dir=Path(DATA_DIR), now=now, model_free=model_free):
+            return
+    except Exception:
+        logger.debug("[heartbeat] gremlin check-in gate failed", exc_info=True)
+        return
+    _gremlin_task = asyncio.create_task(gremlin_checkin.run_once(data_dir=Path(DATA_DIR), now=now,
+                                                                 model_free=model_free))
+    _gremlin_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] the gremlin check-in failed: %s", t.exception()))
 
 
 def _maybe_print(now: datetime) -> None:

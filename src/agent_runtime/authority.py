@@ -70,6 +70,7 @@ _OWNER_PRIVATE_READ_TOOLS = frozenset({
 # admit those list actions when intended.
 _OWNER_PRIVATE_ACTION_READ_TOOLS = frozenset({
     "manage_calendar",
+    "manage_gremlin",
     "manage_contact",
     "manage_documents",
     "manage_email_state",
@@ -463,7 +464,8 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
     return SemanticIntent(families, selected, required_read_operation_for_request(request_text, history))
 
 
-_SELF_APPROVING_FAMILIES = frozenset({"printer"})
+# Checkout/return in the Gremlin Index is undoable bookkeeping he asked for in words.
+_SELF_APPROVING_FAMILIES = frozenset({"printer", "gremlin"})
 
 
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,

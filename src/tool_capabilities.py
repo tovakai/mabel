@@ -221,6 +221,11 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
+    {"manage_gremlin"},
+    ToolEffect.READ_PRIVATE,
+    ToolEffect.WRITE_PRIVATE,
+)
+_register(
     {"print_on_paper"},
     ToolEffect.EXTERNAL_SIDE_EFFECT,
     ToolEffect.WRITE_PRIVATE,
@@ -348,6 +353,7 @@ def capabilities_for_tool(tool_name: Any) -> ToolCapabilities:
 _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "manage_calendar": frozenset({"list_calendars", "list_events"}),
+        "manage_gremlin": frozenset({"find", "where", "out"}),
         "manage_contact": frozenset({"list", "search", "find"}),
         "manage_documents": frozenset({"list", "read", "view", "open", "get"}),
         "manage_memory": frozenset({"list", "search"}),
@@ -371,6 +377,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
             {"create_event", "update_event", "delete_event"}
         ),
         "manage_contact": frozenset({"add", "update", "edit", "delete"}),
+        "manage_gremlin": frozenset({"checkout", "return"}),
         "manage_documents": frozenset({"delete", "tidy"}),
         "manage_memory": frozenset({"add", "edit", "delete"}),
         "manage_notes": frozenset({"add", "update", "delete", "toggle_item"}),
@@ -434,6 +441,7 @@ _ACTION_DESTRUCTIVE: Mapping[str, frozenset[str]] = MappingProxyType(
 _ACTION_DEFAULTS: Mapping[str, str] = MappingProxyType(
     {
         "manage_calendar": "list_events",
+        "manage_gremlin": "find",
         "manage_documents": "list",
         "manage_research": "list",
         "manage_tasks": "list",
@@ -448,6 +456,13 @@ _ACTION_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType(
                 "update": "update_event",
                 "delete": "delete_event",
                 "list": "list_events",
+            }
+        ),
+        "manage_gremlin": MappingProxyType(
+            {
+                "search": "find", "lookup": "find", "locate": "where", "list_out": "out", "away": "out",
+                "check_out": "checkout", "borrow": "checkout",
+                "returned": "return", "back": "return", "put_back": "return",
             }
         ),
         "manage_notes": MappingProxyType(

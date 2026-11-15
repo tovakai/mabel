@@ -75,6 +75,7 @@ NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | KNOWLEDGE_TOOLS | {
     "resolve_contact",
     "manage_contact",
     "manage_calendar",
+    "manage_gremlin",
     "vault_search",
     "vault_get",
     "vault_unlock",
@@ -169,7 +170,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "download_model", "serve_model",
     "stop_served_model", "cancel_download", "adopt_served_model", "serve_preset",
     "generate_image", "edit_image", "trigger_research", "manage_research",
-    "print_on_paper",
+    "print_on_paper", "manage_gremlin",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
     "bash", "python",
