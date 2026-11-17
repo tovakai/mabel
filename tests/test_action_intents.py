@@ -152,3 +152,19 @@ def test_router_reports_non_calendar_categories():
     assert classify_tool_intent("reply to that email").category == "email"
     assert classify_tool_intent("open my calendar").category == "ui"
     assert classify_tool_intent("research cost effective local models").category == "research"
+
+
+def test_everyday_on_and_from_are_not_named_computers():
+    # Real messages from 2026-10/11 that the bare "on/from <word>" rule sent to a shell agent.
+    for prompt in (
+        "Cool, could you also recommend some music that I don't have on deck that I could get?",
+        "Re-watching lost on DVD",
+        "I just got back from work",
+        "what's on Monday?",
+        "Yeah. The idea is that it takes words from your dreams and use that as a prompt.",
+        "We just did some bug maintenance on you, so just checking in",
+    ):
+        assert classify_tool_intent(prompt).category != "workspace", prompt
+    for prompt in ("restart the backend on dottie", "copy the photos from lifebook", "run uptime on dottie"):
+        intent = classify_tool_intent(prompt)
+        assert intent.needs_tools and intent.category in {"workspace", "shell"}, prompt

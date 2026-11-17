@@ -22,11 +22,27 @@ def test_idle_file(tmp_path):
     f = tmp_path / "idle"
     assert signals.read_idle(f) == ("unknown", None)
     f.write_text("idle 1000\n")
-    assert signals.read_idle(f, now=1000 + 60) == ("idle", 5.0)      # 240 s timeout + 60 s
+    assert signals.read_idle(f, now=1000 + 60, boot=500) == ("idle", 5.0)      # 240 s timeout + 60 s
     f.write_text("active 1000\n")
-    assert signals.read_idle(f, now=5000) == ("active", 0.0)
+    assert signals.read_idle(f, now=5000, boot=500) == ("active", 0.0)
     f.write_text("garbage")
     assert signals.read_idle(f)[0] == "unknown"
+
+
+def test_idle_from_before_a_reboot_means_he_is_back(tmp_path):
+    # 2026-11-17: "idle" written at 06:18 before suspend survived a reboot at 12:50, so the
+    # heartbeat counted him away for 7 h while he browsed and every night job ran on top of him.
+    f = tmp_path / "idle"
+    f.write_text("idle 1000\n")
+    assert signals.read_idle(f, now=30000, boot=25000) == ("active", 0.0)
+    assert signals.read_idle(f, now=30000, boot=900) == ("idle", round((29000 + 240) / 60, 1))
+
+
+def test_boot_time_from_proc_stat(tmp_path):
+    stat = tmp_path / "stat"
+    stat.write_text("cpu  1 2 3\nbtime 1794916248\nprocesses 9\n")
+    assert signals.booted_at(stat) == 1794916248.0
+    assert signals.booted_at(tmp_path / "missing") is None
 
 
 def _smi(apps, util="3", sessions="0", encoder="0"):

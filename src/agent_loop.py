@@ -24412,6 +24412,30 @@ async def _stream_agent_loop_impl(
         if _base_relevant_tools is not None:
             _base_relevant_tools.difference_update(_DOMAIN_TOOL_MAP["files"])
 
+    if exact_approval is not None and relevant_tools:
+        # Resuming after an approval: the caller hands back the tools the
+        # interrupted turn had. Lexical re-routing of the same message must not
+        # swap them out (2026-11-16: "recommend some music" resumed web-only, her
+        # control_music calls were dropped as unoffered and the turn stalled), nor
+        # refuse the turn as "web disabled" when the approved action isn't web.
+        _restored = set(relevant_tools) - set(disabled_tools) - set(_caller_disabled_tools)
+        if _relevant_tools is None:
+            _relevant_tools = set(_restored)
+        else:
+            _relevant_tools.update(_restored)
+        if _base_relevant_tools is not None:
+            _base_relevant_tools.update(_restored)
+        _web_search_unavailable_turn = False
+        _pure_web_turn = False       # its per-round re-pick would drop them again
+        _route_tools_before_restore = _route_relevant_tools
+
+        def _route_relevant_tools(candidate_model: str):
+            # The per-candidate request state re-picks tools too; keep the restored ones.
+            picked = _route_tools_before_restore(candidate_model)
+            return set(_restored) if picked is None else set(picked) | _restored
+
+        logger.info("[agent-intent] approval continuation kept the turn's tools=%s", sorted(_restored))
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 

@@ -126,3 +126,14 @@ def test_routes_music_requests(text):
 ])
 def test_does_not_route_other_requests(text):
     assert not MUSIC.search(text)
+
+
+def test_looking_in_his_library_needs_no_approval():
+    # 2026-11-16: "recommend some music that I don't have on deck" isn't a play request, so the
+    # music family wasn't granted and her genres lookup got an "Allow this action?" card.
+    from src.agent_runtime.authority import ExactOperation, create_request_authority
+    ask = "Cool, could you also recommend some music that I don't have on deck that I could get?"
+    authority = create_request_authority(ask, owner="alice", session_id="s", workspace="", interactive_review=True)
+    for action in ('{"action": "genres"}', '{"action": "now_playing"}', '{"action": "search", "query": "Bonobo"}'):
+        assert authority.permits(ExactOperation.normalize("control_music", action))
+    assert not authority.permits(ExactOperation.normalize("control_music", '{"action": "play", "query": "x"}'))

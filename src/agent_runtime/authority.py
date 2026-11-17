@@ -71,6 +71,7 @@ _OWNER_PRIVATE_READ_TOOLS = frozenset({
 _OWNER_PRIVATE_ACTION_READ_TOOLS = frozenset({
     "manage_calendar",
     "manage_gremlin",
+    "control_music",       # now_playing/search/genres: looking in his own library
     "manage_contact",
     "manage_documents",
     "manage_email_state",

@@ -7,6 +7,7 @@ Stores pre-computed embeddings (ChromaDB does not manage embedding).
 """
 
 import logging
+import time
 from typing import List, Dict, Optional
 
 from src.embedding_lanes import (
@@ -26,16 +27,27 @@ class MemoryVectorStore:
     """Vector index over memory entries for semantic retrieval."""
 
     COLLECTION_NAME = "odysseus_memories"
+    # ChromaDB comes up after the web app at boot; without a retry the store
+    # stayed down until a manual restart (2026-11-16/17).
+    RETRY_S = 30.0
 
     def __init__(self, data_dir: str, embedding_model=None):
         self._model = embedding_model
         self._collection = None
         self._lanes = []
         self._healthy = False
+        self._last_attempt = 0.0
 
         self._initialize()
 
+    def _ready(self) -> bool:
+        """Healthy, or try connecting again (at most every RETRY_S) if not."""
+        if not self._healthy and time.monotonic() - self._last_attempt >= self.RETRY_S:
+            self._initialize()
+        return self._healthy
+
     def _initialize(self):
+        self._last_attempt = time.monotonic()
         try:
             self._lanes = build_embedding_lanes(self.COLLECTION_NAME)
             if not self._lanes:
@@ -58,7 +70,7 @@ class MemoryVectorStore:
 
     @property
     def healthy(self) -> bool:
-        return self._healthy
+        return self._ready()
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
         if not self._lanes:
@@ -67,7 +79,7 @@ class MemoryVectorStore:
 
     def count(self) -> int:
         """Return the number of stored vectors."""
-        if not self._healthy:
+        if not self._ready():
             return 0
         return lane_count(self._lanes)
 
@@ -103,7 +115,7 @@ class MemoryVectorStore:
 
     def add(self, memory_id: str, text: str):
         """Add a single memory entry to the vector index."""
-        if not self._healthy:
+        if not self._ready():
             return
         for lane in self._lanes:
             try:
@@ -121,7 +133,7 @@ class MemoryVectorStore:
 
     def remove(self, memory_id: str):
         """Remove a memory entry. O(1) — no rebuild needed."""
-        if not self._healthy:
+        if not self._ready():
             return
         for collection in self._collections_for_delete():
             try:
@@ -136,7 +148,7 @@ class MemoryVectorStore:
         ChromaDB cosine distance = 1 - cosine_similarity.
         We convert back: similarity = 1.0 - distance.
         """
-        if not self._healthy or self.count() == 0:
+        if not self._ready() or self.count() == 0:
             return []
 
         out = []
@@ -164,7 +176,7 @@ class MemoryVectorStore:
 
     def find_similar(self, text: str, threshold: float = 0.92) -> Optional[str]:
         """Check if a near-duplicate exists. Returns memory_id if found, else None."""
-        if not self._healthy or self.count() == 0:
+        if not self._ready() or self.count() == 0:
             return None
 
         for lane in self._lanes:
@@ -188,7 +200,7 @@ class MemoryVectorStore:
     def rebuild(self, memories: List[Dict]):
         """Rebuild the entire index from a list of memory entries.
         Each entry must have 'id' and 'text' keys."""
-        if not self._healthy:
+        if not self._ready():
             return
 
         from src.chroma_client import get_chroma_client

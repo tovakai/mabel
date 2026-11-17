@@ -175,7 +175,13 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("workspace", "file/code inspection request", rf"{_PLEASE}(?:find|inspect|look\s+at|open|read|check)\b.{{0,120}}\b(?:file|folder|directory|repo|repository|code|source|logs?|trace|stack|diff)\b"),
         ("workspace", "server/process debugging request", rf"{_PLEASE}(?:check|debug|fix|restart|start|stop|kill|tail|inspect)\b.{{0,120}}\b(?:server|service|process|port|docker|container|tmux|endpoint|logs?)\b"),
         ("workspace", "local computer task request", r"\b(?:on|from|in|using|with)\s+(?:this|my|the)\s+(?:computer|machine|pc|laptop|device|system)\b|\b(?:local|host)\s+(?:computer|machine|files?|system)\b"),
-        ("workspace", "named computer task request", r"\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
+        # A bare "on/from <word>" matched 33 of his 281 chat messages since 10-01 and
+        # none named a computer ("Put on some music", "on deck", "from your dreams",
+        # "on DVD"), giving ordinary chat a shell. Require a computer action first.
+        ("workspace", "named computer task request", r"\b(?:run|execute|start|stop|restart|reboot|install|uninstall|deploy|"
+         r"copy|move|sync|back\s+up|backup|mount|unmount|kill|ping|upgrade|update|delete|remove|pull|push|download|upload)\b"
+         r".{0,80}?\b(?:on|from)\s+(?!this\b|my\b|the\b|a\b|an\b|that\b|it\b|same\b|current\b|your\b|his\b|her\b|our\b|their\b|"
+         r"some\b|top\b|now\b|here\b|there\b)(?:[a-z][a-z0-9_.-]{1,31})\b"),
         ("workspace", "terminal workspace request", rf"\b(?:terminal|shell|workspace|tmux|docker|container|git|branch|commit|diff|pytest|stacktrace|traceback|{_BENCHMARK_COMMAND}|eval(?:uation)?s?)\b"),
 
         # Shell / remote-host intent.

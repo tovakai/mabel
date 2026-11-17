@@ -49,13 +49,32 @@ class Signals:
         return asdict(self)
 
 
-def read_idle(path: Path = IDLE_FILE, now: float | None = None) -> tuple[str, float | None]:
+def booted_at(stat: Path = Path("/proc/stat")) -> float | None:
+    """When this machine booted (epoch seconds); None if it can't be read."""
+    try:
+        for line in stat.read_text().splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def read_idle(path: Path = IDLE_FILE, now: float | None = None,
+              boot: float | None = None) -> tuple[str, float | None]:
     now = time.time() if now is None else now
     try:
         state, stamp = path.read_text().split()[:2]
         stamp = float(stamp)
     except (OSError, ValueError):
         return "unknown", None
+    boot = booted_at() if boot is None else boot
+    if state == "idle" and boot is not None and stamp < boot:
+        # Written before a reboot. hypridle starts fresh and writes nothing until
+        # he goes idle, so the old "idle" would count him away the whole time he
+        # sits at the PC he just started (2026-11-17: night jobs ran 12:56-13:43
+        # while he browsed). Someone just booted it: he's here.
+        return "active", 0.0
     if state == "idle" and stamp <= now:
         return "idle", round((now - stamp + IDLE_TIMEOUT_S) / 60, 1)
     if state == "active":
