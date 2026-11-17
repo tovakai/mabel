@@ -37,6 +37,7 @@ _paper_task: asyncio.Task | None = None
 _print_task: asyncio.Task | None = None
 _morning_task: asyncio.Task | None = None
 _gremlin_task: asyncio.Task | None = None
+_housekeeping_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -154,6 +155,9 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
                 _maybe_write_paper(sig, now, research_running=research_running)
             if not any(t and not t.done() for t in (_dream_task, _revisit_task, _music_task, _paper_task)):
                 _maybe_read_book(sig, now, research_running=research_running)
+            if not any(t and not t.done() for t in (_dream_task, _revisit_task, _music_task, _paper_task,
+                                                       _book_task)):
+                _maybe_gremlin_housekeeping(sig, now, research_running=research_running)
     if decision.allow:
         held = power.hold_sleep()
         try:
@@ -178,13 +182,15 @@ def _record_why(sig, now: datetime, decision) -> None:
     """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
     from src.curiosity import runner
     from src.persona import books, dreams, letters, morning, music, news, paper, revisit
+    from src.initiative import gremlin_housekeeping as housekeeping
     from src.constants import DATA_DIR
     why.record("research", [] if decision.allow else decision.reasons, now=now)
     research_running = bool(runner.status().get("running"))
     busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task,
-            "music": _music_task, "paper": _paper_task, "morning": _morning_task}
+            "music": _music_task, "paper": _paper_task, "morning": _morning_task, "housekeeping": _housekeeping_task}
     for job, module in (("letters", letters), ("news", news), ("dream", dreams), ("revisit", revisit),
-                        ("music", music), ("paper", paper), ("morning", morning), ("book", books)):
+                        ("music", music), ("paper", paper), ("morning", morning), ("book", books),
+                        ("housekeeping", housekeeping)):
         if busy[job] and not busy[job].done():
             continue                                   # running: its outcome is recorded when it ends
         try:
@@ -404,6 +410,26 @@ def _maybe_read_book(sig, now: datetime, *, research_running: bool) -> None:
     _book_task.add_done_callback(_outcome("book"))
     _book_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] reading failed: %s", t.exception()))
+
+
+def _maybe_gremlin_housekeeping(sig, now: datetime, *, research_running: bool) -> None:
+    """A housekeeping round on one place in the Gremlin Index (src/initiative/gremlin_housekeeping.py)."""
+    global _housekeeping_task
+    from src.initiative import gremlin_housekeeping
+    if _housekeeping_task and not _housekeeping_task.done():
+        return
+    try:
+        from src.constants import DATA_DIR
+        if gremlin_housekeeping.gate(sig, data_dir=Path(DATA_DIR), now=now, research_running=research_running):
+            return
+    except Exception:
+        logger.debug("[heartbeat] housekeeping gate failed", exc_info=True)
+        return
+    _housekeeping_task = asyncio.create_task(
+        gremlin_housekeeping.maybe_run(sig, now=now, research_running=research_running))
+    _housekeeping_task.add_done_callback(_outcome("housekeeping"))
+    _housekeeping_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] gremlin housekeeping failed: %s", t.exception()))
 
 
 async def heartbeat() -> None:

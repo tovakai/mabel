@@ -23,7 +23,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-JOBS = ("research", "letters", "news", "dream", "revisit", "music", "paper", "morning", "book", "outreach")
+JOBS = ("research", "letters", "news", "dream", "revisit", "music", "paper", "morning", "book", "outreach",
+        "housekeeping")
 PULSE_S = 300
 ASLEEP_AFTER_S = 15 * 60          # no pulse for this long: the heartbeat wasn't running
 KEEP_DAYS = 14

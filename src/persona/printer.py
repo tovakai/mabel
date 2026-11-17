@@ -44,7 +44,7 @@ KEEPALIVE_MINUTES = 20                 # its own auto-off is "closer to an hour"
 STATUS = b"\x10\x04\x01"              # DLE EOT 1: real-time status request, prints nothing
 MAX_AGE = timedelta(days=3)
 MAX_DONE = 100
-KINDS = ("dream", "paper", "morning", "chat")    # chat: something he asked her to print
+KINDS = ("dream", "paper", "morning", "chat", "gremlin")    # chat: he asked her to print; gremlin: housekeeping slip
 
 INIT, CENTER, LEFT = b"\x1b@", b"\x1ba\x01", b"\x1ba\x00"
 BOLD, UNBOLD, TALL, NORMAL = b"\x1bE\x01", b"\x1bE\x00", b"\x1d!\x01", b"\x1d!\x00"
