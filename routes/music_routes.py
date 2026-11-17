@@ -23,7 +23,15 @@ from starlette.background import BackgroundTask
 
 from core.middleware import require_admin
 from src import navidrome as nd
-from src.auth_helpers import require_user
+from src.auth_helpers import require_api_token_scope, require_user
+
+
+def music_user(request: Request) -> str:
+    """A browser session, or an API token with the "music" scope (the TUI's player)."""
+    if getattr(request.state, "api_token", False):
+        require_api_token_scope(request, "music")
+        return str(getattr(request.state, "api_token_owner", "") or "")
+    return require_user(request)
 
 ITEM_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 PASS_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag")
@@ -95,7 +103,7 @@ def setup_music_routes() -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/music/status")
-    async def status(_user=Depends(require_user)):
+    async def status(_user=Depends(music_user)):
         cfg = nd.load_config()
         out = {"configured": cfg.configured, "url": cfg.url, "user": cfg.user}
         if not cfg.configured:
@@ -131,7 +139,7 @@ def setup_music_routes() -> APIRouter:
         return {"ok": True}
 
     @router.get("/api/music/rest/{method}")
-    async def rest_read(method: str, request: Request, _user=Depends(require_user)):
+    async def rest_read(method: str, request: Request, _user=Depends(music_user)):
         if method not in nd.READ_METHODS:
             raise HTTPException(404 if method not in nd.WRITE_METHODS else 405, "not allowed")
         try:
@@ -140,7 +148,7 @@ def setup_music_routes() -> APIRouter:
             _fail(exc)
 
     @router.post("/api/music/rest/{method}")
-    async def rest_write(method: str, request: Request, _user=Depends(require_user)):
+    async def rest_write(method: str, request: Request, _user=Depends(music_user)):
         if method not in nd.WRITE_METHODS:
             raise HTTPException(404, "not allowed")
         try:
@@ -160,13 +168,13 @@ def setup_music_routes() -> APIRouter:
             _fail(exc)
 
     @router.get("/api/music/cover/{item_id}")
-    async def cover(item_id: str, request: Request, size: int = 300, _user=Depends(require_user)):
+    async def cover(item_id: str, request: Request, size: int = 300, _user=Depends(music_user)):
         size = max(32, min(int(size), 1200))
         return await _proxy_binary(request, "getCoverArt", [("id", _check_id(item_id)), ("size", str(size))],
                                    cache="private, max-age=604800")
 
     @router.get("/api/music/stream/{song_id}")
-    async def stream(song_id: str, request: Request, maxBitRate: int = 0, _user=Depends(require_user)):
+    async def stream(song_id: str, request: Request, maxBitRate: int = 0, _user=Depends(music_user)):
         params = [("id", _check_id(song_id))]
         if maxBitRate > 0:
             params.append(("maxBitRate", str(min(maxBitRate, 320))))

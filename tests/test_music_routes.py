@@ -12,6 +12,7 @@ from core.middleware import require_admin
 from routes import music_routes
 from src import navidrome as nd
 from src.auth_helpers import require_user
+from routes.music_routes import music_user
 
 CFG = nd.Config(url="http://nd.test:4533", user="mabel", password="hunter2")
 AUDIO = bytes(range(256)) * 40
@@ -57,6 +58,7 @@ def client(monkeypatch):
     app = FastAPI()
     app.include_router(music_routes.setup_music_routes())
     app.dependency_overrides[require_user] = lambda: "owner"
+    app.dependency_overrides[music_user] = lambda: "owner"          # browser session or a "music" token
     app.dependency_overrides[require_admin] = lambda: None
     return TestClient(app)
 

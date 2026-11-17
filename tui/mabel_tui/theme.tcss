@@ -1,0 +1,157 @@
+/* MABEL-OS: amber phosphor on a beige 1980s terminal. Cassette-futurism, a little anime cockpit HUD. */
+
+$mo-bg: #0c0804;
+$mo-panel: #140e07;
+$mo-amber: #ffb000;
+$mo-amber-hi: #ffd066;
+$mo-amber-dim: #a86b00;
+$mo-amber-faint: #3d2a08;
+$mo-beige: #d9cba4;
+$mo-beige-dark: #8a7b58;
+$mo-casing-text: #2a2114;
+$mo-teal: #3fd6c6;
+$mo-red: #ff5a36;
+
+Screen {
+    background: $mo-bg;
+    color: $mo-amber;
+}
+
+/* ── the casing: label strip on top, status strip at the bottom ── */
+#casing {
+    dock: top;
+    height: 1;
+    background: $mo-beige;
+    padding: 0 1;
+}
+#casing-left { width: 1fr; }
+#casing-clock { width: auto; }
+#bottom {
+    dock: bottom;
+    height: 2;
+}
+#statusline {
+    height: 1;
+    background: $mo-beige-dark;
+    color: $mo-casing-text;
+    padding: 0 1;
+}
+Footer {
+    dock: none;
+    height: 1;
+    background: $mo-panel;
+}
+FooterKey { background: $mo-panel; color: $mo-amber-dim; }
+FooterKey .footer-key--key { background: $mo-amber-faint; color: $mo-amber-hi; text-style: bold; }
+FooterKey:hover { background: $mo-amber-faint; }
+
+* {
+    scrollbar-color: $mo-amber-dim;
+    scrollbar-color-hover: $mo-amber;
+    scrollbar-color-active: $mo-amber-hi;
+    scrollbar-background: $mo-panel;
+    scrollbar-background-hover: $mo-panel;
+    scrollbar-background-active: $mo-panel;
+    scrollbar-corner-color: $mo-panel;
+    scrollbar-size-vertical: 1;
+}
+
+/* ── channel tabs ── */
+TabbedContent { background: $mo-bg; height: 1fr; }
+ContentSwitcher { height: 1fr; }
+Tabs { background: $mo-bg; }
+Tab {
+    color: $mo-amber-dim;
+    text-style: bold;
+    padding: 0 2;
+}
+Tab:hover { color: $mo-amber-hi; }
+Tab.-active {
+    background: $mo-amber;
+    color: $mo-bg;
+}
+Underline > .underline--bar { color: $mo-amber-faint; background: $mo-bg; }
+TabPane { padding: 0; height: 1fr; }
+
+/* ── panels ── */
+.panel {
+    border: round $mo-amber-dim;
+    border-title-color: $mo-beige;
+    border-title-style: bold;
+    border-subtitle-color: $mo-amber-dim;
+    background: $mo-panel;
+    padding: 0 1;
+}
+.panel:focus-within { border: round $mo-amber; }
+.dim { color: $mo-amber-dim; }
+.hud { color: $mo-teal; }
+.warn { color: $mo-red; }
+
+Input {
+    background: $mo-panel;
+    color: $mo-amber-hi;
+    border: tall $mo-amber-dim;
+}
+Input:focus { border: tall $mo-amber; }
+Input > .input--placeholder { color: $mo-amber-faint; }
+Input > .input--cursor { background: $mo-amber; color: $mo-bg; }
+
+ListView, OptionList, DataTable { background: $mo-panel; color: $mo-amber; }
+ListView > ListItem.-highlight, OptionList > .option-list--option-highlighted {
+    background: $mo-amber-faint;
+    color: $mo-amber-hi;
+}
+DataTable > .datatable--header { background: $mo-amber-faint; color: $mo-beige; text-style: bold; }
+DataTable > .datatable--cursor { background: $mo-amber; color: $mo-bg; }
+DataTable > .datatable--hover { background: $mo-amber-faint; }
+
+Button {
+    background: $mo-amber-faint;
+    color: $mo-amber-hi;
+    border: tall $mo-amber-dim;
+    min-width: 12;
+}
+Button:hover { background: $mo-amber-dim; color: $mo-bg; }
+Button.-primary { background: $mo-amber; color: $mo-bg; border: tall $mo-amber-hi; }
+Button.-error { background: #4a1408; color: $mo-red; border: tall $mo-red; }
+
+ProgressBar Bar > .bar--bar { color: $mo-amber; background: $mo-amber-faint; }
+ProgressBar Bar > .bar--complete { color: $mo-teal; }
+
+Markdown { background: transparent; color: $mo-amber; margin: 0; padding: 0; }
+MarkdownH1, MarkdownH2, MarkdownH3 { color: $mo-amber-hi; background: transparent; }
+MarkdownFence { background: $mo-amber-faint; color: $mo-amber-hi; }
+
+/* ── COMMS ── */
+#comms-view { layout: horizontal; }
+#sessions { width: 30; }
+#sessions.-hidden { display: none; }
+#chat-col { width: 1fr; }
+#log { height: 1fr; padding: 0 1; }
+#prompt { dock: bottom; margin: 0 0; }
+.msg { margin: 1 0 0 0; height: auto; }
+.msg-head { color: $mo-beige-dark; text-style: bold; height: 1; }
+.msg.-user .msg-head { color: $mo-teal; }
+.msg.-user Markdown { color: $mo-amber-hi; }
+.tool-line { color: $mo-amber-dim; height: auto; padding-left: 2; }
+.approval { border: heavy $mo-red; background: #1e0c05; height: auto; padding: 0 1; margin: 1 0 0 0; }
+.approval Horizontal { height: auto; }
+.approval Button { margin-right: 2; }
+
+/* ── LIFE ── */
+#life-view { layout: grid; grid-size: 3 2; grid-columns: 1fr 1fr 1fr; grid-rows: 1fr 1fr; width: 1fr; height: 1fr; }
+#life-status { row-span: 2; }
+#life-dream { row-span: 2; }
+#dream-image { height: 14; width: 100%; }
+
+/* ── AUDIO ── */
+#audio-view { layout: horizontal; }
+#browser { width: 3fr; }
+#deck { width: 2fr; }
+#search { margin: 0 0 1 0; }
+#results { height: 1fr; }
+#cover { height: 14; width: 30; }
+#nowplaying { height: auto; margin: 1 0; }
+#queue { height: 1fr; }
+#dream-holder { height: auto; }
+#cover-holder { height: auto; }

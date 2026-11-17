@@ -747,6 +747,8 @@ from routes.hub_routes import setup_hub_routes
 app.include_router(setup_hub_routes())
 from routes.music_routes import setup_music_routes
 app.include_router(setup_music_routes())
+from routes.tui_routes import setup_tui_routes
+app.include_router(setup_tui_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
