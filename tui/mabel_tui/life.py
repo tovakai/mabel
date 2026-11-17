@@ -11,6 +11,7 @@ from textual.containers import Container, Grid, VerticalScroll
 from textual.widgets import ProgressBar, Static
 
 from .config import CACHE
+from .nav import mark
 
 JOB_NAMES = {"research": "research", "letters": "tova letters", "news": "news", "dream": "dream",
              "revisit": "look back", "music": "compose", "paper": "paper note", "morning": "morning page",
@@ -95,17 +96,17 @@ class Life(Grid):
         self._dream_at = None
 
     def compose(self) -> ComposeResult:
-        status = VerticalScroll(Static(id="status-text"), id="life-status", classes="panel")
+        status = VerticalScroll(Static(id="status-text"), id="life-status", classes="panel section")
         status.border_title = "SYSTEMS"
         yield status
-        dream = VerticalScroll(Container(id="dream-holder"), Static(id="dream-text"), id="life-dream", classes="panel")
+        dream = VerticalScroll(Container(id="dream-holder"), Static(id="dream-text"), id="life-dream", classes="panel section")
         dream.border_title = "LAST DREAM"
         yield dream
         journal = VerticalScroll(Static(id="book-text"), ProgressBar(total=1.0, show_eta=False, id="book-bar"),
-                                 Static(id="journal-text"), id="life-journal", classes="panel")
+                                 Static(id="journal-text"), id="life-journal", classes="panel section")
         journal.border_title = "JOURNAL"
         yield journal
-        lists = VerticalScroll(Static(id="lists-text"), id="life-lists", classes="panel")
+        lists = VerticalScroll(Static(id="lists-text"), id="life-lists", classes="panel section")
         lists.border_title = "LISTS"
         yield lists
 

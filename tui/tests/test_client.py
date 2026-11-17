@@ -57,3 +57,36 @@ def test_mabels_music_commands_drive_the_player():
         asyncio.run(player.apply({"op": op, "songs": songs}))
     assert [c[0] for c in calls] == ["play", "enqueue", "play_next", "set_paused", "set_paused", "next", "previous"]
     assert calls[3][1] == (True,) and calls[4][1] == (False,)
+
+
+def test_mpris_tells_the_desktop_what_is_playing(tmp_path, monkeypatch):
+    from mabel_tui import mpris
+    monkeypatch.setattr(mpris, "CACHE", tmp_path)
+    (tmp_path / "cover-al1.jpg").write_bytes(b"jpg")
+    player = Player(lambda i: i, "ody_test")
+    iface = mpris.PlayerIface(player)
+    assert iface.status() == "Stopped" and set(iface.metadata()) == {"mpris:trackid"}
+    player.queue, player.index, player.duration = [{"id": "s-1", "title": "Roads", "artist": "Portishead",
+                                                    "album": "Dummy", "coverArt": "al1"}], 0, 302.5
+    meta = {k: v.value for k, v in iface.metadata().items()}
+    assert meta["xesam:title"] == "Roads" and meta["xesam:artist"] == ["Portishead"]
+    assert meta["mpris:length"] == 302_500_000 and meta["mpris:artUrl"].endswith("cover-al1.jpg")
+    assert iface.status() == "Playing"
+    player.paused = True
+    assert iface.status() == "Paused"
+
+
+def test_hjkl_moves_to_the_section_in_that_direction():
+    from types import SimpleNamespace
+    from textual.geometry import Region
+    from mabel_tui import nav
+
+    def sec(name, x, y, w, h):
+        return SimpleNamespace(name=name, region=Region(x, y, w, h))
+    search, results, deck = sec("search", 0, 0, 100, 3), sec("results", 0, 3, 100, 40), sec("deck", 100, 0, 70, 43)
+    secs = [search, results, deck]
+    assert nav.neighbour(search, secs, "j").name == "results"
+    assert nav.neighbour(results, secs, "l").name == "deck"
+    assert nav.neighbour(deck, secs, "h").name in ("search", "results")
+    assert nav.neighbour(results, secs, "k").name == "search"
+    assert nav.neighbour(search, secs, "k") is None

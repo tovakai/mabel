@@ -13,14 +13,38 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import DataTable, Input, ListItem, ListView, Label, ProgressBar, Static
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Input, ListItem, ListView, Label, OptionList, ProgressBar, Static
+from textual.widgets.option_list import Option
 
 from .config import CACHE
+from .nav import mark
 
 
 def _time(seconds) -> str:
     seconds = int(float(seconds or 0))
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+class PickPlaylist(ModalScreen):
+    """Which playlist? Returns its id, "+new", or None."""
+    BINDINGS = [Binding("escape", "dismiss(None)", "cancel")]
+
+    def __init__(self, playlists: list[dict]):
+        super().__init__()
+        self.playlists = playlists
+
+    def compose(self) -> ComposeResult:
+        options = [Option("＋ New playlist…", id="+new")] + \
+                  [Option(f"♫ {p.get('name', '')}  ({p.get('songCount', 0)})", id=p["id"]) for p in self.playlists]
+        box = OptionList(*options, id="pick-playlist", classes="panel")
+        box.border_title = "ADD TO PLAYLIST"
+        box.border_subtitle = "enter picks · esc cancels"
+        yield box
+
+    @on(OptionList.OptionSelected)
+    def chosen(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(event.option.id)
 
 
 class Audio(Horizontal):
@@ -36,6 +60,10 @@ class Audio(Horizontal):
         Binding("a", "add", "append"),
         Binding("n", "add_next", "play next"),
         Binding("backspace", "back", "back"),
+        Binding("p", "playlists", "playlists"),
+        Binding("s", "to_playlist", "+ playlist"),
+        Binding("S", "save_queue", "save queue", show=False),
+        Binding("d", "remove_from_playlist", "remove", show=False),
     ]
 
     def __init__(self, **kw):
@@ -43,14 +71,16 @@ class Audio(Horizontal):
         self.rows: list[tuple[str, dict]] = []      # (kind, item) per table row
         self.views: list[tuple[str, list]] = []     # back stack: (title, rows)
         self._cover_id = None
+        self.playlist: dict | None = None            # the playlist on screen, for d (remove)
         self._dirty = True
 
     def compose(self) -> ComposeResult:
         with Vertical(id="browser", classes="panel") as browser:
             browser.border_title = "LIBRARY"
-            yield Input(placeholder="/ search artists, albums, songs", id="search")
-            yield DataTable(id="results", cursor_type="row", zebra_stripes=False)
-        with Vertical(id="deck", classes="panel") as deck:
+            yield mark(Input(placeholder="/ search artists, albums, songs", id="search"))
+            yield mark(DataTable(id="results", cursor_type="row", zebra_stripes=False))
+        with Vertical(id="deck", classes="panel section") as deck:
+            deck.section_primary = "#queue"
             deck.border_title = "DECK"
             yield Container(id="cover-holder")
             yield Static(id="nowplaying")
@@ -59,7 +89,7 @@ class Audio(Horizontal):
 
     def on_mount(self) -> None:
         table = self.query_one("#results", DataTable)
-        for label, width in ((" ", 2), ("TITLE", 34), ("ARTIST", 22), ("ALBUM · YEAR", 22), ("TIME", 6)):
+        for label, width in ((" ", 2), ("TITLE", 32), ("ARTIST", 22), ("ALBUM · YEAR", 22), ("TIME", 6)):
             table.add_column(label, width=width)
         self.app.player.on_change = self._mark
         self.set_interval(0.5, self._refresh_deck)
@@ -75,7 +105,9 @@ class Audio(Horizontal):
 
     # ── the library ─────────────────────────────────────────────────────
 
-    def _show(self, title: str, rows: list[tuple[str, dict]], remember: bool = True) -> None:
+    def _show(self, title: str, rows: list[tuple[str, dict]], remember: bool = True,
+              playlist: dict | None = None) -> None:
+        self.playlist = playlist
         if remember and self.rows:
             self.views.append((self.query_one("#browser").border_title, self.rows))
         self.rows = rows
@@ -89,6 +121,9 @@ class Audio(Horizontal):
             elif kind == "album":
                 table.add_row("◫", item.get("name", ""), item.get("artist", ""), str(item.get("year") or ""),
                               f"{item.get('songCount', '')} tr")
+            elif kind == "playlist":
+                table.add_row("♫", item.get("name", ""), item.get("owner", ""), f"{item.get('songCount', 0)} songs",
+                              _time(item.get("duration")))
             else:
                 table.add_row("◉", item.get("name", ""), "", f"{item.get('albumCount', '')} albums", "")
         if self.app.on_channel("audio"):
@@ -133,6 +168,8 @@ class Audio(Horizontal):
             data = await self.mabel.music("getAlbum", id=item["id"])
             songs = (data.get("album") or {}).get("song") or []
             self._show(f"◫ {item.get('name', '').upper()[:34]}", [("song", s) for s in songs])
+        elif kind == "playlist":
+            await self._open_playlist(item)
         else:
             data = await self.mabel.music("getArtist", id=item["id"])
             albums = (data.get("artist") or {}).get("album") or []
@@ -147,6 +184,8 @@ class Audio(Horizontal):
             return [item]
         if kind == "album":
             return (await self.mabel.music("getAlbum", id=item["id"])).get("album", {}).get("song") or []
+        if kind == "playlist":
+            return (await self.mabel.music("getPlaylist", id=item["id"])).get("playlist", {}).get("entry") or []
         return []
 
     @work(group="queue")
@@ -160,6 +199,83 @@ class Audio(Horizontal):
         songs = await self._selected_songs()
         await self.player.play_next(songs)
         self._report(f"+ {len(songs)} up next" if songs else "")
+
+    # ── playlists ───────────────────────────────────────────────────────
+
+    @work(exclusive=True, group="browse")
+    async def action_playlists(self) -> None:
+        data = await self.mabel.music("getPlaylists")
+        lists = (data.get("playlists") or {}).get("playlist") or []
+        self._show("LIBRARY ░ PLAYLISTS", [("playlist", p) for p in sorted(lists, key=lambda p: p.get("name", "").lower())])
+
+    async def _open_playlist(self, playlist: dict, remember: bool = True) -> None:
+        data = await self.mabel.music("getPlaylist", id=playlist["id"])
+        entries = (data.get("playlist") or {}).get("entry") or []
+        self._show(f"♫ {playlist.get('name', '').upper()[:34]}", [("song", e) for e in entries], remember=remember,
+                   playlist=playlist)
+
+    async def _playlists(self) -> list[dict]:
+        data = await self.mabel.music("getPlaylists")
+        return sorted((data.get("playlists") or {}).get("playlist") or [], key=lambda p: p.get("name", "").lower())
+
+    def _pick_playlist(self, songs: list[dict], then) -> None:
+        async def go():
+            lists = await self._playlists()
+            self.app.push_screen(PickPlaylist(lists), lambda choice: self.run_worker(then(choice, songs)))
+        self.run_worker(go())
+
+    @work(group="queue")
+    async def action_to_playlist(self) -> None:
+        songs = await self._selected_songs()
+        if not songs:
+            self.app.notify("Select a song, album or playlist first", severity="warning")
+            return
+        self._pick_playlist(songs, self._add_to)
+
+    async def _add_to(self, choice, songs: list[dict]) -> None:
+        if choice is None:
+            return
+        ids = [s["id"] for s in songs]
+        if choice == "+new":
+            def named(result):
+                if result and result.get("name", "").strip():
+                    self.run_worker(self._create(result["name"].strip(), ids))
+            from .inventory import Ask
+            self.app.push_screen(Ask("New playlist", [("name", "Name", "", "line")], ok="Create"), named)
+            return
+        await self.mabel.music_write("updatePlaylist", playlistId=choice, songIdToAdd=ids)
+        self.app.notify(f"+ {len(ids)} song(s) added to the playlist", timeout=3)
+        if self.playlist and self.playlist.get("id") == choice:
+            await self._open_playlist(self.playlist, remember=False)
+
+    async def _create(self, name: str, ids: list[str]) -> None:
+        await self.mabel.music_write("createPlaylist", name=name, songId=ids)
+        self.app.notify(f"♫ “{name}” saved with {len(ids)} song(s)", timeout=3)
+
+    def action_save_queue(self) -> None:
+        ids = [s["id"] for s in self.player.queue]
+        if not ids:
+            self.app.notify("The queue is empty", severity="warning")
+            return
+
+        def named(result):
+            if result and result.get("name", "").strip():
+                self.run_worker(self._create(result["name"].strip(), ids))
+        from .inventory import Ask
+        self.app.push_screen(Ask("Save the queue as a playlist", [("name", "Name", "", "line")], ok="Save"), named)
+
+    @work(group="queue")
+    async def action_remove_from_playlist(self) -> None:
+        table = self.query_one("#results", DataTable)
+        if not self.playlist or not 0 <= table.cursor_row < len(self.rows):
+            return
+        kind, item = self.rows[table.cursor_row]
+        if kind != "song":
+            return
+        await self.mabel.music_write("updatePlaylist", playlistId=self.playlist["id"], songIndexToRemove=table.cursor_row)
+        self.app.notify(f"− {item.get('title', '')} removed from the playlist", timeout=3)
+        await self._open_playlist(self.playlist, remember=False)
+        table.move_cursor(row=min(table.cursor_row, max(0, len(self.rows) - 1)))
 
     def action_back(self) -> None:
         if self.views:
@@ -199,6 +315,7 @@ class Audio(Horizontal):
     def _mark(self) -> None:
         self._dirty = True
         self.app.refresh_statusline()
+        self.app.mpris.changed()
 
     def _refresh_deck(self) -> None:
         if not self._dirty:
@@ -244,3 +361,4 @@ class Audio(Horizontal):
         holder = self.query_one("#cover-holder", Container)
         await holder.remove_children()
         await holder.mount(Image(str(path), id="cover"))
+        self.app.mpris.changed()                     # now the desktop can show the cover too

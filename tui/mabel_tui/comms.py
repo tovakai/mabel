@@ -14,6 +14,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown, Static
 
+from .nav import mark
+
 
 def _stamp(value: str | None = None) -> str:
     try:
@@ -62,7 +64,6 @@ class Comms(Horizontal):
     BINDINGS = [
         Binding("ctrl+s", "toggle_sessions", "sessions"),
         Binding("ctrl+n", "new_session", "new chat"),
-        Binding("escape", "focus_prompt", "prompt", show=False),
     ]
 
     def __init__(self, **kw):
@@ -71,14 +72,14 @@ class Comms(Horizontal):
         self.busy = False
 
     def compose(self) -> ComposeResult:
-        sessions = ListView(id="sessions", classes="panel")
+        sessions = mark(ListView(id="sessions", classes="panel"))
         sessions.border_title = "CHANNELS"
         yield sessions
         with Vertical(id="chat-col"):
-            log = VerticalScroll(id="log", classes="panel")
+            log = mark(VerticalScroll(id="log", classes="panel"))
             log.border_title = "COMMS"
             yield log
-            yield Input(placeholder="talk to Mabel…", id="prompt")
+            yield mark(Input(placeholder="talk to Mabel…", id="prompt"))
 
     @property
     def mabel(self):
@@ -125,7 +126,8 @@ class Comms(Horizontal):
             self.query_one("#prompt", Input).focus()
 
     def action_toggle_sessions(self) -> None:
-        self.query_one("#sessions").toggle_class("-hidden")
+        # Wide (PC): shown unless hidden. Narrow (the deck): hidden unless shown.
+        self.query_one("#sessions").toggle_class("-shown" if self.screen.has_class("-narrow") else "-hidden")
 
     def action_focus_prompt(self) -> None:
         self.query_one("#prompt", Input).focus()

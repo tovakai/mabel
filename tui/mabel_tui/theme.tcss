@@ -155,3 +155,63 @@ MarkdownFence { background: $mo-amber-faint; color: $mo-amber-hi; }
 #queue { height: 1fr; }
 #dream-holder { height: auto; }
 #cover-holder { height: auto; }
+
+/* ── INVENTORY ── */
+#inventory-view { layout: horizontal; }
+#inv-main { width: 3fr; }
+#inv-item { width: 2fr; }
+#inv-search { margin: 0 0 0 0; }
+#inv-crumbs { height: auto; margin: 0 0 1 0; }
+#inv-body { height: 1fr; }
+.pcards { grid-size: 4; grid-gutter: 1 2; grid-rows: 4; height: auto; margin: 0 0 1 0; }
+.pcard { border: round $mo-amber-dim; padding: 0 1; height: 4; background: $mo-panel; }
+.pcard:focus { border: round $mo-amber; background: $mo-amber-faint; }
+.pcard:hover { border: round $mo-amber-hi; }
+.thing, .level, .suggestion { height: auto; padding: 0 1; }
+.thing:focus, .level:focus, .suggestion:focus { background: $mo-amber-faint; }
+.thing:hover, .level:hover, .suggestion:hover { background: $mo-amber-faint; }
+.suggestion { margin: 0 0 1 0; }
+.sec { height: auto; }
+.sec:focus { background: $mo-amber-faint; }
+.map { height: auto; width: auto; }
+.legend { height: auto; margin: 0 0 1 0; }
+#inv-photo { height: auto; }
+#inv-image { width: 28; height: 14; }
+#inv-card { height: auto; }
+
+Ask { align: center middle; background: rgba(12, 8, 4, 0.7); }
+#ask { width: 80; height: auto; max-height: 90%; background: $mo-panel; border: heavy $mo-amber; padding: 0 1; }
+.ask-label { color: $mo-beige; margin: 1 0 0 0; }
+.ask-area { height: 5; background: $mo-bg; color: $mo-amber-hi; }
+.ask-buttons { height: 3; dock: bottom; background: $mo-panel; }
+.ask-buttons Button { margin-right: 2; }
+Select { background: $mo-panel; }
+SelectCurrent { background: $mo-panel; color: $mo-amber-hi; border: tall $mo-amber-dim; }
+.level { text-wrap: nowrap; text-overflow: ellipsis; }
+HelpScreen { align: center middle; background: rgba(12, 8, 4, 0.7); }
+#help { width: 92; height: auto; background: $mo-panel; border: heavy $mo-amber; padding: 1 2; }
+PickPlaylist { align: center middle; background: rgba(12, 8, 4, 0.7); }
+#pick-playlist { width: 60; height: auto; max-height: 70%; background: $mo-panel; border: heavy $mo-amber; }
+
+/* ── nav mode: the lit section ── */
+.section.-nav { border: heavy $mo-amber-hi; background: $mo-amber-faint; }
+Input.section.-nav { border: tall $mo-amber-hi; background: $mo-panel; }
+Input.section.-nav > .input--placeholder { color: $mo-amber-dim; }
+
+/* ── narrow (the 7" cyberdeck, 1024×600 ≈ 128×37): stacked panels; the PC layout above is untouched ── */
+.-narrow #sessions { display: none; }
+.-narrow #sessions.-shown { display: block; width: 26; }
+.-narrow #life-view { grid-size: 2 2; grid-columns: 1fr 1fr; grid-rows: 1fr 1fr; }
+.-narrow #life-status, .-narrow #life-dream { row-span: 1; }
+.-narrow #dream-image { height: 10; }
+.-narrow #audio-view { layout: vertical; }
+.-narrow #browser { width: 100%; height: 1fr; }
+.-narrow #deck { width: 100%; height: 13; layout: grid; grid-size: 2 3; grid-columns: 24 1fr; grid-rows: auto 1 1fr; }
+.-narrow #cover-holder { row-span: 3; }
+.-narrow #cover { width: 22; height: 11; }
+.-narrow #nowplaying { margin: 0 0; }
+.-narrow #inventory-view { layout: vertical; }
+.-narrow #inv-main { width: 100%; height: 3fr; }
+.-narrow #inv-item { width: 100%; height: 2fr; }
+.-narrow .pcards { grid-size: 3; }
+.-narrow #inv-image { width: 22; height: 11; }

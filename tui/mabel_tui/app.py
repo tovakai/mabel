@@ -1,4 +1,4 @@
-"""MABEL-OS: Mabel in a terminal. Channels COMMS, LIFE, AUDIO (INVENTORY comes later).
+"""MABEL-OS: Mabel in a terminal. Channels COMMS, LIFE, AUDIO and INVENTORY (the Gremlin Index).
 
 Run: mabel   (or: uv run --project ~/Documents/mabel/tui mabel)
 """
@@ -9,27 +9,87 @@ from datetime import datetime
 
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static, TabbedContent, TabPane
 
-from . import config
+from . import config, nav
 from .api import Mabel
 from .audio import Audio
 from .comms import Comms
+from .inventory import Inventory
 from .life import Life
+from .mpris import Mpris
 from .player import Player
+from .tkindex import TKIndex
 
 LOGO = "▙▟ MABEL-OS 2.6"
 
 
+HELP = {
+    "everywhere": [("alt+1–4 / F1–F4", "switch channel"),
+                   ("h j k l", "move between sections (the lit border)"),
+                   ("i / a / enter", "go into the lit section"),
+                   ("esc", "back out to the sections"),
+                   ("inside: h j k l", "like the arrow keys, where the section doesn't use the letter"),
+                   ("ctrl+p", "play / pause music"), ("?", "this list"), ("ctrl+q", "power off")],
+    "comms": [("enter", "send"), ("ctrl+n", "new chat"), ("ctrl+s", "show/hide the chat list"),
+              ("esc, k, then i", "into the conversation to scroll it"),
+              ("ctrl+s, then h → list", "open another chat (the list hides on the deck)")],
+    "life": [("r", "refresh now"), ("tab, ↑↓", "scroll a panel")],
+    "audio": [("/", "search"), ("↑↓ enter", "open album/artist, or play from that song"), ("a / n", "append / play next"),
+              ("backspace", "back"), ("p", "playlists"), ("s", "add selection to a playlist"),
+              ("S", "save the queue as a playlist"), ("d", "remove from the open playlist"),
+              ("space", "pause"), ("[ ]", "previous / next"),
+              ("← →", "seek 10 s"), ("+ -", "volume")],
+    "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
+                  ("H", "home"), ("/", "search"), ("i", "Mabel's housekeeping inbox (a apply, x tick off)"),
+                  ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
+                  ("p", "go to the item's place"), ("u", "undo the last change"), ("ctrl+s", "save in a dialog")],
+}
+
+
+class HelpScreen(ModalScreen):
+    BINDINGS = [Binding("escape,question_mark,q", "dismiss", "close")]
+
+    def __init__(self, channel: str):
+        super().__init__()
+        self.channel = channel
+
+    def compose(self) -> ComposeResult:
+        text = Text()
+        for part in (self.channel, "everywhere"):
+            text.append(f"{part.upper()}\n", style="bold #d9cba4")
+            for keys, what in HELP.get(part, []):
+                text.append(f"  {keys:<22}", style="bold #ffd066")
+                text.append(f"{what}\n", style="#ffb000")
+            text.append("\n")
+        box = Static(text, id="help", classes="panel")
+        box.border_title = "KEYS"
+        box.border_subtitle = "esc closes"
+        yield box
+
+
 class MabelApp(App):
     CSS_PATH = "theme.tcss"
+    # Wide = his PC (as designed); narrow = the 7" cyberdeck (1024×600 ≈ 128×37): stacked panels.
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (140, "-wide")]
     TITLE = "MABEL-OS"
     BINDINGS = [
         Binding("f1", "channel('comms')", "COMMS", priority=True),
         Binding("f2", "channel('life')", "LIFE", priority=True),
         Binding("f3", "channel('audio')", "AUDIO", priority=True),
+        Binding("f4", "channel('inventory')", "INVENTORY", priority=True),
+        Binding("alt+1", "channel('comms')", "COMMS", show=False, priority=True),
+        Binding("alt+2", "channel('life')", "LIFE", show=False, priority=True),
+        Binding("alt+3", "channel('audio')", "AUDIO", show=False, priority=True),
+        Binding("alt+4", "channel('inventory')", "INVENTORY", show=False, priority=True),
+        Binding("question_mark", "help", "keys"),
+        Binding("h", "navkey('h')", show=False), Binding("j", "navkey('j')", show=False),
+        Binding("k", "navkey('k')", show=False), Binding("l", "navkey('l')", show=False),
+        Binding("i,a,enter", "nav_enter", show=False),
+        Binding("escape", "nav_out", "out", show=False),
         Binding("ctrl+p", "pause", "play/pause", priority=True),
         Binding("ctrl+q", "quit", "power off", priority=True),
     ]
@@ -38,8 +98,11 @@ class MabelApp(App):
         super().__init__()
         self.cfg = cfg
         self.mabel = Mabel(cfg.url, cfg.token)
+        self.index = TKIndex(cfg.index_url)
         self.player = Player(self.mabel.stream_url, cfg.token, cfg.volume, on_scrobble=self._scrobble)
+        self.mpris = Mpris(self, self.player)
         self._status = ""
+        self.nav_section = None                      # the lit section in nav mode
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="casing"):
@@ -52,11 +115,15 @@ class MabelApp(App):
                 yield Life()
             with TabPane("CH-03 AUDIO", id="audio"):
                 yield Audio()
+            with TabPane("CH-04 INVENTORY", id="inventory"):
+                yield Inventory()
         with Vertical(id="bottom"):
             yield Static(id="statusline")
             yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        await self.mpris.start()                      # the desktop's media widgets see the deck
+        self.watch(self.screen, "focused", self._focus_moved, init=False)
         self._tick()
         self.set_interval(1, self._tick)
         self.refresh_statusline()
@@ -101,7 +168,63 @@ class MabelApp(App):
         except Exception:
             return False
 
-    FOCUS_ON = {"comms": "#prompt", "life": "#life-status", "audio": "#results"}
+    # ── vim-style sections (nav.py) ─────────────────────────────────────
+
+    def _main_screen(self) -> bool:
+        return self.screen is self.screen_stack[0]
+
+    def _pane(self):
+        return self.query_one(f"#{self.query_one(TabbedContent).active}")
+
+    def _light(self, section) -> None:
+        if self.nav_section is not None:
+            self.nav_section.remove_class("-nav")
+        self.nav_section = section
+        if section is not None:
+            section.add_class("-nav")
+            self.screen.set_focus(None)
+            section.scroll_visible()
+
+    def _focus_moved(self, widget) -> None:
+        if widget is not None and self.nav_section is not None:
+            self.nav_section.remove_class("-nav")          # clicked or tabbed into something: inside now
+
+    def start_nav(self) -> None:
+        sections = nav.visible_sections(self._pane())
+        if sections:
+            self._light(sections[0])
+
+    def action_navkey(self, key: str) -> None:
+        if not self._main_screen():
+            return
+        if self.focused is None:
+            sections = nav.visible_sections(self._pane())
+            current = self.nav_section if self.nav_section in sections else None
+            if current is None:
+                return self.start_nav()
+            target = nav.neighbour(current, sections, key)
+            if target is not None:
+                self._light(target)
+        else:
+            self.simulate_key(nav.ARROWS[key])             # inside a section: hjkl are the arrows
+
+    def action_nav_enter(self) -> None:
+        if self._main_screen() and self.focused is None and self.nav_section is not None:
+            section = self.nav_section
+            section.remove_class("-nav")
+            nav.enter(section)
+
+    def action_nav_out(self) -> None:
+        if not self._main_screen():
+            return
+        section = nav.section_of(self.focused)
+        if section is not None:
+            self._light(section)
+        elif self.focused is None and self.nav_section is None:
+            self.start_nav()
+
+    def action_help(self) -> None:
+        self.push_screen(HelpScreen(self.query_one(TabbedContent).active))
 
     def action_channel(self, name: str) -> None:
         # Drop focus first: a focused widget left in the old channel pulls the tabs back to it.
@@ -109,11 +232,12 @@ class MabelApp(App):
         self.query_one(TabbedContent).active = name
 
         def settle() -> None:
-            try:
-                self.query_one(self.FOCUS_ON[name]).focus()
-            except Exception:
-                pass
-        self.call_after_refresh(settle)
+            self._light(None)
+            if name == "comms":
+                self.query_one("#prompt").focus()          # chat is for typing: straight into the prompt
+            else:
+                self.start_nav()
+        self.set_timer(0.15, settle)                   # after the pane has its size, so sections can be lit
 
     async def action_pause(self) -> None:
         await self.player.toggle()
@@ -129,7 +253,9 @@ class MabelApp(App):
 
     async def on_unmount(self) -> None:
         await self.player.stop()
+        await self.mpris.stop()
         await self.mabel.close()
+        await self.index.close()
 
 
 def main() -> None:
