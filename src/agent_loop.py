@@ -8166,6 +8166,12 @@ Get current conditions and a three-day forecast using Open-Meteo. Use this for w
 ```
 The Gremlin Index, Anthon's inventory of his physical things. Actions: find, where, out (what's checked out), checkout ("to", "reason" optional), return. Use it whenever he asks where something is or says he's taking or returning something; answer from the result, never guess a place. If it lists several matches, ask him which one.""",
 
+    "manage_groceries": """\
+```manage_groceries
+{"action": "add", "items": ["oat milk", "eggs"]}
+```
+The shared grocery list (a Google Sheet his partner also edits, mirrored with his Obsidian note). Actions: list, add ("items", optional "amount"/"note" for one item), bought (tick off), remove. Use it when he says something's needed or bought, or asks what's on the list. Say what the result says.""",
+
     "control_music": """\
 ```control_music
 {"action": "play", "query": "Boards of Canada"}

@@ -226,6 +226,12 @@ _register(
     ToolEffect.WRITE_PRIVATE,
 )
 _register(
+    # The shared grocery list: a Google Sheet (his partner edits it) mirrored with an Obsidian note.
+    {"manage_groceries"},
+    ToolEffect.READ_PRIVATE,
+    ToolEffect.WRITE_PRIVATE,
+)
+_register(
     # Navidrome lookups + changing what plays in his browser tab.
     {"control_music"},
     ToolEffect.READ_PRIVATE,
@@ -360,6 +366,7 @@ _PRIVATE_ACTION_READS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "manage_calendar": frozenset({"list_calendars", "list_events"}),
         "manage_gremlin": frozenset({"find", "where", "out"}),
+        "manage_groceries": frozenset({"list"}),
         "control_music": frozenset({"now_playing", "search", "genres"}),
         "manage_contact": frozenset({"list", "search", "find"}),
         "manage_documents": frozenset({"list", "read", "view", "open", "get"}),
@@ -385,6 +392,7 @@ _PRIVATE_ACTION_WRITES: Mapping[str, frozenset[str]] = MappingProxyType(
         ),
         "manage_contact": frozenset({"add", "update", "edit", "delete"}),
         "manage_gremlin": frozenset({"checkout", "return"}),
+        "manage_groceries": frozenset({"add", "bought", "remove"}),
         "control_music": frozenset({"play", "queue", "play_next", "pause", "resume", "next", "previous"}),
         "manage_documents": frozenset({"delete", "tidy"}),
         "manage_memory": frozenset({"add", "edit", "delete"}),
@@ -450,6 +458,7 @@ _ACTION_DEFAULTS: Mapping[str, str] = MappingProxyType(
     {
         "manage_calendar": "list_events",
         "manage_gremlin": "find",
+        "manage_groceries": "list",
         "control_music": "play",
         "manage_documents": "list",
         "manage_research": "list",
@@ -472,6 +481,13 @@ _ACTION_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType(
                 "search": "find", "lookup": "find", "locate": "where", "list_out": "out", "away": "out",
                 "check_out": "checkout", "borrow": "checkout",
                 "returned": "return", "back": "return", "put_back": "return",
+            }
+        ),
+        "manage_groceries": MappingProxyType(
+            {
+                "show": "list", "read": "list", "get": "list", "need": "add", "put": "add", "got": "bought",
+                "buy": "bought", "check": "bought", "tick": "bought", "done": "bought", "delete": "remove",
+                "drop": "remove",
             }
         ),
         "control_music": MappingProxyType(
@@ -954,7 +970,7 @@ class ToolRunSecurityContext:
                         f"request authority denies {operation.tool}",
                     )
             return ToolGateDecision(True)
-        if tool_name in {"print_on_paper", "control_music"}:
+        if tool_name in {"print_on_paper", "control_music", "manage_groceries"}:
             # Paper and music are low-impact: when the request itself asked for a print,
             # web/document context in the run doesn't need a second approval.
             from src.agent_runtime.authority import ExactOperation, active_request_authority

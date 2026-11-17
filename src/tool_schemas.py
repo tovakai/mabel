@@ -32,6 +32,7 @@ _REQUIRED_NATIVE_TOOL_ARGS = {
     "get_weather": ("location",),
     "print_on_paper": ("text",),
     "manage_gremlin": ("action",),
+    "manage_groceries": ("action",),
     "control_music": ("action",),
     "web_fetch": ("url", "urls"),
     "pdf_extract": ("url", "path"),
@@ -378,6 +379,23 @@ FUNCTION_TOOL_SCHEMAS = [
                     "item": {"type": "string", "description": "What he called it, or its 8-digit ID (not needed for out)"},
                     "to": {"type": "string", "description": "checkout: where it went or who has it (optional)"},
                     "reason": {"type": "string", "description": "checkout: what it's for (optional)"}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_groceries",
+            "description": "The shared grocery list: a Google Sheet that Anthon's partner also edits, kept in step with his Obsidian note. list = what's on it (and what was bought recently); add = put things on it; bought = tick things off; remove = take off something that isn't needed after all. Use it when he says what's needed (\"we're out of eggs\"), what he got, or asks what's on the list. Say what the result says; never invent items.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "add", "bought", "remove"]},
+                    "items": {"type": "array", "items": {"type": "string"}, "description": "The things, by name, e.g. [\"oat milk\", \"eggs\"] (not needed for list)"},
+                    "amount": {"type": "string", "description": "add, one item: how much, e.g. \"2\" or \"500 g\" (optional)"},
+                    "note": {"type": "string", "description": "add, one item: a short note, e.g. \"for the cake\" (optional)"}
                 },
                 "required": ["action"]
             }

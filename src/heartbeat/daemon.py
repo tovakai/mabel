@@ -38,6 +38,7 @@ _print_task: asyncio.Task | None = None
 _morning_task: asyncio.Task | None = None
 _gremlin_task: asyncio.Task | None = None
 _housekeeping_task: asyncio.Task | None = None
+_grocery_task: asyncio.Task | None = None
 
 
 def _state_path() -> Path:
@@ -98,6 +99,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     now = now or datetime.now().astimezone()
     why.pulse(now=now)
     _maybe_print(now)
+    _maybe_groceries(now)                         # before the dream check: a store visit can't wait
     if dreams.running():                          # her model is stepped aside for a dream; decide nothing
         _last.update(at=now.isoformat(), running=False, dreaming=True)
         return _last
@@ -430,6 +432,26 @@ def _maybe_gremlin_housekeeping(sig, now: datetime, *, research_running: bool) -
     _housekeeping_task.add_done_callback(_outcome("housekeeping"))
     _housekeeping_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] gremlin housekeeping failed: %s", t.exception()))
+
+
+def _maybe_groceries(now: datetime) -> None:
+    """The shared grocery list (src/initiative/groceries.py): remind him in a store zone, else keep it synced."""
+    global _grocery_task
+    if _grocery_task and not _grocery_task.done():
+        return
+    _grocery_task = asyncio.create_task(_groceries(now))
+    _grocery_task.add_done_callback(lambda t: t.exception() and logger.warning(
+        "[heartbeat] groceries failed: %s", t.exception()))
+
+
+async def _groceries(now: datetime) -> None:
+    from src.initiative import groceries
+    from src.constants import DATA_DIR
+    store = await asyncio.to_thread(groceries.observe, now)
+    if store:
+        await groceries.remind(store, data_dir=Path(DATA_DIR), now=now)
+    else:
+        await asyncio.to_thread(groceries.maybe_sync, now)
 
 
 async def heartbeat() -> None:

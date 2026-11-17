@@ -72,6 +72,7 @@ _OWNER_PRIVATE_ACTION_READ_TOOLS = frozenset({
     "manage_calendar",
     "manage_gremlin",
     "control_music",       # now_playing/search/genres: looking in his own library
+    "manage_groceries",    # list: what's on the shared grocery list
     "manage_contact",
     "manage_documents",
     "manage_email_state",
@@ -467,7 +468,7 @@ def interpret_request(request_text, *, history=(), workspace=None, active_docume
 
 # Checkout/return in the Gremlin Index is undoable bookkeeping he asked for in words.
 # Music only changes what plays in his own browser tab.
-_SELF_APPROVING_FAMILIES = frozenset({"printer", "gremlin", "music"})
+_SELF_APPROVING_FAMILIES = frozenset({"printer", "gremlin", "music", "groceries"})
 
 
 def create_request_authority(request_text, *, owner=None, session_id=None, workspace=None,

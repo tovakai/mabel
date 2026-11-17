@@ -88,6 +88,7 @@ FAMILY_TOOLS = {
     "image_generation": frozenset({"generate_image"}),
     "printer": frozenset({"print_on_paper"}),
     "gremlin": frozenset({"manage_gremlin"}),
+    "groceries": frozenset({"manage_groceries"}),
     "music": frozenset({"control_music"}),
     "image_editing": frozenset({"edit_image"}),
     "transcription": frozenset({"transcribe_media"}),
@@ -728,7 +729,7 @@ _REQUIRED_TOOLS = {
     "calendar": "manage_calendar", "notes": "manage_notes",
     "tasks": "manage_tasks", "skills": "manage_skills",
     "image_generation": "generate_image", "image_editing": "edit_image", "printer": "print_on_paper",
-    "gremlin": "manage_gremlin", "music": "control_music",
+    "gremlin": "manage_gremlin", "music": "control_music", "groceries": "manage_groceries",
     "transcription": "transcribe_media", "media_inspection": "inspect_media", "ocr": "extract_text",
 }
 
@@ -774,6 +775,16 @@ _MEDIA_REQUESTS = tuple(
         r"[\w×-]+(?:\s+(?!(?:from|at|in|on|of|for|with|to)\b)[\w×-]+){0,4}\s*\??\s*$"
         r"|\bwhere\s+(?:does|do)\s+(?:the|my|this|that|these|those)\s+[\w\s×-]{1,40}?\s+(?:go|belong|live)\b"
         r"|\bwhat(?:['’]s|\s+is|\s+do\s+i\s+have)\s+(?:still\s+)?checked\s+out\b", re.I)),
+    # The shared grocery list (Google Sheet + Obsidian): "add oat milk to the shopping list",
+    # "we're out of eggs", "what's on the grocery list?", "got everything".
+    ("groceries", re.compile(
+        r"\b(?:grocer(?:y|ies)|shopping(?:\s+list)?|inköpslist(?:a|an)|handlingslist(?:a|an))\b"
+        r"|\bwe(?:['’]re|\s+are)\s+(?:out\s+of|running\s+low\s+on|almost\s+out\s+of|low\s+on)\s+"
+        r"(?!(?:time|ideas?|options?|luck|money|space|room|here|it|this|that|sync|order|patience|the\s+woods|"
+        r"steam|energy|battery|tokens?|memory|disk)\b)"
+        r"|\b(?:i|we)\s+(?:need|have)\s+to\s+buy\b"
+        r"|\badd\s+.{1,60}?\s+to\s+the\s+list\s*[.!?]?\s*$"
+        r"|\b(?:got|bought|picked\s+up)\s+(?:everything|it\s+all|all\s+of\s+it)\b", re.I)),
     # Music in Mabel's player (Navidrome): "play Boards of Canada", "put on something chill",
     # "queue the new album", "pause the music", "skip this song", "what's playing?".
     # Not games/role-play ("play a game", "play chess", "role-play"), not "put X on my calendar".
