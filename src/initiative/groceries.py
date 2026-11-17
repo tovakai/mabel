@@ -78,7 +78,8 @@ class Item:
 
 
 def key_of(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name or "")).strip().casefold()
+    """Same thing, however it's typed: "Coca-Cola", "coca cola" and "Coca Cola " are one item."""
+    return re.sub(r"[\W_]+", " ", str(name or "").casefold()).strip()
 
 
 def _clean(text) -> str:
@@ -507,7 +508,8 @@ async def write_message(store: str, items: list[Item], *, owner: str, ask=None) 
     message = str(reply or "").strip().strip('"').strip()
     if not message or len(message) > MESSAGE_LIMIT:
         return ""
-    missing = [i.name for i in items if key_of(i.name) not in message.casefold()]
+    said = key_of(message)
+    missing = [i.name for i in items if key_of(i.name) not in said]
     if missing:                                          # never drop something from the list
         message += "\n\nAlso: " + ", ".join(missing) + "."
     return message

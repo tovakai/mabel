@@ -168,3 +168,17 @@ def test_routes_grocery_talk(text):
                                   "I'm out of ideas", "we are low on battery", "put on some music"])
 def test_leaves_other_talk_alone(text):
     assert "groceries" not in requested_capabilities(text)
+
+
+def test_spelling_variants_are_one_item():
+    # 2026-11-17, the first real store text: "Coca-Cola" and "coca cola" were two rows, and the
+    # message got "Also: coca cola." although it named Coca-Cola.
+    assert g.key_of("Coca-Cola") == g.key_of("coca cola") == g.key_of(" Coca  Cola ")
+    items, _ = g.merge([I("Coca-Cola"), I("coca cola")], [I("Coca-Cola")], {}, NOW)
+    assert len(items) == 1                                                         # merged into one row
+
+    async def ask(messages, owner):
+        return "Don't leave without Coca-Cola."
+
+    assert asyncio.run(g.write_message("Citytorget", [I("coca cola")], owner="x", ask=ask)) == \
+        "Don't leave without Coca-Cola."
