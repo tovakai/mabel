@@ -282,6 +282,7 @@ class Inventory(Horizontal):
         Binding("g", "reload", "reload", show=False),
         Binding("a", "apply", "apply", show=False),
         Binding("x", "tick", "tick", show=False),
+        Binding("v", "suggestion_in_vault", "in VAULT", show=False),
     ]
 
     def __init__(self, **kw):
@@ -726,6 +727,11 @@ class Inventory(Horizontal):
         self.app.notify(f"✓ applied to {len(s.ids)} item(s): {s.change} (undo: u)", timeout=4)
         self.world = await self.idx.world()
         await self.render_page()
+
+    def action_suggestion_in_vault(self) -> None:
+        s = self._focused_suggestion()
+        if s is not None:
+            self.app.open_in_vault("core of truth", hk.NOTE, s.line_no)
 
     async def action_tick(self) -> None:
         s = self._focused_suggestion()

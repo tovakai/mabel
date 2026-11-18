@@ -8,6 +8,7 @@ dependencies = [
     "textual-image>=0.8",
     "httpx>=0.27",
     "dbus-fast>=5.2.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]

@@ -90,7 +90,8 @@ def _lists(data: dict) -> Text:
 
 
 class Life(Grid):
-    BINDINGS = [Binding("r", "refresh", "refresh")]
+    BINDINGS = [Binding("r", "refresh", "refresh"), Binding("v", "open_dream", "dream in VAULT"),
+                Binding("p", "open_paper", "paper note in VAULT", show=False)]
 
     def __init__(self, **kw):
         super().__init__(id="life-view", **kw)
@@ -119,6 +120,7 @@ class Life(Grid):
     async def action_refresh(self) -> None:
         try:
             data = await self.app.mabel.life()
+            self.data = data
         except Exception as exc:
             self.query_one("#status-text", Static).update(Text(f"✖ can't reach Mabel: {exc}", style=P.red))
             return
@@ -149,3 +151,17 @@ class Life(Grid):
         await holder.remove_children()
         await holder.mount(Image(str(path), id="dream-image"))
         self._dream_at = at
+
+
+    def _open(self, part: str) -> None:
+        ref = ((getattr(self, "data", None) or {}).get(part) or {}).get("note")
+        if not ref:
+            self.app.notify("Nothing to open yet", timeout=2)
+            return
+        self.app.open_in_vault("Mabel's journal", ref.removeprefix("journal/"))
+
+    def action_open_dream(self) -> None:
+        self._open("dream")
+
+    def action_open_paper(self) -> None:
+        self._open("paper")

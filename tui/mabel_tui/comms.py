@@ -157,15 +157,23 @@ class Comms(Horizontal):
             self.app.notify("No chat open: ctrl+n starts one", severity="warning")
             return
         event.input.value = ""
+        note = getattr(self, "pending_note", None)
+        if note:
+            self.pending_note = None
+            event.input.placeholder = "talk to Mabel…"
+            name, rel, content = note
+            full = f"About my note “{name}” ({rel}):\n\n{content[:8000]}\n\n---\n{text}"
+            self.run_turn(full, shown=f"[about “{name}”] {text}")
+            return
         self.run_turn(text)
 
     @work(exclusive=True, group="turn")
-    async def run_turn(self, text: str, approval: tuple[str, str] | None = None) -> None:
+    async def run_turn(self, text: str, approval: tuple[str, str] | None = None, shown: str | None = None) -> None:
         log = self.query_one("#log", VerticalScroll)
         self.busy = True
         self.app.set_status("◉ MABEL IS TYPING")
         if text:
-            await log.mount(Message("user", text))
+            await log.mount(Message("user", shown or text))
         reply = Message("assistant", "")
         await log.mount(reply)
         log.scroll_end(animate=False)

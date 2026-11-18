@@ -16,7 +16,8 @@ class Config:
     token: str
     volume: int = 70
     index_url: str = "http://127.0.0.1:8766"      # tk-index; over the tailnet: https://<host>:8765
-    vault: str = "~/Documents/core of truth"      # for Mabel's Gremlin housekeeping note
+    vault: str = "~/Documents/core of truth"      # his Obsidian vault (VAULT channel, Gremlin inbox)
+    journal: str = "~/Documents/mabel/journal"    # Mabel's journal, a second vault in VAULT (PC only)
 
 
 def load(path: Path = CONFIG) -> Config:
@@ -30,4 +31,5 @@ def load(path: Path = CONFIG) -> Config:
         raise SystemExit(f"{path}: url and token (ody_…) are both needed")
     return Config(url=url, token=token, volume=int(data.get("volume", 70)),
                   index_url=str(data.get("index_url") or Config.index_url).rstrip("/"),
-                  vault=str(data.get("vault") or Config.vault))
+                  vault=str(data.get("vault") or Config.vault),
+                  journal=str(data.get("journal") or Config.journal))

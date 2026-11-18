@@ -19,6 +19,7 @@ from .api import Mabel
 from .audio import Audio
 from .comms import Comms
 from .inventory import Inventory
+from .vaultview import VaultView
 from .life import Life
 from .mpris import Mpris
 from .player import Player
@@ -29,7 +30,7 @@ LOGO = "▙▟ MABEL-OS 2.6"
 
 
 HELP = {
-    "everywhere": [("alt+1–4 / F1–F4", "switch channel"),
+    "everywhere": [("alt+1–5 / F1–F5", "switch channel"),
                    ("h j k l", "move between sections (the lit border)"),
                    ("i / a / enter", "go into the lit section"),
                    ("esc", "back out to the sections"),
@@ -39,15 +40,22 @@ HELP = {
     "comms": [("enter", "send"), ("ctrl+n", "new chat"), ("ctrl+s", "show/hide the chat list"),
               ("esc, k, then i", "into the conversation to scroll it"),
               ("ctrl+s, then h → list", "open another chat (the list hides on the deck)")],
-    "life": [("r", "refresh now"), ("tab, ↑↓", "scroll a panel")],
+    "life": [("r", "refresh now"), ("v / p", "open her last dream / paper note in VAULT")],
     "audio": [("/", "search"), ("↑↓ enter", "open album/artist, or play from that song"), ("a / n", "append / play next"),
               ("backspace", "back"), ("p", "playlists"), ("s", "add selection to a playlist"),
               ("S", "save the queue as a playlist"), ("d", "remove from the open playlist"),
               ("z", "shuffle on/off (shuffles the rest of the queue)"), ("R", "a random mix from the library"),
               ("space", "pause"), ("[ ]", "previous / next"),
               ("← →", "seek 10 s"), ("+ -", "volume")],
+    "vault": [("o", "open a note (fuzzy)"), ("/", "search the vault's text"), ("#", "browse tags"),
+              ("r", "recently changed"), ("enter / click", "open a folder, note, heading or link"),
+              ("f", "follow a link in the note"), ("backspace", "back (note history, then folders)"),
+              ("i / e", "edit (vim: hjkl w b e 0 $ gg G, i a o O, x dd dw D cw cc yy p P u ctrl+r v V :w :q)"),
+              ("[[ while typing", "pick a note to link"), ("ctrl+s", "save"), ("esc esc", "back to reading (saves)"),
+              ("D", "today's daily note (from your template)"), ("n / R", "new note / rename (links updated)"),
+              ("V", "switch vault: core of truth ↔ Mabel's journal"), ("M", "ask Mabel about this note")],
     "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
-                  ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off)"),
+                  ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off, v open in VAULT)"),
                   ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
                   ("p", "go to the item's place"), ("u", "undo the last change"), ("ctrl+s", "save in a dialog")],
 }
@@ -88,6 +96,8 @@ class MabelApp(App):
         Binding("alt+2", "channel('life')", "LIFE", show=False, priority=True),
         Binding("alt+3", "channel('audio')", "AUDIO", show=False, priority=True),
         Binding("alt+4", "channel('inventory')", "INVENTORY", show=False, priority=True),
+        Binding("f5", "channel('vault')", "VAULT", show=False, priority=True),
+        Binding("alt+5", "channel('vault')", "VAULT", show=False, priority=True),
         Binding("question_mark", "help", "keys"),
         Binding("ctrl+t", "tune", "colours", show=False, priority=True),
         Binding("h", "navkey('h')", show=False), Binding("j", "navkey('j')", show=False),
@@ -125,6 +135,8 @@ class MabelApp(App):
                 yield Audio()
             with TabPane("CH-04 INVENTORY", id="inventory"):
                 yield Inventory()
+            with TabPane("CH-05 VAULT", id="vault"):
+                yield VaultView()
         with Vertical(id="bottom"):
             yield Static(id="statusline")
             yield Footer()
@@ -248,6 +260,18 @@ class MabelApp(App):
         elif self.focused is None and self.nav_section is None:
             self.start_nav()
 
+    def open_in_vault(self, vault_name: str, rel: str, line: int | None = None) -> None:
+        """Mabel links: open a note from another channel in VAULT."""
+        self.action_channel("vault")
+        self.query_one(VaultView).open_external(vault_name, rel, line)
+
+    def ask_about_note(self, name: str, rel: str, content: str) -> None:
+        """VAULT's M: the next COMMS message goes to Mabel with this note attached."""
+        comms = self.query_one(Comms)
+        comms.pending_note = (name, rel, content)
+        self.action_channel("comms")
+        self.query_one("#prompt").placeholder = f"ask Mabel about “{name}”…"
+
     def action_tune(self) -> None:
         from .tuner import Tuner
         if self._main_screen():
@@ -302,6 +326,10 @@ class MabelApp(App):
 
 
 def main() -> None:
+    # textual_image asks the terminal what it supports when first imported. Do that now, before
+    # Textual owns the terminal: imported later (first cover/dream picture) it raced Textual's input
+    # thread for the reply and froze the app on the deck (black screen, 2026-11-18).
+    import textual_image.widget  # noqa: F401
     MabelApp(config.load()).run()
 
 

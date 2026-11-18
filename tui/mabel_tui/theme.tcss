@@ -207,3 +207,22 @@ Input.section.-nav > .input--placeholder { color: $mo-amber-dim; }
 .-narrow #inv-image { width: 22; height: 11; }
 Tuner { align: center middle; background: rgba(12, 8, 4, 0.6); }
 #tuner { width: 96; height: auto; max-height: 90%; background: $mo-panel; border: heavy $mo-amber; padding: 0 1; }
+
+/* ── VAULT ── */
+#vault-view { layout: horizontal; }
+#vault-explorer { width: 32; }
+#vault-note { width: 1fr; }
+#vault-side { width: 36; }
+#vault-side.-hidden { display: none; }
+#vault-meta { height: auto; margin: 0 0 1 0; }
+#vault-switch { height: 1fr; }
+#vault-read { height: 1fr; }
+#vault-edit { height: 1fr; border: none; padding: 0 1; }
+#vault-status { height: 1; dock: bottom; }
+#vault-md { margin: 0 1; }
+Picker { align: center middle; background: rgba(12, 8, 4, 0.7); }
+#picker { width: 80; height: auto; max-height: 80%; background: $mo-panel; border: heavy $mo-amber; padding: 0 1; }
+#picker-list { height: auto; max-height: 24; }
+.-narrow #vault-explorer { width: 28; }
+.-narrow #vault-side { display: none; }
+.-narrow #vault-side.-shown { display: block; width: 32; }
