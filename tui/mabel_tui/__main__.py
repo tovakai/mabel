@@ -1,3 +1,4 @@
 from .app import main
 
-main()
+if __name__ == "__main__":          # a spawned audio process imports this too (tracksynth.AudioProcess)
+    main()

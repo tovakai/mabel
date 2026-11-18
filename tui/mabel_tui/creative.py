@@ -13,8 +13,9 @@ from textual.widgets import ContentSwitcher, Static
 
 from .palette import P
 from .pixelview import PixelView
+from .trackerview import TrackerView
 
-APPS = [("pixel", "PIXEL", "sprites and animation"), ("tracker", "TRACKER", "chip music · coming next")]
+APPS = [("pixel", "PIXEL", "sprites and animation"), ("tracker", "TRACKER", "chip music + MIDI · song → chain → phrase")]
 
 
 class AppBar(Static):
@@ -28,15 +29,6 @@ class AppBar(Static):
             x += width
 
 
-class TrackerSoon(Static):
-    def on_mount(self) -> None:
-        t = Text()
-        t.append("\n  TRACKER\n\n", style=f"bold {P.amber_hi}")
-        t.append("  An LSDJ-style tracker without the menu-diving: song, chain, phrase and\n"
-                 "  instrument on screen together, a chip synth and MIDI out.\n  Next round.", style=P.amber)
-        self.update(t)
-
-
 class Creative(Vertical):
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -46,7 +38,7 @@ class Creative(Vertical):
         yield AppBar(id="creative-bar")
         with ContentSwitcher(initial="pixel", id="creative-apps"):
             yield PixelView(id="pixel")
-            yield TrackerSoon(id="tracker", classes="panel")
+            yield TrackerView(id="tracker")
 
     def on_mount(self) -> None:
         self._bar()
@@ -66,6 +58,8 @@ class Creative(Vertical):
         self.current = key
         self.query_one("#creative-apps", ContentSwitcher).current = key
         self._bar()
+        if key == "tracker":
+            self.query_one(TrackerView).warm()
         self.focus_primary()
 
     def cycle(self) -> None:
@@ -76,4 +70,4 @@ class Creative(Vertical):
         if self.current == "pixel":
             self.query_one(PixelView).focus_canvas()
         else:
-            self.app.start_nav()
+            self.query_one(TrackerView).focus_panel()

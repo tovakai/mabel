@@ -252,3 +252,12 @@ Terminal { width: 1fr; height: 1fr; }
 #pixel-frames { height: 1fr; }
 #pixel-status { height: 1; background: $mo-panel; }
 #tracker { height: 1fr; }
+#trk-main { height: 1fr; }
+#trk-song { width: 32; height: 1fr; }
+#trk-chain { width: 15; height: 1fr; }
+#trk-phrase { width: 24; height: 1fr; }
+#trk-right { width: 1fr; }
+#trk-inst { height: 15; }
+#trk-table { height: 1fr; min-height: 8; }
+#trk-wave { height: 8; }
+#trk-status { height: 1; background: $mo-panel; }
