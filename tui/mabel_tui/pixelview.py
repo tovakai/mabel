@@ -7,7 +7,7 @@ cell, like Mabel's avatar); zoom 2+ draws square pixels (2n×n cells) with a cur
 
 Canvas keys: hjkl/arrows move (HJKL ×4) · space/enter use the tool · t pen down (draw while
 moving) · b pencil e eraser f fill n line r rect o ellipse c pick · F filled shapes · m mirror ·
-g grid · O onion skin · +/- zoom (0 fits) · [ ] colour · x swap fg/bg · # hex colour · { } layer · A add
+g grid · O onion skin · +/- zoom (0 fits) · P palette · , . or [ ] colour · x swap fg/bg · # hex colour · PgUp/PgDn or { } layer · A add
 layer · V hide layer · < > frame · N new frame · p play · u undo · ctrl+r redo · ctrl+s save · : command
 """
 from __future__ import annotations
@@ -77,23 +77,39 @@ class Canvas(ScrollView, can_focus=True):
         Binding("g", "toggle('grid')", show=False), Binding("O", "toggle('onion')", show=False),
         Binding("plus,equals_sign", "zoom(1)", "zoom", show=False), Binding("minus", "zoom(-1)", show=False),
         Binding("0", "fit", show=False),
-        Binding("left_square_bracket", "colour(-1)", show=False),
-        Binding("right_square_bracket", "colour(1)", show=False), Binding("x", "swap", show=False),
+        Binding("left_square_bracket,comma", "colour(-1)", show=False),
+        Binding("right_square_bracket,full_stop", "colour(1)", show=False), Binding("x", "swap", show=False),
         Binding("number_sign", "ask_hex", show=False),
-        Binding("left_curly_bracket", "layer(-1)", show=False), Binding("right_curly_bracket", "layer(1)", show=False),
+        Binding("left_curly_bracket,pagedown", "layer(-1)", show=False),
+        Binding("right_curly_bracket,pageup", "layer(1)", show=False),
         Binding("A", "add_layer", show=False), Binding("V", "hide_layer", show=False),
         Binding("less_than_sign", "frame(-1)", show=False), Binding("greater_than_sign", "frame(1)", show=False),
         Binding("N", "add_frame", show=False), Binding("p", "play", "play"),
+        Binding("P", "palette", "palette", show=False),
         Binding("u", "undo", "undo"), Binding("ctrl+r", "redo", show=False),
         Binding("ctrl+s", "save", "save"), Binding("colon", "command", ":cmd"),
         Binding("escape", "escape", show=False),
     ]
+
+    # Keys by the character typed, whatever name the terminal gives them: on a Swedish layout
+    # [ ] { } are AltGr+8/9/7/0, which kitty may not report as left_square_bracket etc.
+    CHARS = {"[": ("colour", -1), "]": ("colour", 1), "{": ("layer", -1), "}": ("layer", 1),
+             "<": ("frame", -1), ">": ("frame", 1), "#": ("ask_hex",), "+": ("zoom", 1)}
 
     def __init__(self, editor: "PixelView", **kw):
         super().__init__(**kw)
         self.ed = editor
         self._rows: dict[int, Strip] = {}
         self.blink = True
+
+    async def _on_key(self, event: events.Key) -> None:
+        action = self.CHARS.get(event.character or "")
+        if action:
+            event.stop()
+            event.prevent_default()
+            getattr(self, f"action_{action[0]}")(*action[1:])
+            return
+        await super()._on_key(event)
 
     def on_mount(self) -> None:
         self.set_interval(0.5, self._blink)
@@ -217,6 +233,7 @@ class Canvas(ScrollView, can_focus=True):
     def action_frame(self, step: int) -> None: self.ed.step_frame(step)
     def action_add_frame(self) -> None: self.ed.add_frame()
     def action_play(self) -> None: self.ed.toggle_play()
+    def action_palette(self) -> None: self.ed.query_one(Palette).focus()
     def action_undo(self) -> None: self.ed.undo(True)
     def action_redo(self) -> None: self.ed.undo(False)
     def action_save(self) -> None: self.ed.run_command("w")
@@ -231,6 +248,51 @@ class Canvas(ScrollView, can_focus=True):
 
     def on_blur(self) -> None:
         self.redraw(keep_scroll=True)
+
+
+class Palette(Static, can_focus=True):
+    """The swatches: hjkl/arrows move, enter or space takes it as FG, b as BG, esc back out.
+    A click takes a swatch too (right click: BG)."""
+    BINDINGS = [Binding("left,h", "move(-1)", show=False), Binding("right,l", "move(1)", show=False),
+                Binding("up,k", "move(-8)", show=False), Binding("down,j", "move(8)", show=False),
+                Binding("enter,space", "take('fg')", "pick", show=False), Binding("b", "take('bg')", show=False),
+                Binding("x", "take('clear')", show=False), Binding("escape", "back", show=False)]
+
+    def __init__(self, editor: "PixelView", **kw):
+        super().__init__(**kw)
+        self.ed = editor
+        self.index = 0
+
+    def on_focus(self) -> None:
+        pal = self.ed.doc.palette
+        self.index = pal.index(self.ed.fg) if self.ed.fg in pal else 0
+        self.ed._palette()
+
+    def on_blur(self) -> None:
+        self.ed._palette()
+
+    def action_move(self, step: int) -> None:
+        n = len(self.ed.doc.palette)
+        self.index = max(0, min(n - 1, self.index + step))
+        self.ed._palette()
+
+    def action_take(self, which: str) -> None:
+        c = self.ed.doc.palette[self.index] if which != "clear" else None
+        if which == "bg" or which == "clear":
+            self.ed.bg = c
+        else:
+            self.ed.fg = c
+        self.ed.changed(pixels=False, say=f"{'BG' if which != 'fg' else 'FG'} {c or 'clear'}")
+        self.action_back()
+
+    def action_back(self) -> None:
+        self.ed.canvas.focus()
+
+    def on_click(self, event: events.Click) -> None:
+        i = (event.y - 0) * SWATCHES_PER_ROW + event.x // 2
+        if 0 <= event.x < SWATCHES_PER_ROW * 2 and 0 <= i < len(self.ed.doc.palette):
+            self.index = i
+            self.action_take("bg" if event.button == 3 else "fg")
 
 
 class CommandLine(Input):
@@ -298,7 +360,7 @@ class PixelView(Vertical):
                 tools = Static(id="pixel-tools", classes="panel section")
                 tools.border_title = "TOOLS"
                 yield tools
-                palette = Static(id="pixel-palette", classes="panel section")
+                palette = Palette(self, id="pixel-palette", classes="panel section")
                 palette.border_title = "PALETTE"
                 yield palette
             canvas = Canvas(self, id="pixel-canvas", classes="panel section")
@@ -319,7 +381,8 @@ class PixelView(Vertical):
 
     def on_mount(self) -> None:
         self.query_one("#pixel-cmd").display = False
-        for sid in ("#pixel-tools", "#pixel-palette", "#pixel-layers", "#pixel-frames"):
+        self.query_one("#pixel-palette").section_primary = None          # enter goes into the swatches
+        for sid in ("#pixel-tools", "#pixel-layers", "#pixel-frames"):
             self.query_one(sid).section_primary = lambda: self.canvas.focus()
         self.query_one("#pixel-preview").section_primary = lambda: self.canvas.focus()
         self.canvas.section_primary = None
@@ -596,8 +659,11 @@ class PixelView(Vertical):
 
     def _palette(self) -> None:
         t = Text()
+        pal_w = self.query_one(Palette)
         for i, c in enumerate(self.doc.palette):
-            if c == self.fg:
+            if pal_w.has_focus and i == pal_w.index:
+                t.append("▐▌", style=Style(color=_contrast(c), bgcolor=c, bold=True, blink=False))
+            elif c == self.fg:
                 t.append("[]", style=Style(color=_contrast(c), bgcolor=c, bold=True))
             elif c == self.bg:
                 t.append("<>", style=Style(color=_contrast(c), bgcolor=c))
@@ -605,7 +671,10 @@ class PixelView(Vertical):
                 t.append("██", style=c)
             if i % SWATCHES_PER_ROW == SWATCHES_PER_ROW - 1:
                 t.append("\n")
-        t.append("\n[ ] colour · x swap · # hex", style=P.amber_dim)
+        if pal_w.has_focus:
+            t.append("\nenter FG · b BG · x clear BG · esc", style=P.sand)
+        else:
+            t.append("\nP pick · , . or [ ] step\nx swap · # hex", style=P.amber_dim)
         self.query_one("#pixel-palette", Static).update(t)
 
     def _layers(self) -> None:

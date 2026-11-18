@@ -45,6 +45,20 @@ def test_drawing_with_keys(tmp_path, monkeypatch):
             assert ed.doc.get(0, 0, 6, 3) is None and ed.doc.get(0, 0, 2, 1) == ed.fg
             await pilot.press("N", "A", "greater_than_sign")
             assert len(ed.doc.frames) == 2 and len(ed.doc.layers) == 2
+            fg0 = ed.fg
+            await pilot.press("full_stop")
+            assert ed.fg != fg0
+            await pilot.press("comma")
+            assert ed.fg == fg0
+            canvas = app.query_one(pixelview.Canvas)
+            await canvas._on_key(pixelview.events.Key("ctrl+alt+8", "]"))      # AltGr+9 on a Swedish layout
+            assert ed.fg != fg0
+            await pilot.press("P")
+            assert type(app.focused).__name__ == "Palette"
+            await pilot.press("right", "right", "down", "enter")
+            assert ed.fg == ed.doc.palette[ed.doc.palette.index(fg0) + 1 + 2 + 8] and app.focused is canvas
+            await pilot.press("P", "b")
+            assert ed.bg is not None and app.focused is canvas
             await pilot.press("colon")
             await pilot.press(*"w hello.png", "enter")
             assert (tmp_path / "hello.png").exists() and not ed.dirty, ed.message
