@@ -23,6 +23,7 @@ class Config:
     avatar: str = ""                              # her avatar: a folder like assets/avatar (avatar.json + strips) or one PNG; "" = built in
     avatar_fps: float = 4.0                       # frames per second when the avatar is a strip
     offline_bitrate: int = 0                      # downloads: 0 = the original files, else e.g. 192 (kbit/s)
+    pixel_dir: str = "~/Pictures/MABEL-OS"        # PIXEL's files (relative names in :w / :e / :export)
     auto_update: bool = False                     # install pushed updates by itself after 5 min without a key (the deck)
 
 
@@ -42,6 +43,7 @@ def load(path: Path = CONFIG) -> Config:
                   navidrome=_navidrome(data.get("navidrome"), path),
                   offline_bitrate=int(data.get("offline_bitrate") or 0),
                   auto_update=bool(data.get("auto_update", False)),
+                  pixel_dir=str(data.get("pixel_dir") or Config.pixel_dir),
                   preset=str(data.get("preset", "custom")),
                   avatar=str(data.get("avatar") or ""), avatar_fps=float(data.get("avatar_fps") or 4.0))
 

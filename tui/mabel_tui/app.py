@@ -20,6 +20,7 @@ from . import config, nav, update
 from .api import Mabel
 from .audio import Audio
 from .comms import Comms
+from .creative import Creative
 from .inventory import Inventory
 from .term import Terminal, TermView
 from .vaultview import VaultView
@@ -33,7 +34,7 @@ LOGO = "▙▟ MABEL-OS 2.6"
 
 
 HELP = {
-    "everywhere": [("alt+1–6 / F1–F6", "switch channel"),
+    "everywhere": [("alt+1–7 / F1–F7", "switch channel (F7 again: next CREATIVE app)"),
                    ("h j k l", "move between sections (the lit border)"),
                    ("i / a / enter", "go into the lit section"),
                    ("esc", "back out to the sections"),
@@ -65,6 +66,17 @@ HELP = {
              ("ctrl+]", "back out to the sections"), ("alt+1–6", "switch channel (still works inside)"),
              ("shift+PgUp / PgDn", "scroll back"), ("N", "new shell tab (in nav mode)"),
              ("[ ]", "previous / next shell (nav mode)"), ("X", "close the shell tab (nav mode)")],
+    "creative": [("F7 / alt+7 again", "next app: PIXEL · TRACKER"),
+                 ("PIXEL: hjkl / arrows", "move the cursor (HJKL ×4); space or enter uses the tool"),
+                 ("b e f n r o c", "pencil · eraser · fill · line · rect · ellipse · pick a colour"),
+                 ("t", "pen down: moving draws (t / esc lifts it)"),
+                 ("F m g O", "filled shapes · mirror · grid · onion skin"),
+                 ("+ - 0", "zoom (1 = exact half-blocks, 2+ = big square pixels) · 0 fits the canvas"),
+                 ("[ ] x #", "previous / next colour · swap fg and bg · type a hex colour"),
+                 ("{ } A V", "layer below / above · add a layer · hide it"),
+                 ("< > N p", "previous / next frame · new frame (a copy) · play the animation"),
+                 ("u ctrl+r ctrl+s", "undo · redo · save"),
+                 (":", ":new 28 28 · :w file · :e file · :avatar · :export strip 4 · :help for all")],
     "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
                   ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off, v open in VAULT)"),
                   ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
@@ -112,6 +124,8 @@ class MabelApp(App):
         Binding("alt+5", "channel('vault')", "VAULT", show=False, priority=True),
         Binding("f6", "fchannel('term')", "TERM", show=False, priority=True),
         Binding("alt+6", "channel('term')", "TERM", show=False, priority=True),
+        Binding("f7", "fchannel('creative')", "CREATIVE", show=False, priority=True),
+        Binding("alt+7", "channel('creative')", "CREATIVE", show=False, priority=True),
         Binding("ctrl+right_square_bracket", "nav_out", show=False),
         Binding("ctrl+z", "shell", "shell", show=False, priority=True),
         Binding("question_mark", "help", "keys"),
@@ -165,6 +179,8 @@ class MabelApp(App):
                 yield VaultView()
             with TabPane("CH-06 TERM", id="term"):
                 yield TermView()
+            with TabPane("CH-07 CREATIVE", id="creative"):
+                yield Creative()
         with Vertical(id="bottom"):
             yield Static(id="statusline")
             yield Footer()
@@ -396,6 +412,9 @@ class MabelApp(App):
         self.push_screen(HelpScreen(self.query_one(TabbedContent).active))
 
     def action_channel(self, name: str) -> None:
+        if name == "creative" and self.query_one(TabbedContent).active == "creative":
+            self.query_one(Creative).cycle()               # F7 again: the next app in the suite
+            return
         # Drop focus first: a focused widget left in the old channel pulls the tabs back to it.
         self.screen.set_focus(None)
         self.query_one(TabbedContent).active = name
@@ -406,6 +425,8 @@ class MabelApp(App):
                 self.query_one("#prompt").focus()          # chat is for typing: straight into the prompt
             elif name == "term":
                 self.query_one(TermView)._focus_current()  # a terminal is for typing too
+            elif name == "creative":
+                self.query_one(Creative).focus_primary()   # straight onto the canvas
             else:
                 self.start_nav()
         self.set_timer(0.15, settle)                   # after the pane has its size, so sections can be lit

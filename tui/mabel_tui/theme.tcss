@@ -237,3 +237,18 @@ Terminal { width: 1fr; height: 1fr; }
 #mabel-side { width: 30; height: 1fr; }
 #portrait { width: 30; height: 16; padding: 0; }
 #mabel-state { width: 30; height: 1; content-align: center middle; text-align: center; margin-top: 1; }
+
+/* ── CH-07 CREATIVE ── */
+#creative-bar { height: 1; background: $mo-panel; }
+#creative-apps, #pixel, #pixel-main { height: 1fr; }
+#pixel-left { width: 24; }
+#pixel-tools { height: auto; }
+#pixel-palette { height: 1fr; }
+#pixel-canvas { width: 1fr; height: 1fr; padding: 0; background: $mo-bg; }
+#pixel-right { width: 32; }
+#pixel-preview { height: 17; }
+#pixel-preview-img { height: 1fr; }
+#pixel-layers { height: auto; max-height: 12; }
+#pixel-frames { height: 1fr; }
+#pixel-status { height: 1; background: $mo-panel; }
+#tracker { height: 1fr; }
