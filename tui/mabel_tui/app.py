@@ -124,7 +124,7 @@ class MabelApp(App):
     def __init__(self, cfg: config.Config):
         super().__init__()
         self.cfg = cfg
-        self.mabel = Mabel(cfg.url, cfg.token)
+        self.mabel = Mabel(cfg.url, cfg.token, cfg.preset)
         self.index = TKIndex(cfg.index_url)
         from .music_source import MabelMusic, Navidrome
         from .offline import Offline

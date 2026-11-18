@@ -19,6 +19,7 @@ class Config:
     vault: str = "~/Documents/core of truth"      # his Obsidian vault (VAULT channel, Gremlin inbox)
     journal: str = "~/Documents/mabel/journal"    # Mabel's journal, a second vault in VAULT (PC only)
     navidrome: dict | None = None                 # [navidrome] url/user/password: AUDIO direct, without Mabel
+    preset: str = "custom"                        # the chat preset that carries her character ("" = none)
     avatar: str = ""                              # her pixel avatar: a PNG (28×28, or a strip of frames); "" = built in
     avatar_fps: float = 4.0                       # frames per second when the avatar is a strip
     offline_bitrate: int = 0                      # downloads: 0 = the original files, else e.g. 192 (kbit/s)
@@ -39,6 +40,7 @@ def load(path: Path = CONFIG) -> Config:
                   journal=str(data.get("journal") or Config.journal),
                   navidrome=_navidrome(data.get("navidrome"), path),
                   offline_bitrate=int(data.get("offline_bitrate") or 0),
+                  preset=str(data.get("preset", "custom")),
                   avatar=str(data.get("avatar") or ""), avatar_fps=float(data.get("avatar_fps") or 4.0))
 
 

@@ -12,9 +12,10 @@ class MabelError(RuntimeError):
 
 
 class Mabel:
-    def __init__(self, url: str, token: str):
+    def __init__(self, url: str, token: str, preset: str = "custom"):
         self.url = url.rstrip("/")
         self.token = token
+        self.preset = preset                 # "custom" = Mabel's character preset in the web UI
         self.http = httpx.AsyncClient(base_url=self.url, headers={"Authorization": f"Bearer {token}"},
                                       timeout=httpx.Timeout(30.0, read=600.0))
 
@@ -53,6 +54,8 @@ class Mabel:
                      ) -> AsyncIterator[dict]:
         """The chat stream as events: {"delta"}, {"type": ...}, {"type": "error"}. Ends after [DONE]."""
         form = {"message": message, "session": session_id, "mode": "chat"}
+        if self.preset:                      # her character: the web UI sends the same (a disabled preset = defaults)
+            form["preset_id"] = self.preset
         if approval:
             form.update(message="", tool_approval_id=approval[0], tool_approval_decision=approval[1])
         async with self.http.stream("POST", "/api/chat_stream", data=form) as resp:
