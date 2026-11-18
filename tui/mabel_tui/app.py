@@ -20,7 +20,10 @@ from . import config, nav, update
 from .api import Mabel
 from .audio import Audio
 from .comms import Comms
+from .commsuite import CommsSuite
 from .creative import Creative
+from .suite import Suite
+from .sysview import Sys
 from .inventory import Inventory
 from .term import Terminal, TermView
 from .vaultview import VaultView
@@ -34,7 +37,7 @@ LOGO = "▙▟ MABEL-OS 2.6"
 
 
 HELP = {
-    "everywhere": [("alt+1–7 / F1–F7", "switch channel (F7 again: next CREATIVE app)"),
+    "everywhere": [("alt+1–8 / F1–F8", "switch channel (again on COMMS, CREATIVE or SYS: their next app)"),
                    ("h j k l", "move between sections (the lit border)"),
                    ("i / a / enter", "go into the lit section"),
                    ("esc", "back out to the sections"),
@@ -77,6 +80,7 @@ HELP = {
                  ("PgUp PgDn / { } A V", "layer above / below · add a layer · hide it"),
                  ("< > N p", "previous / next frame · new frame (a copy) · play the animation"),
                  ("u ctrl+r ctrl+s", "undo · redo · save"),
+                 ("ctrl+o", "files (both apps): enter open · n new · m folder · r rename · c copy · D delete · / filter"),
                  (":", ":new 28 28 · :w file · :e file · :avatar · :export strip 4 · :help for all"),
                  ("TRACKER: hjkl  H L", "move · previous / next panel (SONG CHAIN PHRASE INSTRUMENT TABLE WAVE)"),
                  ("enter", "dive in: song → chain → phrase → instrument; on a note: piano mode"),
@@ -86,6 +90,19 @@ HELP = {
                  ("y p  Y P", "copy / paste a cell · a whole chain, phrase or table"),
                  ("space m s", "play / stop what you're looking at · mute · solo the track"),
                  ("u ctrl+r ctrl+s :", "undo · redo · save · :bpm :groove :export wav|mid :midi :help")],
+    "sys": [("F8 / alt+8 again", "next app (the deck: STATUS · NETWORK · BLUETOOTH · AUDIO · TIME)"),
+            ("j k  enter", "move · do the line (connect, pair, switch, change)"),
+            ("h l  or  - +", "adjust a value (volume, brightness)"),
+            ("x", "forget a Wi-Fi network · remove a Bluetooth device"),
+            ("r", "refresh / rescan"),
+            ("STATUS", "restart or shut down MABEL-OS; on the deck also suspend, reboot, power off (enter twice)")],
+    "inbox": [("F1 again", "COMMS: MABEL ⇄ INBOX"),
+              ("CHATS: j k enter", "move · open a chat"),
+              ("/  u  , .", "filter chats · unread only · step through networks"),
+              ("CONVERSATION: j k", "pick a message"),
+              ("i / tab / enter", "write (enter sends, esc stops)"),
+              ("r  e  +  m", "reply to it · edit yours · react · mark the chat unread"),
+              ("h / esc", "back to the chats")],
     "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
                   ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off, v open in VAULT)"),
                   ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
@@ -135,6 +152,8 @@ class MabelApp(App):
         Binding("alt+6", "channel('term')", "TERM", show=False, priority=True),
         Binding("f7", "fchannel('creative')", "CREATIVE", show=False, priority=True),
         Binding("alt+7", "channel('creative')", "CREATIVE", show=False, priority=True),
+        Binding("f8", "fchannel('sys')", "SYS", show=False, priority=True),
+        Binding("alt+8", "channel('sys')", "SYS", show=False, priority=True),
         Binding("ctrl+right_square_bracket", "nav_out", show=False),
         Binding("ctrl+z", "shell", "shell", show=False, priority=True),
         Binding("question_mark", "help", "keys"),
@@ -177,7 +196,7 @@ class MabelApp(App):
             yield Static(id="casing-clock")
         with TabbedContent(initial="comms"):
             with TabPane("CH-01 COMMS", id="comms"):
-                yield Comms()
+                yield CommsSuite()
             with TabPane("CH-02 LIFE", id="life"):
                 yield Life()
             with TabPane("CH-03 AUDIO", id="audio"):
@@ -190,6 +209,8 @@ class MabelApp(App):
                 yield TermView()
             with TabPane("CH-07 CREATIVE", id="creative"):
                 yield Creative()
+            with TabPane("CH-08 SYS", id="sys"):
+                yield Sys(self.cfg.deck)
         with Vertical(id="bottom"):
             yield Static(id="statusline")
             yield Footer()
@@ -397,6 +418,7 @@ class MabelApp(App):
         comms = self.query_one(Comms)
         comms.pending_note = (name, rel, content)
         self.action_channel("comms")
+        self.query_one(CommsSuite).show("mabel")
         self.query_one("#prompt").placeholder = f"ask Mabel about “{name}”…"
 
     def action_tune(self) -> None:
@@ -418,24 +440,27 @@ class MabelApp(App):
             pass
 
     def action_help(self) -> None:
-        self.push_screen(HelpScreen(self.query_one(TabbedContent).active))
+        active = self.query_one(TabbedContent).active
+        suite = self.query_one(f"#{active}").query(Suite)
+        current = suite.first().current if suite else ""
+        self.push_screen(HelpScreen(current if current in HELP else active))   # an app's own keys if it has them
 
     def action_channel(self, name: str) -> None:
-        if name == "creative" and self.query_one(TabbedContent).active == "creative":
-            self.query_one(Creative).cycle()               # F7 again: the next app in the suite
-            return
+        if self.query_one(TabbedContent).active == name:
+            suite = self.query_one(f"#{name}").query(Suite)
+            if suite:
+                suite.first().cycle()                      # F7 / F8 again: the next app in the suite
+                return
         # Drop focus first: a focused widget left in the old channel pulls the tabs back to it.
         self.screen.set_focus(None)
         self.query_one(TabbedContent).active = name
 
         def settle() -> None:
             self._light(None)
-            if name == "comms":
-                self.query_one("#prompt").focus()          # chat is for typing: straight into the prompt
-            elif name == "term":
+            if name == "term":
                 self.query_one(TermView)._focus_current()  # a terminal is for typing too
-            elif name == "creative":
-                self.query_one(Creative).focus_primary()   # straight onto the canvas
+            elif name in ("comms", "creative", "sys"):
+                self.query_one(f"#{name}").query(Suite).first().focus_primary()   # straight into the app
             else:
                 self.start_nav()
         self.set_timer(0.15, settle)                   # after the pane has its size, so sections can be lit

@@ -51,6 +51,36 @@ def _cell(text: str, *, cursor: bool, focused: bool, play: bool = False, dim: bo
     return text, (P.amber_dim if dim else P.amber)
 
 
+def song_card(path: Path, width: int, height: int) -> Text:
+    """The browser's preview of a song: its facts and the top of the song grid."""
+    song = tk.load(path)
+    last = song.last_row()
+    steps = 0
+    for t in range(song.tracks):                       # once through, on the longest track
+        n, r = 0, 0
+        while r <= last and song.rows[r][t] is not None:
+            chain = song.chains.get(song.rows[r][t]) or []
+            n += sum(1 for s in chain if s.phrase is not None) * tk.STEPS
+            r += 1
+        steps = max(steps, n)
+    groove = song.groove or [6]
+    seconds = steps * (sum(groove) / len(groove)) * 60 / (song.bpm * 24)
+    used = lambda d, empty: sum(1 for v in d.values() if not empty(v))
+    t = Text()
+    t.append(f"\n {song.title}\n", style=f"bold {P.amber_hi}")
+    t.append(f" {song.bpm} bpm · groove {'/'.join(map(str, groove))} · {song.tracks} tracks\n", style=P.amber)
+    t.append(f" {used(song.chains, lambda c: all(s.phrase is None for s in c))} chains · "
+             f"{used(song.phrases, lambda p: all(s.note is None for s in p))} phrases · "
+             f"{len(song.instruments)} instruments\n", style=P.amber)
+    t.append(f" about {int(seconds // 60)}:{int(seconds % 60):02d} once through\n\n", style=P.teal)
+    for r in range(min(max(0, last + 1), max(1, height - 8))):
+        t.append(f" {r:02X} ", style=P.amber_dim)
+        t.append(" ".join(tk.hx(c) for c in song.rows[r][:song.tracks]) + "\n", style=P.amber)
+    if last < 0:
+        t.append(" (an empty song)\n", style=P.amber_dim)
+    return t
+
+
 class CmdLine(Input):
     BINDINGS = [Binding("escape", "close", show=False)]
 
@@ -744,6 +774,8 @@ class TrackerView(Vertical):
                 self.message = f"{obj.cmd}: {tk.COMMANDS[obj.cmd]}"
         elif k == "ctrl+s":
             self.run_command("w")
+        elif k == "ctrl+o":
+            self.browse()
         elif k == "u":
             self.undo(True)
         elif k == "ctrl+r":
@@ -813,6 +845,43 @@ class TrackerView(Vertical):
         p = p if p.is_absolute() else self._dir() / p
         return p.with_suffix(suffix) if suffix and not p.suffix else p
 
+    def browse(self) -> None:
+        """ctrl+o / :e: the file browser (browser.py) on tracker_dir; exports are listed, dimmed."""
+        from .browser import Browser, BrowserSpec
+
+        def renamed(old: Path, new: Path) -> None:
+            if self.song.path == old:
+                self.song.path = new
+                self._remember()
+        spec = BrowserSpec("TRACKER · SONGS", self._dir(), (".mtk",), also_show=(".wav", ".mid"),
+                           preview=song_card, new_suffix=".mtk", dirty=self.dirty, current=self.song.path,
+                           renamed=renamed)
+        self.app.push_screen(Browser(spec), self._browsed)
+
+    def _browsed(self, choice) -> None:
+        if choice is not None:
+            try:
+                if choice.save_first:
+                    if self.song.path is None:
+                        self.message = "this song has no name yet: :w name.mtk first"
+                        self.refresh_all()
+                        return
+                    tk.save(self.song)
+                if choice.new:
+                    song = tk.Song(title=choice.path.stem, tracks=self.song.tracks)
+                    tk.save(song, choice.path)
+                    self._load(song)
+                    self.message = f"new song {choice.path.name}"
+                else:
+                    self._load(tk.load(choice.path))
+                    self.message = f"opened {choice.path.name}"
+                self._remember()
+            except Exception as exc:
+                self.message = f"✖ {exc}"
+            self._sync()
+        self.refresh_all()
+        self.focus_panel()
+
     def _remember(self) -> None:
         try:
             if self.song.path:
@@ -855,9 +924,10 @@ class TrackerView(Vertical):
             self.dirty = False
             self._remember()
             return f"saved {path}"
+        if cmd in ("files", "browse") or (cmd == "e" and not rest):
+            self.browse()
+            return None
         if cmd == "e":
-            if not rest:
-                return "which song? :e name.mtk"
             self._load(tk.load(self._path(" ".join(rest), ".mtk")))
             self._remember()
             return f"opened {self.song.path}"

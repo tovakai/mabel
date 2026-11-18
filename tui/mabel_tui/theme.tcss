@@ -239,8 +239,8 @@ Terminal { width: 1fr; height: 1fr; }
 #mabel-state { width: 30; height: 1; content-align: center middle; text-align: center; margin-top: 1; }
 
 /* ── CH-07 CREATIVE ── */
-#creative-bar { height: 1; background: $mo-panel; }
-#creative-apps, #pixel, #pixel-main { height: 1fr; }
+.suite-bar { height: 1; background: $mo-panel; }
+.suite-apps, #pixel, #pixel-main { height: 1fr; }
 #pixel-left { width: 24; }
 #pixel-tools { height: auto; }
 #pixel-palette { height: 1fr; }
@@ -261,3 +261,25 @@ Terminal { width: 1fr; height: 1fr; }
 #trk-table { height: 1fr; min-height: 8; }
 #trk-wave { height: 8; }
 #trk-status { height: 1; background: $mo-panel; }
+
+/* ── CREATIVE file browser ── */
+Browser { align: center middle; background: $mo-bg 60%; }
+#browser { width: 90%; height: 85%; background: $mo-panel; border: heavy $mo-amber; border-title-color: $mo-beige;
+           border-title-style: bold; padding: 0 1; }
+#browser-main { height: 1fr; }
+#browser-list { width: 1fr; height: 1fr; }
+#browser-preview { width: 42%; height: 1fr; border-left: vkey $mo-amber-faint; padding-left: 1; }
+#browser-help { height: 1; }
+#browser-input { height: 3; }
+
+/* ── CH-08 SYS ── */
+.sys-menu { height: 1fr; }
+.sys-input { height: 3; }
+
+/* ── COMMS · INBOX ── */
+#inbox-main { height: 1fr; }
+#inbox-chats { width: 42; height: 1fr; }
+#inbox-right { width: 1fr; }
+#inbox-conv { height: 1fr; }
+#inbox-compose { height: 3; }
+.comms-holder { height: 1fr; }

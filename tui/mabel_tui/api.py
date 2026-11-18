@@ -28,6 +28,23 @@ class Mabel:
             raise MabelError(f"{path}: {resp.status_code} {resp.text[:200]}")
         return resp.json()
 
+    # ── Beeper, relayed by Mabel (routes/beeper_routes.py) ──────────────
+
+    async def beeper(self, method: str, path: str, *, params: dict | None = None, body: dict | None = None):
+        """One relayed Beeper API call: path like "v1/chats". Errors carry Beeper's own message."""
+        resp = await self.http.request(method, f"/api/beeper/{path.lstrip('/')}", params=params,
+                                       json=body if body is not None else None, timeout=30)
+        if resp.status_code >= 300:
+            try:
+                detail = resp.json().get("detail") or resp.json().get("message") or resp.text
+            except ValueError:
+                detail = resp.text
+            raise MabelError(f"{resp.status_code}: {str(detail)[:160]}")
+        return resp.json() if "json" in resp.headers.get("content-type", "") else resp.content
+
+    async def beeper_status(self) -> dict:
+        return await self._get("/api/beeper/status")
+
     # ── chat ────────────────────────────────────────────────────────────
 
     async def sessions(self) -> list[dict]:

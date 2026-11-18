@@ -26,6 +26,7 @@ class Config:
     pixel_dir: str = "~/Pictures/MABEL-OS"        # PIXEL's files (relative names in :w / :e / :export)
     tracker_dir: str = "~/Music/MABEL-OS"         # TRACKER's songs and exports
     tracker_rate: int = 44100                     # TRACKER's sample rate (22050 eases a Pi)
+    deck: bool = False                            # the cyberdeck: SYS gets Wi-Fi, Bluetooth, audio, power, time
     auto_update: bool = False                     # install pushed updates by itself after 5 min without a key (the deck)
 
 
@@ -45,6 +46,7 @@ def load(path: Path = CONFIG) -> Config:
                   navidrome=_navidrome(data.get("navidrome"), path),
                   offline_bitrate=int(data.get("offline_bitrate") or 0),
                   auto_update=bool(data.get("auto_update", False)),
+                  deck=bool(data.get("deck", False)),
                   pixel_dir=str(data.get("pixel_dir") or Config.pixel_dir),
                   tracker_dir=str(data.get("tracker_dir") or Config.tracker_dir),
                   tracker_rate=int(data.get("tracker_rate") or Config.tracker_rate),

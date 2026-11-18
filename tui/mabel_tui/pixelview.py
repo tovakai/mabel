@@ -65,6 +65,39 @@ def _checker(x: int, y: int) -> str:
     return CHECKER[(x // 2 + y // 2) % 2]
 
 
+def thumbnail(path: Path, width: int, height: int) -> Text:
+    """The browser's preview of a sprite: its first frame, big if it's small, then its facts."""
+    doc = px.open_any(path)
+    grid = doc.composite(0)
+    room_w, room_h = max(4, width - 2), max(2, height - 7)
+    t = Text("\n")
+    if doc.w * 2 <= room_w and doc.h <= room_h:                    # square pixels, 2 cells × 1 row each
+        scale = max(1, min(room_w // (doc.w * 2), room_h // doc.h, 4))
+        for y in range(doc.h):
+            for _ in range(scale):
+                t.append(" ")
+                for x in range(doc.w):
+                    t.append("  " * scale, style=Style(bgcolor=grid[y][x] or _checker(x, y)))
+                t.append("\n")
+    else:                                                           # half-blocks, scaled down to fit
+        step = max(1, -(-doc.w // room_w), -(-doc.h // (room_h * 2)))
+        rows, cols = list(range(0, doc.h, step)), list(range(0, doc.w, step))
+        for i in range(0, len(rows), 2):
+            t.append(" ")
+            for x in cols:
+                y0, y1 = rows[i], rows[i + 1] if i + 1 < len(rows) else None
+                top = grid[y0][x] or _checker(x, y0)
+                bottom = (grid[y1][x] or _checker(x, y1)) if y1 is not None else P.panel
+                t.append("▀", style=Style(color=top, bgcolor=bottom))
+            t.append("\n")
+    t.append(f"\n {doc.w}×{doc.h} · {len(doc.frames)} frame{'s' if len(doc.frames) != 1 else ''} · "
+             f"{len(doc.layers)} layer{'s' if len(doc.layers) != 1 else ''}\n", style=P.amber)
+    if doc.tags:
+        t.append(" " + " · ".join(f"{tag.name} {tag.start + 1}–{tag.end + 1}" for tag in doc.tags) + "\n", style=P.teal)
+    t.append(f" {len(doc.palette)} colours · {doc.kind}", style=P.amber_dim)
+    return t
+
+
 class Canvas(ScrollView, can_focus=True):
     BINDINGS = [
         Binding("up,k", "move(0,-1)", show=False), Binding("down,j", "move(0,1)", show=False),
@@ -88,6 +121,7 @@ class Canvas(ScrollView, can_focus=True):
         Binding("P", "palette", "palette", show=False),
         Binding("u", "undo", "undo"), Binding("ctrl+r", "redo", show=False),
         Binding("ctrl+s", "save", "save"), Binding("colon", "command", ":cmd"),
+        Binding("ctrl+o", "browse", "files"),
         Binding("escape", "escape", show=False),
     ]
 
@@ -237,6 +271,7 @@ class Canvas(ScrollView, can_focus=True):
     def action_undo(self) -> None: self.ed.undo(True)
     def action_redo(self) -> None: self.ed.undo(False)
     def action_save(self) -> None: self.ed.run_command("w")
+    def action_browse(self) -> None: self.ed.browse()
     def action_command(self) -> None: self.ed.open_command("")
 
     def action_escape(self) -> None:
@@ -751,6 +786,58 @@ class PixelView(Vertical):
             self.fg = self.doc.palette[0]
         self._remember()
 
+    def _avatar_dir(self) -> Path:
+        from .avatar import DEFAULT
+        configured = Path(self.app.cfg.avatar).expanduser() if self.app.cfg.avatar else None
+        return configured if configured and configured.is_dir() else DEFAULT
+
+    def browse(self) -> None:
+        """ctrl+o / :e: the file browser (browser.py) on pixel_dir, with Mabel's avatar on top."""
+        from .browser import Browser, BrowserSpec, Entry
+
+        def extras() -> list[Entry]:
+            avatar = self._avatar_dir()
+            return [Entry(avatar, "Mabel's avatar", "extra", (avatar / "avatar.json").stat().st_mtime)] \
+                if (avatar / "avatar.json").exists() else []
+
+        def renamed(old: Path, new: Path) -> None:
+            if self.doc.path == old:
+                self.doc.path = new
+                self._remember()
+        spec = BrowserSpec("PIXEL · FILES", self._dir(), (".mpx", ".png"),
+                           is_document_dir=lambda p: (p / "avatar.json").exists(), preview=thumbnail,
+                           extras=extras, new_suffix=".mpx", dirty=self.dirty, current=self.doc.path,
+                           renamed=renamed)
+        self.app.push_screen(Browser(spec), self._browsed)
+
+    def _browsed(self, choice) -> None:
+        if choice is None:
+            self.refresh_all()
+            return
+        try:
+            if choice.save_first:
+                if self.doc.path is None:
+                    self.message = "this one has no name yet: :w name.mpx first"
+                    self.refresh_all()
+                    return
+                px.save(self.doc)
+            if choice.new:
+                self.doc = px.Doc(self.doc.w, self.doc.h, [px.Layer("layer 1")],
+                                  [px.Frame([px.blank(self.doc.w, self.doc.h)])], list(self.doc.palette))
+                px.save(self.doc, choice.path)
+                self.hist, self.frame, self.lay, self.dirty, self.cx, self.cy = px.History(), 0, 0, False, 0, 0
+                self._remember()
+                self.fit_zoom()
+                self.message = f"new {choice.path.name} ({self.doc.w}×{self.doc.h}; :resize to change)"
+            else:
+                self._open(choice.path)
+                self.message = f"opened {choice.path.name}"
+        except Exception as exc:
+            self.message = f"✖ {exc}"
+        self._composites.clear()
+        self.refresh_all()
+        self.canvas.focus()
+
     def _remember(self) -> None:
         try:
             if self.doc.path:
@@ -791,9 +878,10 @@ class PixelView(Vertical):
             self.dirty = False
             self._remember()
             return f"saved {path}"
+        if cmd in ("files", "browse") or (cmd == "e" and not rest):
+            self.browse()
+            return None
         if cmd == "e":
-            if not rest:
-                return "which file? :e name.mpx | name.png | a folder with avatar.json"
             self._open(self._path(" ".join(rest)))
             return f"opened {self.doc.path}"
         if cmd == "avatar":
