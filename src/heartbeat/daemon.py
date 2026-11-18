@@ -19,7 +19,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from . import policy, power, signals, why
+from . import policy, power, shift, signals, why
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     why.pulse(now=now)
     _maybe_print(now)
     _maybe_groceries(now)                         # before the dream check: a store visit can't wait
+    shift.note_resume()
+    _keep_shift_hold(now)                         # a dream can outlast the inhibitor's 25 min
     if dreams.running():                          # her model is stepped aside for a dream; decide nothing
         _last.update(at=now.isoformat(), running=False, dreaming=True)
         return _last
@@ -108,6 +110,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
         _last.update(at=now.isoformat(), running=False, dreaming=False, making_pictures=True)
         return _last
     sig = await asyncio.to_thread(read)
+    shift.screens_off_after_wake(sig)
     _maybe_morning(sig, now)
     _maybe_gremlin_checkin(sig, now)
     state = load_state()
@@ -138,8 +141,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
             state["yielded"] = None                # don't retry a failing session forever
         state["active_session"] = None
         power.release_sleep()
-        if sig.idle == "idle" and not sig.chat_active:
-            power.suspend_if_overdue(sig.idle_minutes, active.get("idle_at_start"))
+        if sig.idle == "idle" and not sig.chat_active and not state.get("shift"):
+            power.suspend_if_overdue(sig.idle_minutes, active.get("idle_at_start"))   # else the shift decides
         save_state(state)
 
     decision = policy.decide(sig, state, now=now, enabled=bool(_setting("autonomy_enabled", True)),
@@ -147,7 +150,7 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
                              research_running=bool(runner.status().get("running")))
     _last.update(at=now.isoformat(), signals=sig.as_dict(), decision=decision.as_dict(), running=False,
                  yield_reason=None, dreaming=False)
-    _record_why(sig, now, decision)
+    reasons = _record_why(sig, now, decision)
     if not decision.allow:
         research_running = bool(runner.status().get("running"))
         if not _maybe_check_letters(sig, now, research_running=research_running) \
@@ -182,16 +185,56 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
                 f"idle_{int(sig.idle_minutes or 0)}m")
         logger.info("[heartbeat] woke Mabel: %s session %s (idle %.0f min)",
                     "resuming" if decision.resume else "new", sid, sig.idle_minutes or 0)
+    _night_shift(sig, now, reasons)
     return _last
 
 
-def _record_why(sig, now: datetime, decision) -> None:
-    """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free."""
+def _running_jobs() -> list[str]:
+    tasks = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task,
+             "music": _music_task, "paper": _paper_task, "book": _book_task, "housekeeping": _housekeeping_task}
+    return [job for job, task in tasks.items() if task and not task.done()]
+
+
+def _night_shift(sig, now: datetime, reasons: dict) -> None:
+    """Keep the PC awake while her idle jobs have work, then suspend it (src/heartbeat/shift.py)."""
+    from src.curiosity import runner
+    try:
+        state = load_state()
+        before = state.get("shift")
+        work = sorted(set(_running_jobs()) | set(shift.pending(reasons)))
+        outcome = shift.step(state, away=sig.idle == "idle" and sig.chat_active is not True,
+                             idle_minutes=sig.idle_minutes, work=work,
+                             research=bool(runner.status().get("running")), now=now)
+        if state.get("shift") != before:
+            save_state(state)
+        _last.update(shift=state.get("shift"), shift_outcome=outcome)
+    except Exception:
+        logger.warning("[heartbeat] night shift step failed", exc_info=True)
+
+
+def _keep_shift_hold(now: datetime) -> None:
+    try:
+        state = load_state()
+        current = state.get("shift")
+        if not current or current.get("spent") or not current.get("held_at"):
+            return
+        if datetime.fromisoformat(current["held_at"]) + shift.REFRESH_AFTER <= now:
+            if power.hold_sleep(why="Mabel is finishing her night"):
+                current["held_at"] = now.isoformat()
+                save_state(state)
+    except Exception:
+        logger.debug("[heartbeat] shift hold not refreshed", exc_info=True)
+
+
+def _record_why(sig, now: datetime, decision) -> dict[str, list[str]]:
+    """What holds each of her own activities back this tick (src/heartbeat/why.py). Side-effect free.
+    Returns the reasons per job that isn't running (the morning page is left out: it waits for him)."""
     from src.curiosity import runner
     from src.persona import books, dreams, letters, morning, music, news, paper, revisit
     from src.initiative import gremlin_housekeeping as housekeeping
     from src.constants import DATA_DIR
     why.record("research", [] if decision.allow else decision.reasons, now=now)
+    out: dict[str, list[str]] = {}
     research_running = bool(runner.status().get("running"))
     busy = {"letters": _letter_task, "news": _news_task, "dream": _dream_task, "revisit": _revisit_task, "book": _book_task,
             "music": _music_task, "paper": _paper_task, "morning": _morning_task, "housekeeping": _housekeeping_task}
@@ -207,6 +250,9 @@ def _record_why(sig, now: datetime, decision) -> None:
         if decision.allow:
             reasons = list(reasons) + ["research gets to go first"]
         why.record(job, reasons, now=now)
+        if job != "morning":
+            out[job] = list(reasons)
+    return out
 
 
 def _outcome(job: str):

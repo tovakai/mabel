@@ -12,6 +12,16 @@ TZ = timezone(timedelta(hours=1))
 NOW = datetime(2026, 11, 5, 14, 0, tzinfo=TZ)
 
 
+@pytest.fixture(autouse=True)
+def _no_night_shift(monkeypatch):
+    """The ticks here test research, dreams and mail; the night shift (tests/test_night_shift.py)
+    would otherwise hold or even suspend this PC for real."""
+    from src.heartbeat import daemon
+    monkeypatch.setattr(daemon, "_night_shift", lambda *a, **k: None)
+    monkeypatch.setattr(daemon, "_keep_shift_hold", lambda *a, **k: None)
+    monkeypatch.setattr(daemon.shift, "screens_off_after_wake", lambda *a, **k: False)
+
+
 def _sig(**kw):
     base = dict(idle="idle", idle_minutes=8.0, gpu="free", gpu_reason="", chat_active=False, strata=True,
                 presence="not_configured", presence_entity="")

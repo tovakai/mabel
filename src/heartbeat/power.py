@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 UNIT = "mabel-research-inhibit"
 CAP_S = 25 * 60
 HYPRIDLE_CONF = Path.home() / ".config" / "hypr" / "hypridle.conf"
+SUSPEND_WANTED = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "mabel" / "suspend-wanted"
 
 
 def _env() -> dict:
@@ -38,10 +39,10 @@ def _run(args: list[str], run=subprocess.run) -> bool:
         return False
 
 
-def hold_sleep(run=subprocess.run) -> bool:
+def hold_sleep(run=subprocess.run, why: str = "Mabel is researching") -> bool:
     release_sleep(run)          # never two
     ok = _run(["systemd-run", "--user", f"--unit={UNIT}", "--collect", "--quiet", "--",
-               "systemd-inhibit", "--what=sleep", "--who=Mabel", "--why=Mabel is researching",
+               "systemd-inhibit", "--what=sleep", "--who=Mabel", f"--why={why}",
                "--mode=block", "sleep", str(CAP_S)], run)
     if not ok:
         logger.warning("[heartbeat] could not take the sleep inhibitor")
@@ -50,6 +51,11 @@ def hold_sleep(run=subprocess.run) -> bool:
 
 def release_sleep(run=subprocess.run) -> None:
     _run(["systemctl", "--user", "stop", f"{UNIT}.service"], run)
+
+
+def holding(run=subprocess.run) -> bool:
+    """Her inhibitor is still in place (it ends by itself after CAP_S)."""
+    return _run(["systemctl", "--user", "is-active", "--quiet", f"{UNIT}.service"], run)
 
 
 def suspend_timeout_s(conf: Path = HYPRIDLE_CONF) -> int | None:
@@ -114,6 +120,30 @@ def suspend_if_overdue(idle_minutes: float | None, idle_at_start: float | None =
         return False
     if idle_at_start is None or idle_at_start * 60 >= timeout:
         return False                 # already past it when she started: not her doing
+    return suspend_if_clear(idle_minutes, run)
+
+
+def hypridle_wanted_sleep(since: float, path: Path | None = None) -> bool:
+    """hypridle tried to suspend at or after ``since`` (epoch s); scripts/suspend_wanted.sh notes each try.
+    It only tries when nothing inhibits it, so a movie playing never counts."""
+    path = path or SUSPEND_WANTED
+    try:
+        return float(path.read_text().split()[0]) >= since
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def suspend_if_clear(idle_minutes: float | None, run=subprocess.run, *, went_idle: float | None = None) -> bool:
+    """Suspend if he's been away past hypridle's suspend time, nobody else blocks sleep and no one is
+    logged in remotely. With ``went_idle`` (the night shift, shift.py) hypridle itself must also have
+    tried to suspend since then: after a Wake-on-LAN wake he's been away for hours, which
+    suspend_if_overdue's "her doing" check would wrongly refuse, and his idle file ignores the
+    inhibitors (a video) that keep hypridle from suspending."""
+    timeout = suspend_timeout_s()
+    if timeout is None or idle_minutes is None or idle_minutes * 60 < timeout:
+        return False
+    if went_idle is not None and not hypridle_wanted_sleep(went_idle):
+        return False
     if _others_block_sleep(run) or _remote_sessions(run):
         return False
     logger.info("[heartbeat] still away after %.0f min; suspending as hypridle would have", idle_minutes)
