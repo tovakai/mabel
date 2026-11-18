@@ -6,6 +6,7 @@ card gets Allow once / Deny buttons that resume the turn. control_music commands
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 
 from rich.text import Text
@@ -13,6 +14,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.widget import Widget
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown, Static
 
@@ -57,6 +59,23 @@ class Approval(Vertical):
             yield Button("Deny", id="deny", variant="error")
 
 
+class StateLine(Widget):
+    """Mabel's one-line state under the portrait. Repaints itself only: Static.update would re-lay out
+    the whole screen on every spinner tick, which the deck's Pi feels."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._shown = ("", "")
+
+    def show(self, text: str, style: str) -> None:
+        if (text, style) != self._shown:
+            self._shown = (text, style)
+            self.refresh()
+
+    def render(self) -> Text:
+        return Text(self._shown[0], style=f"bold {self._shown[1]}", justify="center")
+
+
 class SessionItem(ListItem):
     def __init__(self, session: dict):
         super().__init__(Label(f"{(session.get('name') or 'untitled')[:26]}"))
@@ -89,7 +108,7 @@ class Comms(Horizontal):
                                 classes="panel")
             portrait.border_title = "MABEL"
             yield portrait
-            yield Static(id="mabel-state")
+            yield StateLine(id="mabel-state")
 
     @property
     def mabel(self):
@@ -98,12 +117,26 @@ class Comms(Horizontal):
     def on_mount(self) -> None:
         self.load_sessions(select_first=True)
         self.link_ok: bool | None = None
-        self.set_interval(0.5, self._show_state)
+        self._talk_until = 0.0
+        self.set_interval(0.1, self._show_state)
+
+    TALK_HOLD = 0.6                  # keep talking this long after the last bit of text arrived
+    READ_SPEED = 45                  # chars/s: talk time for a reply that lands all at once
+
+    def talk(self, seconds: float) -> None:
+        """She talks only while text is appearing: never before it, and not through tool calls."""
+        self._talk_until = max(self._talk_until, time.monotonic() + seconds)
 
     def _show_state(self) -> None:
-        if self.busy:
+        talking = time.monotonic() < self._talk_until
+        try:
+            self.query_one("Avatar").set_state("talk" if talking else "idle")
+        except Exception:
+            pass
+        if talking:
+            text, style = "◆ SPEAKING", P.amber_hi
+        elif self.busy:
             frames = "◐◓◑◒"
-            import time
             text, style = f"{frames[int(time.time() * 4) % 4]} THINKING", P.teal
         elif self.link_ok is False:
             text, style = "✖ LINK DOWN", P.red
@@ -111,7 +144,7 @@ class Comms(Horizontal):
             text, style = "◆ ONLINE", P.amber
         else:
             text, style = "◌ CONNECTING", P.amber_dim
-        self.query_one("#mabel-state", Static).update(Text(text, style=f"bold {style}"))
+        self.query_one(StateLine).show(text, style)
 
     # ── sessions ────────────────────────────────────────────────────────
 
@@ -211,12 +244,17 @@ class Comms(Horizontal):
                 kind = event.get("type")
                 if "delta" in event and not kind:
                     got_text = True
+                    if event["delta"].strip():
+                        self.talk(self.TALK_HOLD)
                     await stream.write(event["delta"])
                     log.scroll_end(animate=False)
                 elif kind == "final_response":
                     await stream.stop()
                     stream = None
-                    await reply.body.update(event.get("content") or "")
+                    content = event.get("content") or ""
+                    if not got_text and content.strip():   # it all arrived at once: say it now
+                        self.talk(min(8.0, max(1.5, len(content) / self.READ_SPEED)))
+                    await reply.body.update(content)
                     got_text = True
                 elif kind == "tool_start":
                     await log.mount(Static(f"▸ {event.get('tool') or event.get('name') or 'tool'}", classes="tool-line"),

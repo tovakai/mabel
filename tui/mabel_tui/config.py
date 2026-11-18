@@ -20,7 +20,7 @@ class Config:
     journal: str = "~/Documents/mabel/journal"    # Mabel's journal, a second vault in VAULT (PC only)
     navidrome: dict | None = None                 # [navidrome] url/user/password: AUDIO direct, without Mabel
     preset: str = "custom"                        # the chat preset that carries her character ("" = none)
-    avatar: str = ""                              # her pixel avatar: a PNG (28×28, or a strip of frames); "" = built in
+    avatar: str = ""                              # her avatar: a folder like assets/avatar (avatar.json + strips) or one PNG; "" = built in
     avatar_fps: float = 4.0                       # frames per second when the avatar is a strip
     offline_bitrate: int = 0                      # downloads: 0 = the original files, else e.g. 192 (kbit/s)
 
