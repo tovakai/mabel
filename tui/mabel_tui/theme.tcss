@@ -226,3 +226,9 @@ Picker { align: center middle; background: rgba(12, 8, 4, 0.7); }
 .-narrow #vault-explorer { width: 28; }
 .-narrow #vault-side { display: none; }
 .-narrow #vault-side.-shown { display: block; width: 32; }
+
+/* ── TERM ── */
+#term-view { height: 1fr; }
+#term-tabs { height: 1; padding: 0 1; }
+#term-switch { height: 1fr; padding: 0; }
+Terminal { width: 1fr; height: 1fr; }

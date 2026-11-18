@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.27",
     "dbus-fast>=5.2.0",
     "pyyaml>=6.0.3",
+    "pyte>=0.8.2",
 ]
 
 [project.scripts]

@@ -19,6 +19,7 @@ from .api import Mabel
 from .audio import Audio
 from .comms import Comms
 from .inventory import Inventory
+from .term import Terminal, TermView
 from .vaultview import VaultView
 from .life import Life
 from .mpris import Mpris
@@ -30,11 +31,12 @@ LOGO = "▙▟ MABEL-OS 2.6"
 
 
 HELP = {
-    "everywhere": [("alt+1–5 / F1–F5", "switch channel"),
+    "everywhere": [("alt+1–6 / F1–F6", "switch channel"),
                    ("h j k l", "move between sections (the lit border)"),
                    ("i / a / enter", "go into the lit section"),
                    ("esc", "back out to the sections"),
                    ("inside: h j k l", "like the arrow keys, where the section doesn't use the letter"),
+                   ("ctrl+z", "drop to a plain shell (exit comes back)"),
                    ("ctrl+p", "play / pause music"), ("ctrl+t", "colour tuner (for screens that show colours their own way)"),
                    ("?", "this list"), ("ctrl+q", "power off")],
     "comms": [("enter", "send"), ("ctrl+n", "new chat"), ("ctrl+s", "show/hide the chat list"),
@@ -54,6 +56,10 @@ HELP = {
               ("[[ while typing", "pick a note to link"), ("ctrl+s", "save"), ("esc esc", "back to reading (saves)"),
               ("D", "today's daily note (from your template)"), ("n / R", "new note / rename (links updated)"),
               ("V", "switch vault: core of truth ↔ Mabel's journal"), ("M", "ask Mabel about this note")],
+    "term": [("(inside a shell)", "every key goes to the program: vim, htop, ssh all work"),
+             ("ctrl+]", "back out to the sections"), ("alt+1–6", "switch channel (still works inside)"),
+             ("shift+PgUp / PgDn", "scroll back"), ("N", "new shell tab (in nav mode)"),
+             ("[ ]", "previous / next shell (nav mode)"), ("X", "close the shell tab (nav mode)")],
     "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
                   ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off, v open in VAULT)"),
                   ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
@@ -84,20 +90,25 @@ class HelpScreen(ModalScreen):
 
 class MabelApp(App):
     CSS_PATH = "theme.tcss"
+    ENABLE_COMMAND_PALETTE = False                         # ctrl+p is play/pause (and the shell's history in TERM)
     # Wide = his PC (as designed); narrow = the 7" cyberdeck (1024×600 ≈ 128×37): stacked panels.
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (140, "-wide")]
     TITLE = "MABEL-OS"
     BINDINGS = [
-        Binding("f1", "channel('comms')", "COMMS", priority=True),
-        Binding("f2", "channel('life')", "LIFE", priority=True),
-        Binding("f3", "channel('audio')", "AUDIO", priority=True),
-        Binding("f4", "channel('inventory')", "INVENTORY", priority=True),
+        Binding("f1", "fchannel('comms')", "COMMS", priority=True),
+        Binding("f2", "fchannel('life')", "LIFE", priority=True),
+        Binding("f3", "fchannel('audio')", "AUDIO", priority=True),
+        Binding("f4", "fchannel('inventory')", "INVENTORY", priority=True),
         Binding("alt+1", "channel('comms')", "COMMS", show=False, priority=True),
         Binding("alt+2", "channel('life')", "LIFE", show=False, priority=True),
         Binding("alt+3", "channel('audio')", "AUDIO", show=False, priority=True),
         Binding("alt+4", "channel('inventory')", "INVENTORY", show=False, priority=True),
-        Binding("f5", "channel('vault')", "VAULT", show=False, priority=True),
+        Binding("f5", "fchannel('vault')", "VAULT", show=False, priority=True),
         Binding("alt+5", "channel('vault')", "VAULT", show=False, priority=True),
+        Binding("f6", "fchannel('term')", "TERM", show=False, priority=True),
+        Binding("alt+6", "channel('term')", "TERM", show=False, priority=True),
+        Binding("ctrl+right_square_bracket", "nav_out", show=False),
+        Binding("ctrl+z", "shell", "shell", show=False, priority=True),
         Binding("question_mark", "help", "keys"),
         Binding("ctrl+t", "tune", "colours", show=False, priority=True),
         Binding("h", "navkey('h')", show=False), Binding("j", "navkey('j')", show=False),
@@ -137,6 +148,8 @@ class MabelApp(App):
                 yield Inventory()
             with TabPane("CH-05 VAULT", id="vault"):
                 yield VaultView()
+            with TabPane("CH-06 TERM", id="term"):
+                yield TermView()
         with Vertical(id="bottom"):
             yield Static(id="statusline")
             yield Footer()
@@ -260,6 +273,26 @@ class MabelApp(App):
         elif self.focused is None and self.nav_section is None:
             self.start_nav()
 
+    # ── the terminal gets its keys ─────────────────────────────────────
+
+    def check_action(self, action: str, parameters):
+        """Inside a TERM shell, F-keys, ctrl+p/q/t/z belong to the program (htop, vim, the shell)."""
+        if isinstance(self.focused, Terminal) and action not in ("channel", "nav_out"):
+            return False                                   # only alt+1–6 and ctrl+] stay with MABEL-OS
+        return True
+
+    def action_fchannel(self, name: str) -> None:
+        self.action_channel(name)
+
+    def action_shell(self) -> None:
+        """ctrl+z: the whole screen becomes a plain shell; exit comes back to MABEL-OS."""
+        import os
+        import subprocess
+        shell = os.environ.get("SHELL") or "/bin/bash"
+        with self.suspend():
+            print("\033[33mMABEL-OS is paused — type exit to come back\033[0m", flush=True)
+            subprocess.call([shell], cwd=os.path.expanduser("~"))
+
     def open_in_vault(self, vault_name: str, rel: str, line: int | None = None) -> None:
         """Mabel links: open a note from another channel in VAULT."""
         self.action_channel("vault")
@@ -302,6 +335,8 @@ class MabelApp(App):
             self._light(None)
             if name == "comms":
                 self.query_one("#prompt").focus()          # chat is for typing: straight into the prompt
+            elif name == "term":
+                self.query_one(TermView)._focus_current()  # a terminal is for typing too
             else:
                 self.start_nav()
         self.set_timer(0.15, settle)                   # after the pane has its size, so sections can be lit
