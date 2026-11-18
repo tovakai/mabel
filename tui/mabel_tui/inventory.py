@@ -4,7 +4,7 @@ Left: where you are (breadcrumbs), place cards to zoom into, the place drawn as 
 grids and pegboards as boxes with their footprints; drawers and shelves as levels; sorted shelves;
 spot lists), and the things there. Right: the item card. Writes go to tk-index (undoable there).
 
-Keys: enter zoom/open · backspace up · / search · h home · i Mabel's housekeeping inbox ·
+Keys: enter zoom/open · backspace up · / search · H home · b Mabel's housekeeping inbox ·
 o loose ends · on an item: e edit, m move, c check out, r return, k nickname, p its place ·
 u undo · g reload.
 """
@@ -26,9 +26,10 @@ from . import housekeeping as hk
 from .config import CACHE
 from .nav import mark
 from .tkindex import KEY, POS, TKIndex, World
+from .palette import P
 
-PALETTE = ["#ffb000", "#ffd066", "#3fd6c6", "#d9cba4", "#ff8a3d", "#e5b97a", "#9fd8a8"]
-AWAY = "#ff5a36"
+PALETTE = [P.amber, P.amber_hi, P.teal, P.beige, P.orange, P.sand, P.mint]
+AWAY = P.red
 
 
 def hue(category: str | None) -> str:
@@ -75,10 +76,10 @@ class Tile(Static):
 
 def place_card(card) -> Tile:
     text = Text()
-    text.append(card.title + "\n", style="bold #ffd066")
-    text.append(card.code[:34], style="#8a7b58")
+    text.append(card.title + "\n", style=f"bold {P.amber_hi}")
+    text.append(card.code[:34], style=P.beige_dark)
     if card.count:
-        text.append(f"  · {card.count}", style="#3fd6c6")
+        text.append(f"  · {card.count}", style=P.teal)
     return Tile(text, route=card.route, classes="pcard")
 
 
@@ -86,14 +87,14 @@ def thing_tile(world: World, item: dict, prefix: str = "") -> Tile:
     text = Text()
     away = item.get("status") == "away"
     text.append("▪ ", style=AWAY if away else hue(item.get("category")))
-    text.append(prefix, style="#8a7b58")
-    text.append(item.get("name", ""), style="#ffb000")
+    text.append(prefix, style=P.beige_dark)
+    text.append(item.get("name", ""), style=P.amber)
     kids = len(world.kids.get(item["id"], []))
-    text.append(f"  #{item['id']}" + (f" · {kids} inside" if kids else ""), style="#8a7b58")
+    text.append(f"  #{item['id']}" + (f" · {kids} inside" if kids else ""), style=P.beige_dark)
     if away:
         text.append("  OUT", style=f"bold {AWAY}")
     elif item.get("status") not in (None, "home"):
-        text.append(f"  {item.get('status')}", style="#a86b00")
+        text.append(f"  {item.get('status')}", style=P.amber_dim)
     return Tile(text, item_id=item["id"], classes="thing")
 
 
@@ -113,7 +114,7 @@ def draw_grid(world: World, layout: dict, data: dict, width: int, selected: str 
     chh = 3 if cw >= 8 else 2
     W, H = C * cw + 1, R * chh + 1
     chars = [[" "] * W for _ in range(H)]
-    style = [["#3d2a08"] * W for _ in range(H)]
+    style = [[P.amber_faint] * W for _ in range(H)]
 
     def put(x, y, ch, st):
         if 0 <= x < W and 0 <= y < H:
@@ -121,7 +122,7 @@ def draw_grid(world: World, layout: dict, data: dict, width: int, selected: str 
 
     for r in range(R):                                      # empty cells: a faint dot
         for c in range(C):
-            put(c * cw + cw // 2, r * chh + chh // 2, "·", "#3d2a08")
+            put(c * cw + cw // 2, r * chh + chh // 2, "·", P.amber_faint)
 
     def box(c, r, w, h, label, colour, *, dashed=False, extra=""):
         x0, y0, x1, y1 = (c - 1) * cw, (r - 1) * chh, (c - 1 + w) * cw, (r - 1 + h) * chh
@@ -155,7 +156,7 @@ def draw_grid(world: World, layout: dict, data: dict, width: int, selected: str 
                 put(x0 + 1 + j, y0 + 1 + i, ch, colour)
         if extra:
             for j, ch in enumerate(extra):
-                put(x1 - len(extra) + j, y1 - 1, ch, "#3fd6c6")
+                put(x1 - len(extra) + j, y1 - 1, ch, P.teal)
 
     if data["compartments"]:
         for b in data["blocks"]:
@@ -169,7 +170,7 @@ def draw_grid(world: World, layout: dict, data: dict, width: int, selected: str 
             box(b["c"], b["r"], b["w"], b["h"], i.get("name", ""), colour, dashed=b["assumed"] or b["unknown"],
                 extra=f"+{b['kids']}" if b["kids"] else "")
     for s in data["subs"]:
-        box(s["c"], s["r"], 1, 1, "▦ " + s["layout"].get("label", ""), "#3fd6c6")
+        box(s["c"], s["r"], 1, 1, "▦ " + s["layout"].get("label", ""), P.teal)
     if selected:
         for b in data["blocks"]:
             if b["item"]["id"] == selected:
@@ -180,9 +181,9 @@ def draw_grid(world: World, layout: dict, data: dict, width: int, selected: str 
                         style[y][x] = "reverse bold " + style[y][x]
     out = Text()
     header = "    " + "".join(f"C{c:02d}".ljust(cw) for c in range(1, C + 1))
-    out.append(header[: W + 4] + "\n", style="#8a7b58")
+    out.append(header[: W + 4] + "\n", style=P.beige_dark)
     for y in range(H):
-        out.append(f"R{(y // chh) + 1:02d} " if y % chh == chh // 2 and y // chh < R else "    ", style="#8a7b58")
+        out.append(f"R{(y // chh) + 1:02d} " if y % chh == chh // 2 and y // chh < R else "    ", style=P.beige_dark)
         run, run_style = "", None
         for x in range(W):
             if style[y][x] != run_style and run:
@@ -269,7 +270,7 @@ class Inventory(Horizontal):
         Binding("backspace", "up", "up"),
         Binding("slash", "search", "search"),
         Binding("H", "home", "home"),
-        Binding("i", "inbox", "inbox"),
+        Binding("b", "inbox", "inbox"),
         Binding("o", "loose", "loose ends"),
         Binding("e", "edit", "edit"),
         Binding("m", "move", "move"),
@@ -309,7 +310,7 @@ class Inventory(Horizontal):
         return self.app.index
 
     def on_mount(self) -> None:
-        self.query_one("#inv-card", Static).update(Text("Pick something on the left.", style="#a86b00"))
+        self.query_one("#inv-card", Static).update(Text("Pick something on the left.", style=P.amber_dim))
         self.load_world()
 
     # ── loading and rendering ───────────────────────────────────────────
@@ -340,7 +341,7 @@ class Inventory(Horizontal):
             q = self.query_one("#inv-search", Input).value.strip()
             hits = w.search(q)
             main.border_title = f"INVENTORY ░ SEARCH “{q.upper()[:30]}”"
-            crumbs.update(Text(f"{len(hits)} found · esc back to browsing", style="#8a7b58"))
+            crumbs.update(Text(f"{len(hits)} found · esc back to browsing", style=P.beige_dark))
             await body.mount_all(thing_tile(w, i, prefix=f"{w.place_title(i.get('address'))[:28]} · ") for i in hits)
             return
         if self.mode == "inbox":
@@ -349,11 +350,11 @@ class Inventory(Horizontal):
         if self.mode == "loose":
             counts = w.status_counts()
             main.border_title = "INVENTORY ░ LOOSE ENDS"
-            crumbs.update(Text(f"{counts.get('away', 0)} away · {counts.get('unplaced', 0)} without a home", style="#8a7b58"))
-            await body.mount(Static(Text("AWAY FROM HOME", style="bold #d9cba4"), classes="sec"))
+            crumbs.update(Text(f"{counts.get('away', 0)} away · {counts.get('unplaced', 0)} without a home", style=P.beige_dark))
+            await body.mount(Static(Text("AWAY FROM HOME", style=f"bold {P.beige}"), classes="sec"))
             await body.mount_all(thing_tile(w, i, prefix=f"→ {i.get('checked_out_to') or '?'} · ")
                                  for i in w.search("", "away"))
-            await body.mount(Static(Text("\nWITHOUT A HOME", style="bold #d9cba4"), classes="sec"))
+            await body.mount(Static(Text("\nWITHOUT A HOME", style=f"bold {P.beige}"), classes="sec"))
             await body.mount_all(thing_tile(w, i) for i in w.search("", "unplaced"))
             return
         r = self.route
@@ -361,33 +362,33 @@ class Inventory(Horizontal):
         trail = Text()
         for n, step in enumerate(w.chain(r)):
             if n:
-                trail.append("  ›  ", style="#3d2a08")
+                trail.append("  ›  ", style=P.amber_faint)
             if step == r:
-                trail.append(w.title(step), style="bold #ffd066")
+                trail.append(w.title(step), style=f"bold {P.amber_hi}")
             else:
-                trail.append(w.title(step), style=Style(color="#a86b00", underline=True,
+                trail.append(w.title(step), style=Style(color=P.amber_dim, underline=True,
                                                         meta={"@click": f"crumb({step!r})"}))
-        trail.append(f"     {w.code(r)}", style="#8a7b58")
+        trail.append(f"     {w.code(r)}", style=P.beige_dark)
         crumbs.update(trail)
         page = w.page(r)
         if not r:
             counts = w.status_counts()
             live = sum(v for k, v in counts.items() if k != "retired")
             await body.mount(Static(Text(f"WHERE IS EVERYTHING?   {live} things · {len(page['cards'])} rooms",
-                                         style="bold #d9cba4"), classes="sec"))
+                                         style=f"bold {P.beige}"), classes="sec"))
         if page["cards"]:
             await body.mount(Grid(*[place_card(c) for c in page["cards"]], classes="pcards"))
         if page["inline"]:
-            await body.mount(Tile(Text(page["inline"][0].upper(), style="bold #d9cba4"), route=page["inline"][1], classes="sec"))
+            await body.mount(Tile(Text(page["inline"][0].upper(), style=f"bold {P.beige}"), route=page["inline"][1], classes="sec"))
         for zone in page["zones"]:
             await self._render_zone(body, zone, len(page["zones"]) > 1)
         if page["things"]:
-            await body.mount(Static(Text("\n" + page["things_head"].upper(), style="bold #d9cba4"), classes="sec"))
+            await body.mount(Static(Text("\n" + page["things_head"].upper(), style=f"bold {P.beige}"), classes="sec"))
             await body.mount_all(thing_tile(w, i) for i in page["things"])
         if not r and (w.status_counts().get("away") or w.status_counts().get("unplaced")):
             c = w.status_counts()
             await body.mount(Tile(Text(f"\n◆ LOOSE ENDS   {c.get('away', 0)} away from home · {c.get('unplaced', 0)} without a home",
-                                       style="bold #ff8a3d"), route="!loose", classes="sec loose"))
+                                       style=f"bold {P.orange}"), route="!loose", classes="sec loose"))
         if getattr(self, "_was_inside", False):
             self.call_after_refresh(lambda: self._focus_first(force=True))   # stay inside after zooming
 
@@ -404,42 +405,42 @@ class Inventory(Horizontal):
     async def _render_zone(self, body, zone, labelled: bool) -> None:
         w, l = self.world, zone.layout
         if labelled:
-            await body.mount(Static(Text(f"\n{l.get('label', '')}  {l.get('prefix')}", style="bold #d9cba4"), classes="sec"))
+            await body.mount(Static(Text(f"\n{l.get('label', '')}  {l.get('prefix')}", style=f"bold {P.beige}"), classes="sec"))
         if zone.kind == "grid":
             width = body.size.width or 100
             await body.mount(Static(draw_grid(w, l, zone.data, width, self.selected), classes="map"))
             legend = f"{zone.data['cols']}×{zone.data['rows']} · ╌ size assumed or unknown · +n things inside"
-            await body.mount(Static(Text(legend, style="#8a7b58"), classes="legend"))
+            await body.mount(Static(Text(legend, style=P.beige_dark), classes="legend"))
             for s in zone.data["subs"]:
                 await body.mount(Tile(Text(f"▦ {s['layout'].get('label')}  ({POS(s['layout']['parent_address'])})",
-                                           style="#3fd6c6"), route=s["route"], classes="thing"))
+                                           style=P.teal), route=s["route"], classes="thing"))
             for b in sorted(zone.data["blocks"], key=lambda b: (b["r"], b["c"])):
                 await body.mount(thing_tile(w, b["item"], prefix=f"C{b['c']:02d}R{b['r']:02d} "))
         elif zone.kind == "levels":
             for lv in zone.data["levels"]:
                 text = Text()
-                text.append(f"{lv['name']:<18}", style="bold #ffd066")
-                text.append(f"{lv['where']:<7}", style="#8a7b58")
+                text.append(f"{lv['name']:<18}", style=f"bold {P.amber_hi}")
+                text.append(f"{lv['where']:<7}", style=P.beige_dark)
                 bits = [f"▦ {s.get('label')}" for s in lv["subs"]] + [i.get("name", "") for i in lv["items"]]
-                text.append(" · ".join(bits)[:160] or "empty", style="#ffb000" if bits else "#3d2a08")
+                text.append(" · ".join(bits)[:160] or "empty", style=P.amber if bits else P.amber_faint)
                 await body.mount(Tile(text, route=lv["route"], classes="level"))
         elif zone.kind == "media":
             items = zone.data["items"]
-            await body.mount(Static(Text(f"{len(items)} titles in sort order", style="#8a7b58")))
+            await body.mount(Static(Text(f"{len(items)} titles in sort order", style=P.beige_dark)))
             letter = None
             for i in items:
                 first = (w.sort_title(i)[:1] or "#").upper()
                 first = first if first.isalpha() else "#"
                 if first != letter:
                     letter = first
-                    await body.mount(Static(Text(f"\n{letter}", style="bold #3fd6c6")))
+                    await body.mount(Static(Text(f"\n{letter}", style=f"bold {P.teal}")))
                 await body.mount(thing_tile(w, i))
         else:
             if zone.data["cards"]:
                 await body.mount(Grid(*[place_card(c) for c in zone.data["cards"]], classes="pcards"))
             for spot, items in zone.data["spots"].items():
                 label = "anywhere" if spot == "000000" else f"spot {int(spot)}"
-                await body.mount(Static(Text(f"\n{label.upper()}", style="bold #8a7b58")))
+                await body.mount(Static(Text(f"\n{label.upper()}", style=f"bold {P.beige_dark}")))
                 await body.mount_all(thing_tile(w, i) for i in items)
 
     async def _render_inbox(self, body, crumbs, main) -> None:
@@ -447,26 +448,26 @@ class Inventory(Horizontal):
         open_ = [s for s in self.suggestions if not s.done]
         main.border_title = "INVENTORY ░ MABEL'S HOUSEKEEPING"
         crumbs.update(Text(f"{len(open_)} open · {sum(s.applicable for s in open_)} can be applied with a · "
-                           "x ticks one off · enter opens the item", style="#8a7b58"))
+                           "x ticks one off · enter opens the item", style=P.beige_dark))
         section = None
         for n, s in enumerate(self.suggestions):
             if s.done:
                 continue
             if s.section != section:
                 section = s.section
-                await body.mount(Static(Text(f"\n{section.upper()}", style="bold #d9cba4"), classes="sec"))
+                await body.mount(Static(Text(f"\n{section.upper()}", style=f"bold {P.beige}"), classes="sec"))
             text = Text()
-            text.append("◆ " if s.applicable else "◇ ", style="#3fd6c6" if s.applicable else "#a86b00")
-            text.append(s.name[:56], style="#ffd066")
-            text.append(f"  {', '.join(s.ids)}\n", style="#8a7b58")
-            text.append(f"   → {s.change}", style="#ffb000")
+            text.append("◆ " if s.applicable else "◇ ", style=P.teal if s.applicable else P.amber_dim)
+            text.append(s.name[:56], style=P.amber_hi)
+            text.append(f"  {', '.join(s.ids)}\n", style=P.beige_dark)
+            text.append(f"   → {s.change}", style=P.amber)
             if s.why:
-                text.append(f"   ({s.why})", style="#8a7b58")
+                text.append(f"   ({s.why})", style=P.beige_dark)
             tile = Tile(text, item_id=s.ids[0], classes="suggestion")
             tile.suggestion = s
             await body.mount(tile)
         if not open_:
-            await body.mount(Static(Text("Nothing waiting. Mabel does a round when you're away.", style="#a86b00")))
+            await body.mount(Static(Text("Nothing waiting. Mabel does a round when you're away.", style=P.amber_dim)))
 
     # ── the item card ──────────────────────────────────────────────────
 
@@ -479,11 +480,11 @@ class Inventory(Horizontal):
         self.selected, self.item = item_id, d
         w = self.world
         t = Text()
-        t.append(f"{d.get('name')}\n", style="bold #ffd066")
-        t.append(f"#{d['id']}", style="#8a7b58")
+        t.append(f"{d.get('name')}\n", style=f"bold {P.amber_hi}")
+        t.append(f"#{d['id']}", style=P.beige_dark)
         if d.get("spec_code"):
-            t.append(f"  ·  {d['spec_code']}", style="#3fd6c6")
-        t.append(f"  ·  {d.get('category') or '—'}\n\n", style="#a86b00")
+            t.append(f"  ·  {d['spec_code']}", style=P.teal)
+        t.append(f"  ·  {d.get('category') or '—'}\n\n", style=P.amber_dim)
         if d.get("status") == "away":
             t.append("● OUT ", style=f"bold {AWAY}")
             t.append(f"to {d.get('checked_out_to') or '?'} since {str(d.get('checked_out_at') or '')[:16]}", style=AWAY)
@@ -491,45 +492,45 @@ class Inventory(Horizontal):
                 t.append(f" · {d['checkout_reason']}", style=AWAY)
             t.append("\n")
         else:
-            t.append(f"● {str(d.get('status') or 'home').upper()}\n", style="bold #3fd6c6")
-        t.append("HOME  ", style="bold #d9cba4")
-        t.append(f"{w.place_title(d.get('address')) if w else d.get('address')}\n", style="#ffb000")
-        t.append(f"      {d.get('address') or 'no address'}\n", style="#8a7b58")
+            t.append(f"● {str(d.get('status') or 'home').upper()}\n", style=f"bold {P.teal}")
+        t.append("HOME  ", style=f"bold {P.beige}")
+        t.append(f"{w.place_title(d.get('address')) if w else d.get('address')}\n", style=P.amber)
+        t.append(f"      {d.get('address') or 'no address'}\n", style=P.beige_dark)
         if d.get("parent_item_id"):
             parent = (w.I.get(d["parent_item_id"]) if w else None) or {}
-            t.append("IN    ", style="bold #d9cba4")
-            t.append(f"{parent.get('name', d['parent_item_id'])}\n", style="#ffb000")
+            t.append("IN    ", style=f"bold {P.beige}")
+            t.append(f"{parent.get('name', d['parent_item_id'])}\n", style=P.amber)
         qty = d.get("quantity")
-        t.append("QTY   ", style="bold #d9cba4")
-        t.append(f"{qty:g} " if isinstance(qty, (int, float)) else "? ", style="#ffb000")
-        t.append(f"{d.get('quantity_note') or ''}\n", style="#a86b00")
-        t.append("STAGE ", style="bold #d9cba4")
+        t.append("QTY   ", style=f"bold {P.beige}")
+        t.append(f"{qty:g} " if isinstance(qty, (int, float)) else "? ", style=P.amber)
+        t.append(f"{d.get('quantity_note') or ''}\n", style=P.amber_dim)
+        t.append("STAGE ", style=f"bold {P.beige}")
         t.append(f"{d.get('stage') or '—'} · {d.get('confidence') or ''}"
-                 f"{' · ' + d['decision'] if d.get('decision') else ''}\n", style="#ffb000")
+                 f"{' · ' + d['decision'] if d.get('decision') else ''}\n", style=P.amber)
         if d.get("nominal_size"):
-            t.append("SIZE  ", style="bold #d9cba4")
+            t.append("SIZE  ", style=f"bold {P.beige}")
             size = d["nominal_size"]
             t.append(("×".join(str(x) for x in size) if isinstance(size, (list, tuple)) else str(size)) + "\n",
-                     style="#ffb000")
+                     style=P.amber)
         if d.get("nicknames"):
-            t.append("AKA   ", style="bold #d9cba4")
-            t.append(", ".join(n if isinstance(n, str) else n.get("alias", "") for n in d["nicknames"]) + "\n", style="#ffb000")
+            t.append("AKA   ", style=f"bold {P.beige}")
+            t.append(", ".join(n if isinstance(n, str) else n.get("alias", "") for n in d["nicknames"]) + "\n", style=P.amber)
         for label, key in (("SPECS", "specs"), ("NOTES", "notes")):
             if d.get(key):
-                t.append(f"\n{label}\n", style="bold #d9cba4")
-                t.append(d[key][:900] + "\n", style="#ffb000")
+                t.append(f"\n{label}\n", style=f"bold {P.beige}")
+                t.append(d[key][:900] + "\n", style=P.amber)
         children = d.get("children") or []
         if children:
-            t.append(f"\nINSIDE ({len(children)})\n", style="bold #d9cba4")
+            t.append(f"\nINSIDE ({len(children)})\n", style=f"bold {P.beige}")
             for c in children[:20]:
-                t.append(f" ▪ {c.get('name')}  #{c.get('id')}\n", style="#ffb000")
+                t.append(f" ▪ {c.get('name')}  #{c.get('id')}\n", style=P.amber)
         moves = d.get("movements") or []
         if moves:
-            t.append("\nLATELY\n", style="bold #d9cba4")
+            t.append("\nLATELY\n", style=f"bold {P.beige}")
             for mv in moves[-4:][::-1]:
                 t.append(f" {str(mv.get('happened_at', ''))[:16]}  {mv.get('kind')}  {mv.get('reason') or ''}\n"[:90],
-                         style="#8a7b58")
-        t.append("\ne edit · m move · c check out · r return · k nickname · p its place", style="#3d2a08")
+                         style=P.beige_dark)
+        t.append("\ne edit · m move · c check out · r return · k nickname · p its place", style=P.amber_faint)
         self.query_one("#inv-card", Static).update(t)
         self.query_one("#inv-item").border_title = f"ITEM ░ #{d['id']}"
         await self._show_photo(d)

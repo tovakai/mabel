@@ -19,6 +19,7 @@ from textual.widgets.option_list import Option
 
 from .config import CACHE
 from .nav import mark
+from .palette import P
 
 
 def _time(seconds) -> str:
@@ -64,6 +65,8 @@ class Audio(Horizontal):
         Binding("s", "to_playlist", "+ playlist"),
         Binding("S", "save_queue", "save queue", show=False),
         Binding("d", "remove_from_playlist", "remove", show=False),
+        Binding("z", "shuffle", "shuffle"),
+        Binding("R", "random_mix", "random mix", show=False),
     ]
 
     def __init__(self, **kw):
@@ -291,6 +294,19 @@ class Audio(Horizontal):
         elif text:
             self.app.notify(text, timeout=2)
 
+    async def action_shuffle(self) -> None:
+        await self.player.set_shuffle(not self.player.shuffle)
+        self.app.notify("⤨ shuffle on: the rest of the queue is shuffled" if self.player.shuffle else "shuffle off",
+                        timeout=2)
+
+    @work(group="queue")
+    async def action_random_mix(self) -> None:
+        data = await self.mabel.music("getRandomSongs", size=50)
+        songs = (data.get("randomSongs") or {}).get("song") or []
+        if songs:
+            await self.player.play(songs)
+            self._report(f"⤨ a random mix of {len(songs)} songs")
+
     async def action_toggle(self) -> None:
         await self.player.toggle()
 
@@ -308,7 +324,8 @@ class Audio(Horizontal):
 
     @on(ListView.Selected, "#queue")
     async def jump(self, event: ListView.Selected) -> None:
-        await self.player.jump(self.query_one("#queue", ListView).index or 0)
+        row = self.query_one("#queue", ListView).index or 0
+        await self.player.jump(getattr(self, "_queue_offset", 0) + row)
 
     # ── the deck ────────────────────────────────────────────────────────
 
@@ -324,15 +341,16 @@ class Audio(Horizontal):
         player, song = self.player, self.player.current
         text = Text()
         if song:
-            text.append(("❚❚ " if player.paused else "▶ ") + f"{song.get('title', '')}\n", style="bold #ffd066")
-            text.append(f"{song.get('artist', '')}\n", style="#ffb000")
-            text.append(f"{song.get('album', '')}\n", style="#a86b00")
+            text.append(("❚❚ " if player.paused else "▶ ") + f"{song.get('title', '')}\n", style=f"bold {P.amber_hi}")
+            text.append(f"{song.get('artist', '')}\n", style=P.amber)
+            text.append(f"{song.get('album', '')}\n", style=P.amber_dim)
             length = player.duration or float(song.get("duration") or 0)
-            text.append(f"{_time(player.position)} / {_time(length)}   vol {player.volume}", style="#3fd6c6")
+            text.append(f"{_time(player.position)} / {_time(length)}   vol {player.volume}"
+                        + ("   ⤨ shuffle" if player.shuffle else ""), style=P.teal)
             self.query_one("#progress", ProgressBar).update(progress=(player.position / length) if length else 0)
         else:
-            text.append("NO TAPE IN THE DECK\n", style="bold #a86b00")
-            text.append("pick something on the left", style="#3d2a08")
+            text.append("NO TAPE IN THE DECK\n", style=f"bold {P.amber_dim}")
+            text.append("pick something on the left", style=P.amber_faint)
         self.query_one("#nowplaying", Static).update(text)
         self._sync_queue()
         cover = (song or {}).get("coverArt")
@@ -340,14 +358,24 @@ class Audio(Horizontal):
             self._cover_id = cover
             self.show_cover(cover)
 
+    QUEUE_BEFORE, QUEUE_AFTER = 2, 40           # a window around the current song, not all 800 of them
+
     def _sync_queue(self) -> None:
+        player = self.player
+        start = max(0, player.index - self.QUEUE_BEFORE)
+        window = list(enumerate(player.queue))[start: max(player.index, 0) + self.QUEUE_AFTER + 1]
+        wanted = [f"{'▶' if i == player.index else ' '} {s.get('title', '')[:32]}  ·  {s.get('artist', '')[:18]}"
+                  for i, s in window]
+        rest = len(player.queue) - (window[-1][0] + 1 if window else 0)
+        if rest > 0:
+            wanted.append(f"  … {rest} more")
+        # Compare with what we drew last time, not the widgets: freshly added rows may not be built yet.
+        if wanted == getattr(self, "_queue_drawn", None):
+            return
+        self._queue_drawn, self._queue_offset = wanted, start
         view = self.query_one("#queue", ListView)
-        wanted = [f"{'▶' if i == self.player.index else ' '} {s.get('title', '')[:32]}  ·  {s.get('artist', '')[:18]}"
-                  for i, s in enumerate(self.player.queue)]
-        current = [str(item.query_one(Label).content) for item in view.children if isinstance(item, ListItem)]
-        if wanted != current:
-            view.clear()
-            view.extend(ListItem(Label(w)) for w in wanted)
+        view.clear()
+        view.extend(ListItem(Label(w)) for w in wanted)
 
     @work(exclusive=True, group="cover")
     async def show_cover(self, cover_id: str) -> None:

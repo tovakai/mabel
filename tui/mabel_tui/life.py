@@ -12,6 +12,7 @@ from textual.widgets import ProgressBar, Static
 
 from .config import CACHE
 from .nav import mark
+from .palette import P
 
 JOB_NAMES = {"research": "research", "letters": "tova letters", "news": "news", "dream": "dream",
              "revisit": "look back", "music": "compose", "paper": "paper note", "morning": "morning page",
@@ -30,18 +31,18 @@ def _hm(value: str | None) -> str:
 def _status(data: dict) -> Text:
     out = Text()
     doing = data.get("doing") or []
-    out.append("NOW  ", style="bold #d9cba4")
+    out.append("NOW  ", style=f"bold {P.beige}")
     out.append((", ".join(doing) if doing else "idle, waiting for you to step away") + "\n\n",
-               style="bold #3fd6c6" if doing else "#a86b00")
+               style=f"bold {P.teal}" if doing else P.amber_dim)
     for job in data.get("jobs") or []:
         name = JOB_NAMES.get(job["job"], job["job"])
         ran = job.get("last_ran")
-        out.append(f"{'●' if ran else '○'} ", style="#3fd6c6" if ran else "#3d2a08")
-        out.append(f"{name:<14}", style="#ffb000")
-        out.append(f"{_hm(ran)}  ", style="#ffd066" if ran else "#3d2a08")
+        out.append(f"{'●' if ran else '○'} ", style=P.teal if ran else P.amber_faint)
+        out.append(f"{name:<14}", style=P.amber)
+        out.append(f"{_hm(ran)}  ", style=P.amber_hi if ran else P.amber_faint)
         waiting = (job.get("waiting_on") or [""])[0]
         reason = job.get("outcome") or waiting
-        out.append(f"{reason[:26] + '…' if len(reason) > 27 else reason}\n", style="#a86b00")
+        out.append(f"{reason[:26] + '…' if len(reason) > 27 else reason}\n", style=P.amber_dim)
     return out
 
 
@@ -49,42 +50,42 @@ def _journal(data: dict) -> Text:
     out = Text()
 
     def head(label: str, when: str | None = None):
-        out.append(f"\n{label}", style="bold #d9cba4")
-        out.append(f"  ·  {_hm(when)}\n" if when else "\n", style="#8a7b58")
+        out.append(f"\n{label}", style=f"bold {P.beige}")
+        out.append(f"  ·  {_hm(when)}\n" if when else "\n", style=P.beige_dark)
 
     song = data.get("song")
     if song:
         head("♪ LAST COMPOSITION", song.get("at"))
-        out.append(f"{song.get('title')}\n", style="bold #ffd066")
+        out.append(f"{song.get('title')}\n", style=f"bold {P.amber_hi}")
     note = data.get("paper")
     if note:
         head("✎ ON PAPER", note.get("at"))
-        out.append((note.get("text") or "")[:400] + "\n", style="#ffb000")
+        out.append((note.get("text") or "")[:400] + "\n", style=P.amber)
     news = data.get("news")
     if news and news.get("message"):
         head(f"◈ NEWS  {news.get('day') or ''}")
-        out.append(news["message"][:420] + "\n", style="#ffb000")
+        out.append(news["message"][:420] + "\n", style=P.amber)
     return out
 
 
 def _lists(data: dict) -> Text:
     out = Text()
-    out.append("GROCERIES\n", style="bold #d9cba4")
+    out.append("GROCERIES\n", style=f"bold {P.beige}")
     items = data.get("groceries") or []
     for item in items:
-        mark, style = ("☑", "#8a7b58") if item.get("bought") else ("☐", "#ffd066")
+        mark, style = ("☑", P.beige_dark) if item.get("bought") else ("☐", P.amber_hi)
         amount = f" ({item['amount']})" if item.get("amount") else ""
         out.append(f" {mark} {item.get('item')}{amount}\n", style=style)
     if not items:
-        out.append(" nothing on the list\n", style="#a86b00")
-    out.append("\nGREMLIN · CHECKED OUT\n", style="bold #d9cba4")
+        out.append(" nothing on the list\n", style=P.amber_dim)
+    out.append("\nGREMLIN · CHECKED OUT\n", style=f"bold {P.beige}")
     gone = data.get("gremlin_out") or []
     for item in gone:
         days = item.get("days_out", 0)
-        out.append(f" ▪ {item.get('item')[:30]}", style="#ffb000")
-        out.append(f"  {days}d\n", style="#ff5a36" if days >= 3 else "#a86b00")
+        out.append(f" ▪ {item.get('item')[:30]}", style=P.amber)
+        out.append(f"  {days}d\n", style=P.red if days >= 3 else P.amber_dim)
     if not gone:
-        out.append(" everything is home\n", style="#a86b00")
+        out.append(" everything is home\n", style=P.amber_dim)
     return out
 
 
@@ -119,20 +120,20 @@ class Life(Grid):
         try:
             data = await self.app.mabel.life()
         except Exception as exc:
-            self.query_one("#status-text", Static).update(Text(f"✖ can't reach Mabel: {exc}", style="#ff5a36"))
+            self.query_one("#status-text", Static).update(Text(f"✖ can't reach Mabel: {exc}", style=P.red))
             return
         self.query_one("#status-text", Static).update(_status(data))
         self.query_one("#journal-text", Static).update(_journal(data))
         self.query_one("#lists-text", Static).update(_lists(data))
         book = data.get("book") or {}
         self.query_one("#book-text", Static).update(Text.assemble(
-            ("▤ READING\n", "bold #d9cba4"), (f"{book.get('title') or 'nothing right now'}\n", "bold #ffd066"),
-            (f"{book.get('author') or ''}", "#a86b00")))
+            ("▤ READING\n", f"bold {P.beige}"), (f"{book.get('title') or 'nothing right now'}\n", f"bold {P.amber_hi}"),
+            (f"{book.get('author') or ''}", P.amber_dim)))
         self.query_one("#book-bar", ProgressBar).update(progress=book.get("progress") or 0)
         dream = data.get("dream") or {}
         self.query_one("#life-dream").border_subtitle = _hm(dream.get("at"))
         self.query_one("#dream-text", Static).update(Text.assemble(
-            (f"{dream.get('title') or ''}\n\n", "bold #ffd066"), ((dream.get("text") or "")[:1200], "#ffb000")))
+            (f"{dream.get('title') or ''}\n\n", f"bold {P.amber_hi}"), ((dream.get("text") or "")[:1200], P.amber)))
         if dream.get("has_image") and dream.get("at") != self._dream_at:
             await self._show_dream(dream.get("at"))
 

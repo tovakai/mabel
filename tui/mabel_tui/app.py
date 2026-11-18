@@ -23,6 +23,7 @@ from .life import Life
 from .mpris import Mpris
 from .player import Player
 from .tkindex import TKIndex
+from .palette import P
 
 LOGO = "▙▟ MABEL-OS 2.6"
 
@@ -33,7 +34,8 @@ HELP = {
                    ("i / a / enter", "go into the lit section"),
                    ("esc", "back out to the sections"),
                    ("inside: h j k l", "like the arrow keys, where the section doesn't use the letter"),
-                   ("ctrl+p", "play / pause music"), ("?", "this list"), ("ctrl+q", "power off")],
+                   ("ctrl+p", "play / pause music"), ("ctrl+t", "colour tuner (for screens that show colours their own way)"),
+                   ("?", "this list"), ("ctrl+q", "power off")],
     "comms": [("enter", "send"), ("ctrl+n", "new chat"), ("ctrl+s", "show/hide the chat list"),
               ("esc, k, then i", "into the conversation to scroll it"),
               ("ctrl+s, then h → list", "open another chat (the list hides on the deck)")],
@@ -41,10 +43,11 @@ HELP = {
     "audio": [("/", "search"), ("↑↓ enter", "open album/artist, or play from that song"), ("a / n", "append / play next"),
               ("backspace", "back"), ("p", "playlists"), ("s", "add selection to a playlist"),
               ("S", "save the queue as a playlist"), ("d", "remove from the open playlist"),
+              ("z", "shuffle on/off (shuffles the rest of the queue)"), ("R", "a random mix from the library"),
               ("space", "pause"), ("[ ]", "previous / next"),
               ("← →", "seek 10 s"), ("+ -", "volume")],
     "inventory": [("↑↓←→ enter", "move between cards and lines, open"), ("backspace", "zoom out one step"),
-                  ("H", "home"), ("/", "search"), ("i", "Mabel's housekeeping inbox (a apply, x tick off)"),
+                  ("H", "home"), ("/", "search"), ("b", "Mabel's housekeeping inbox (a apply, x tick off)"),
                   ("o", "loose ends"), ("e m c r k", "edit, move, check out, return, nickname"),
                   ("p", "go to the item's place"), ("u", "undo the last change"), ("ctrl+s", "save in a dialog")],
 }
@@ -60,10 +63,10 @@ class HelpScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         text = Text()
         for part in (self.channel, "everywhere"):
-            text.append(f"{part.upper()}\n", style="bold #d9cba4")
+            text.append(f"{part.upper()}\n", style=f"bold {P.beige}")
             for keys, what in HELP.get(part, []):
-                text.append(f"  {keys:<22}", style="bold #ffd066")
-                text.append(f"{what}\n", style="#ffb000")
+                text.append(f"  {keys:<22}", style=f"bold {P.amber_hi}")
+                text.append(f"{what}\n", style=P.amber)
             text.append("\n")
         box = Static(text, id="help", classes="panel")
         box.border_title = "KEYS"
@@ -86,6 +89,7 @@ class MabelApp(App):
         Binding("alt+3", "channel('audio')", "AUDIO", show=False, priority=True),
         Binding("alt+4", "channel('inventory')", "INVENTORY", show=False, priority=True),
         Binding("question_mark", "help", "keys"),
+        Binding("ctrl+t", "tune", "colours", show=False, priority=True),
         Binding("h", "navkey('h')", show=False), Binding("j", "navkey('j')", show=False),
         Binding("k", "navkey('k')", show=False), Binding("l", "navkey('l')", show=False),
         Binding("i,a,enter", "nav_enter", show=False),
@@ -103,6 +107,10 @@ class MabelApp(App):
         self.mpris = Mpris(self, self.player)
         self._status = ""
         self.nav_section = None                      # the lit section in nav mode
+
+    def get_css_variables(self) -> dict[str, str]:
+        from .palette import css_variables
+        return {**super().get_css_variables(), **css_variables()}     # $mo-* = palette.py (PC or deck)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="casing"):
@@ -131,12 +139,12 @@ class MabelApp(App):
     def _tick(self) -> None:
         host = self.cfg.url.split("//", 1)[-1]
         left = Text()
-        left.append(LOGO, style="bold #2a2114")
-        left.append("  ░  TERMINAL UNIT 01  ░  LINK ", style="#2a2114")
-        left.append(host, style="bold #2a2114")
+        left.append(LOGO, style=f"bold {P.casing_text}")
+        left.append("  ░  TERMINAL UNIT 01  ░  LINK ", style=P.casing_text)
+        left.append(host, style=f"bold {P.casing_text}")
         self.query_one("#casing-left", Static).update(left)
         self.query_one("#casing-clock", Static).update(
-            Text(datetime.now().strftime("%a %d %b %Y  %H:%M:%S").upper(), style="bold #2a2114"))
+            Text(datetime.now().strftime("%a %d %b %Y  %H:%M:%S").upper(), style=f"bold {P.casing_text}"))
 
     # ── status strip ────────────────────────────────────────────────────
 
@@ -148,12 +156,12 @@ class MabelApp(App):
         line = Text()
         song = self.player.current
         if song:
-            line.append("❚❚ " if self.player.paused else "▶ ", style="bold #2a2114")
-            line.append(f"{song.get('title', '')} · {song.get('artist', '')}"[:60], style="#2a2114")
+            line.append("❚❚ " if self.player.paused else "▶ ", style=f"bold {P.casing_text}")
+            line.append(f"{song.get('title', '')} · {song.get('artist', '')}"[:60], style=P.casing_text)
         else:
-            line.append("◌ deck empty", style="#2a2114")
+            line.append("◌ deck empty", style=P.casing_text)
         if self._status:
-            line.append(f"   {self._status}", style="bold #6b1d0a")
+            line.append(f"   {self._status}", style=f"bold {P.rust}")
         try:
             self.query_one("#statusline", Static).update(line)
         except Exception:
@@ -194,6 +202,23 @@ class MabelApp(App):
         if sections:
             self._light(sections[0])
 
+    async def on_key(self, event) -> None:
+        """Nav mode (nothing focused): a key the app doesn't use goes to the channel on screen,
+        so space, z, R, / and friends work without first going into a section."""
+        if self.focused is not None or not self._main_screen():
+            return
+        pane = self._pane()
+        view = pane.children[0] if pane.children else None
+        if view is None:
+            return
+        try:
+            bindings = view._bindings.get_bindings_for_key(event.key)
+        except Exception:
+            return
+        if bindings:
+            event.stop()
+            await view.run_action(bindings[0].action)
+
     def action_navkey(self, key: str) -> None:
         if not self._main_screen():
             return
@@ -222,6 +247,24 @@ class MabelApp(App):
             self._light(section)
         elif self.focused is None and self.nav_section is None:
             self.start_nav()
+
+    def action_tune(self) -> None:
+        from .tuner import Tuner
+        if self._main_screen():
+            self.push_screen(Tuner())
+
+    def apply_palette(self) -> None:
+        """After the tuner changed P: the stylesheet, then the views' own coloured text."""
+        self.refresh_css(animate=False)
+        self._tick()
+        self.refresh_statusline()
+        try:
+            self.query_one(Life).action_refresh()
+            self.query_one(Audio)._dirty = True
+            inventory = self.query_one(Inventory)
+            self.run_worker(inventory.render_page())
+        except Exception:
+            pass
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen(self.query_one(TabbedContent).active))

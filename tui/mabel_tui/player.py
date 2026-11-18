@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
 import shutil
 import uuid
 from pathlib import Path
@@ -22,6 +23,7 @@ class Player:
         self.stream_url, self.token, self.volume = stream_url, token, volume
         self.on_change, self.on_scrobble = on_change, on_scrobble
         self.queue: list[dict] = []
+        self.shuffle = False                 # new plays start with the chosen song, the rest shuffled
         self.index = -1
         self.paused = False
         self.position = 0.0
@@ -148,7 +150,12 @@ class Player:
     async def play(self, songs: list[dict], start: int = 0) -> None:
         if not songs or not await self.start():
             return
-        self.queue, self.error = list(songs), ""
+        songs = list(songs)
+        if self.shuffle and len(songs) > 1:
+            first, rest = songs[start], songs[:start] + songs[start + 1:]
+            random.shuffle(rest)
+            songs, start = [first] + rest, 0
+        self.queue, self.error = songs, ""
         self._scrobbled.clear()
         await self._cmd("playlist-clear")
         for i, song in enumerate(self.queue):
@@ -173,6 +180,19 @@ class Player:
             self.queue.insert(at + offset, song)
             await self._cmd("loadfile", self.stream_url(song["id"]), "append")
             await self._cmd("playlist-move", len(self.queue) - 1, at + offset)
+        self._changed()
+
+    async def set_shuffle(self, on: bool) -> None:
+        """Shuffle on: everything after the current song is shuffled now (and new plays start shuffled)."""
+        self.shuffle = on
+        if on and self.index + 1 < len(self.queue):
+            rest = self.queue[self.index + 1:]
+            random.shuffle(rest)
+            for i in range(len(self.queue) - 1, self.index, -1):
+                await self._cmd("playlist-remove", i)
+            self.queue = self.queue[: self.index + 1] + rest
+            for song in rest:
+                await self._cmd("loadfile", self.stream_url(song["id"]), "append")
         self._changed()
 
     async def jump(self, index: int) -> None:

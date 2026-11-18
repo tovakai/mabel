@@ -90,3 +90,37 @@ def test_hjkl_moves_to_the_section_in_that_direction():
     assert nav.neighbour(deck, secs, "h").name in ("search", "results")
     assert nav.neighbour(results, secs, "k").name == "search"
     assert nav.neighbour(search, secs, "k") is None
+
+
+def test_shuffle_keeps_the_chosen_song_first_and_shuffles_the_rest():
+    commands = []
+    player = Player(lambda i: i, "ody_test")
+
+    async def fake_cmd(*args):
+        commands.append(args)
+    async def started():
+        return True
+    player._cmd, player.start = fake_cmd, started
+    songs = [{"id": str(n)} for n in range(30)]
+    player.shuffle = True
+    asyncio.run(player.play(songs, start=7))
+    assert player.queue[0]["id"] == "7" and sorted(s["id"] for s in player.queue) == sorted(s["id"] for s in songs)
+    assert [s["id"] for s in player.queue] != ["7"] + [str(n) for n in range(30) if n != 7]
+    player.shuffle, player.index = False, 3
+    before = [s["id"] for s in player.queue]
+    asyncio.run(player.set_shuffle(True))
+    assert [s["id"] for s in player.queue][:4] == before[:4]                 # played and current stay put
+    assert sorted(s["id"] for s in player.queue) == sorted(before)
+
+
+def test_tuner_nudges_colours_and_saves_only_what_changed(tmp_path):
+    from mabel_tui import tuner
+    assert tuner.nudge("#ffb000", dl=0.0) == "#ffb000"
+    assert tuner.to_hls(tuner.nudge("#ffb000", dl=0.1))[1] > tuner.to_hls("#ffb000")[1]       # lighter
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('url = "x"\npalette = "deck"\n\n[colors]\namber = "#000000"\n')
+    colours = {**tuner.palette.DEFAULT, **tuner.palette.PRESETS["deck"], "teal": "#112233"}
+    tuner.save_colours(colours, cfg)
+    text = cfg.read_text()
+    assert text.count("[colors]") == 1 and 'teal = "#112233"' in text and "amber =" not in text
+    assert text.startswith('url = "x"\npalette = "deck"')
