@@ -232,3 +232,8 @@ Picker { align: center middle; background: rgba(12, 8, 4, 0.7); }
 #term-tabs { height: 1; padding: 0 1; }
 #term-switch { height: 1fr; padding: 0; }
 Terminal { width: 1fr; height: 1fr; }
+
+/* ── COMMS: Mabel's portrait ── */
+#mabel-side { width: 30; height: 1fr; }
+#portrait { width: 30; height: 16; padding: 0; }
+#mabel-state { width: 30; height: 1; content-align: center middle; text-align: center; margin-top: 1; }

@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
+from rich.text import Text
+
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -15,6 +17,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, ListItem, ListView, Markdown, Static
 
 from .nav import mark
+from .palette import P
 
 
 def _stamp(value: str | None = None) -> str:
@@ -80,6 +83,13 @@ class Comms(Horizontal):
             log.border_title = "COMMS"
             yield log
             yield mark(Input(placeholder="talk to Mabel…", id="prompt"))
+        with Vertical(id="mabel-side"):
+            from .avatar import Avatar
+            portrait = Vertical(Avatar(self.app.cfg.avatar or None, self.app.cfg.avatar_fps), id="portrait",
+                                classes="panel")
+            portrait.border_title = "MABEL"
+            yield portrait
+            yield Static(id="mabel-state")
 
     @property
     def mabel(self):
@@ -87,6 +97,21 @@ class Comms(Horizontal):
 
     def on_mount(self) -> None:
         self.load_sessions(select_first=True)
+        self.link_ok: bool | None = None
+        self.set_interval(0.5, self._show_state)
+
+    def _show_state(self) -> None:
+        if self.busy:
+            frames = "◐◓◑◒"
+            import time
+            text, style = f"{frames[int(time.time() * 4) % 4]} THINKING", P.teal
+        elif self.link_ok is False:
+            text, style = "✖ LINK DOWN", P.red
+        elif self.link_ok:
+            text, style = "◆ ONLINE", P.amber
+        else:
+            text, style = "◌ CONNECTING", P.amber_dim
+        self.query_one("#mabel-state", Static).update(Text(text, style=f"bold {style}"))
 
     # ── sessions ────────────────────────────────────────────────────────
 
@@ -95,8 +120,10 @@ class Comms(Horizontal):
         try:
             sessions = await self.mabel.sessions()
         except Exception as exc:
+            self.link_ok = False
             self.app.notify(f"Couldn't load chats: {exc}", severity="error")
             return
+        self.link_ok = True
         view = self.query_one("#sessions", ListView)
         await view.clear()
         await view.extend(SessionItem(s) for s in sessions[:80])
