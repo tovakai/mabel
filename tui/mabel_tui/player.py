@@ -67,7 +67,8 @@ class Player:
             self.error = f"couldn't talk to mpv: {exc}"
             return False
         asyncio.create_task(self._read(reader))
-        await self._cmd("set_property", "http-header-fields", [f"Authorization: Bearer {self.token}"])
+        if self.token:                       # only for Mabel's proxy; Navidrome direct carries its auth in the URL
+            await self._cmd("set_property", "http-header-fields", [f"Authorization: Bearer {self.token}"])
         for i, prop in enumerate(("pause", "time-pos", "duration", "playlist-pos", "idle-active"), 1):
             await self._cmd("observe_property", i, prop)
         return True

@@ -18,6 +18,8 @@ class Config:
     index_url: str = "http://127.0.0.1:8766"      # tk-index; over the tailnet: https://<host>:8765
     vault: str = "~/Documents/core of truth"      # his Obsidian vault (VAULT channel, Gremlin inbox)
     journal: str = "~/Documents/mabel/journal"    # Mabel's journal, a second vault in VAULT (PC only)
+    navidrome: dict | None = None                 # [navidrome] url/user/password: AUDIO direct, without Mabel
+    offline_bitrate: int = 0                      # downloads: 0 = the original files, else e.g. 192 (kbit/s)
 
 
 def load(path: Path = CONFIG) -> Config:
@@ -32,4 +34,15 @@ def load(path: Path = CONFIG) -> Config:
     return Config(url=url, token=token, volume=int(data.get("volume", 70)),
                   index_url=str(data.get("index_url") or Config.index_url).rstrip("/"),
                   vault=str(data.get("vault") or Config.vault),
-                  journal=str(data.get("journal") or Config.journal))
+                  journal=str(data.get("journal") or Config.journal),
+                  navidrome=_navidrome(data.get("navidrome"), path),
+                  offline_bitrate=int(data.get("offline_bitrate") or 0))
+
+
+def _navidrome(section, path: Path) -> dict | None:
+    if not section:
+        return None
+    nd = {k: str(section.get(k) or "") for k in ("url", "user", "password")}
+    if not all(nd.values()):
+        raise SystemExit(f"{path}: [navidrome] needs url, user and password")
+    return nd

@@ -46,6 +46,8 @@ HELP = {
     "audio": [("/", "search"), ("↑↓ enter", "open album/artist, or play from that song"), ("a / n", "append / play next"),
               ("backspace", "back"), ("p", "playlists"), ("s", "add selection to a playlist"),
               ("S", "save the queue as a playlist"), ("d", "remove from the open playlist"),
+              ("O", "download for offline (the open album/playlist, else the selection)"),
+              ("o", "offline library (d removes a download)"), ("↓", "marks downloaded songs"),
               ("z", "shuffle on/off (shuffles the rest of the queue)"), ("R", "a random mix from the library"),
               ("space", "pause"), ("[ ]", "previous / next"),
               ("← →", "seek 10 s"), ("+ -", "volume")],
@@ -124,7 +126,13 @@ class MabelApp(App):
         self.cfg = cfg
         self.mabel = Mabel(cfg.url, cfg.token)
         self.index = TKIndex(cfg.index_url)
-        self.player = Player(self.mabel.stream_url, cfg.token, cfg.volume, on_scrobble=self._scrobble)
+        from .music_source import MabelMusic, Navidrome
+        from .offline import Offline
+        nd = cfg.navidrome
+        self.music = Navidrome(nd["url"], nd["user"], nd["password"]) if nd else MabelMusic(self.mabel)
+        self.offline = Offline()
+        self.player = Player(self._stream_url, cfg.token if self.music.label == "mabel" else None, cfg.volume,
+                             on_scrobble=self._scrobble)
         self.mpris = Mpris(self, self.player)
         self._status = ""
         self.nav_section = None                      # the lit section in nav mode
@@ -341,6 +349,10 @@ class MabelApp(App):
                 self.start_nav()
         self.set_timer(0.15, settle)                   # after the pane has its size, so sections can be lit
 
+    def _stream_url(self, song_id: str) -> str:
+        """A downloaded song plays from disk; the rest streams."""
+        return self.offline.local(song_id) or self.music.stream_url(song_id)
+
     async def action_pause(self) -> None:
         await self.player.toggle()
 
@@ -349,7 +361,7 @@ class MabelApp(App):
 
     async def _send_scrobble(self, song_id: str, submission: bool) -> None:
         try:
-            await self.mabel.music_write("scrobble", id=song_id, submission=submission)
+            await self.music.music_write("scrobble", id=song_id, submission=submission)
         except Exception:
             pass
 
@@ -357,6 +369,7 @@ class MabelApp(App):
         await self.player.stop()
         await self.mpris.stop()
         await self.mabel.close()
+        await self.music.close()
         await self.index.close()
 
 
