@@ -5,16 +5,18 @@ Run: mabel   (or: uv run --project ~/Documents/mabel/tui mabel)
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Static, TabbedContent, TabPane
 
-from . import config, nav
+from . import config, nav, update
 from .api import Mabel
 from .audio import Audio
 from .comms import Comms
@@ -38,6 +40,7 @@ HELP = {
                    ("inside: h j k l", "like the arrow keys, where the section doesn't use the letter"),
                    ("ctrl+z", "drop to a plain shell (exit comes back)"),
                    ("ctrl+p", "play / pause music"), ("ctrl+t", "colour tuner (for screens that show colours their own way)"),
+                   ("F12", "install the update when the header says UPDATE (pushed from the PC)"),
                    ("?", "this list"), ("ctrl+q", "power off")],
     "comms": [("enter", "send"), ("ctrl+n", "new chat"), ("ctrl+s", "show/hide the chat list"),
               ("esc, k, then i", "into the conversation to scroll it"),
@@ -119,6 +122,7 @@ class MabelApp(App):
         Binding("escape", "nav_out", "out", show=False),
         Binding("ctrl+p", "pause", "play/pause", priority=True),
         Binding("ctrl+q", "quit", "power off", priority=True),
+        Binding("f12", "update", "update", show=False, priority=True),
     ]
 
     def __init__(self, cfg: config.Config):
@@ -136,6 +140,9 @@ class MabelApp(App):
         self.mpris = Mpris(self, self.player)
         self._status = ""
         self.nav_section = None                      # the lit section in nav mode
+        self._update_ready: str | None = None        # a newer build Mabel serves (update.py)
+        self._updating = False
+        self._last_input = time.monotonic()
 
     def get_css_variables(self) -> dict[str, str]:
         from .palette import css_variables
@@ -168,6 +175,9 @@ class MabelApp(App):
         self._tick()
         self.set_interval(1, self._tick)
         self.refresh_statusline()
+        if update.installed_build():                  # installed by Mabel's installer: she can push updates
+            self.set_timer(10, self._check_update)
+            self.set_interval(update.CHECK_EVERY_S, self._check_update)
 
     def _tick(self) -> None:
         host = self.cfg.url.split("//", 1)[-1]
@@ -175,9 +185,60 @@ class MabelApp(App):
         left.append(LOGO, style=f"bold {P.casing_text}")
         left.append("  ░  TERMINAL UNIT 01  ░  LINK ", style=P.casing_text)
         left.append(host, style=f"bold {P.casing_text}")
+        if self._updating:
+            left.append("  ▲ UPDATING…", style=f"bold {P.rust}")
+        elif self._update_ready:
+            left.append("  ▲ UPDATE F12", style=f"bold {P.rust}")
         self.query_one("#casing-left", Static).update(left)
         self.query_one("#casing-clock", Static).update(
             Text(datetime.now().strftime("%a %d %b %Y  %H:%M:%S").upper(), style=f"bold {P.casing_text}"))
+
+    # ── updates pushed from the PC (update.py) ──────────────────────────
+
+    async def on_event(self, event: events.Event) -> None:
+        if isinstance(event, (events.Key, events.MouseDown)):
+            self._last_input = time.monotonic()
+        await super().on_event(event)
+
+    async def _check_update(self, *, quiet: bool = True) -> None:
+        served = await update.served_build(self.cfg.url)
+        if update.newer(update.installed_build(), served):
+            if self._update_ready != served:
+                self._update_ready = served
+                self.notify("A new MABEL-OS is ready. F12 installs it and restarts.", title="UPDATE", timeout=10)
+                self._tick()
+            idle = time.monotonic() - self._last_input >= update.IDLE_BEFORE_AUTO_S
+            playing = bool(self.player.current) and not self.player.paused
+            if self.cfg.auto_update and idle and not playing:
+                self.action_update()
+        elif not quiet:
+            self.notify("Already the newest build." if served else "Couldn't ask Mabel for the newest build.",
+                        title="UPDATE")
+
+    def action_update(self) -> None:
+        if self._updating:
+            return
+        if not update.installed_build():
+            self.notify("This copy runs from the source tree, so it's always current.", title="UPDATE")
+            return
+        if not self._update_ready:
+            self.run_worker(self._check_update(quiet=False), exclusive=True, group="update")
+            return
+        self._updating = True
+        self._tick()
+        self.run_worker(self._install_update, thread=True, exclusive=True, group="update")
+
+    def _install_update(self) -> None:
+        ok, tail = update.apply(self.cfg.url)
+        self.call_from_thread(self._update_done, ok, tail)
+
+    def _update_done(self, ok: bool, tail: str) -> None:
+        self._updating = False
+        if ok:
+            self.exit(result="restart")              # main() starts the new build in this terminal
+            return
+        self._tick()
+        self.notify(tail or "the installer failed", title="UPDATE FAILED", severity="error", timeout=15)
 
     # ── status strip ────────────────────────────────────────────────────
 
@@ -378,7 +439,8 @@ def main() -> None:
     # Textual owns the terminal: imported later (first cover/dream picture) it raced Textual's input
     # thread for the reply and froze the app on the deck (black screen, 2026-11-18).
     import textual_image.widget  # noqa: F401
-    MabelApp(config.load()).run()
+    if MabelApp(config.load()).run() == "restart":
+        update.restart()
 
 
 if __name__ == "__main__":

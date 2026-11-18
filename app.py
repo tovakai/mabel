@@ -279,6 +279,12 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        # MABEL-OS install over the tailnet (routes/tui_install_routes.py): the script and wheel
+        # hold no secrets; pairing checks Tailscale Serve's identity headers itself.
+        "/tui/install.sh",
+        "/tui/version",
+        "/api/tui/whoami",
+        "/api/tui/pair",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -292,6 +298,7 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        _re.compile(r"^/tui/mabel_tui-[\w.]+-py3-none-any\.whl$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -751,6 +758,8 @@ from routes.music_routes import setup_music_routes
 app.include_router(setup_music_routes())
 from routes.tui_routes import setup_tui_routes
 app.include_router(setup_tui_routes())
+from routes.tui_install_routes import setup_tui_install_routes
+app.include_router(setup_tui_install_routes())
 from routes.memory.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
