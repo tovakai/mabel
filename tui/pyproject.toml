@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 mabel = "mabel_tui.app:main"
+mabel-print = "mabel_tui.printserver:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -68,3 +68,28 @@ def test_print_requests_require_the_printer(message):
 ])
 def test_code_and_chatter_about_printing_dont(message):
     assert "printer" not in requested_capabilities(message)
+
+
+def test_a_print_server_takes_the_job_and_the_keepalive(monkeypatch, tmp_path):
+    """With the deck as print server, Mabel POSTs the bytes there and stops pinging herself."""
+    import httpx
+    from datetime import datetime, timezone
+    from src.persona import printer
+    settings = {"printer_server_url": "http://100.67.251.17:8631/", "printer_server_token": "s3cret"}
+    monkeypatch.setattr(printer, "_setting", lambda k, d=None: settings.get(k, d))
+    monkeypatch.setattr(printer, "enabled", lambda: True)
+    posted = {}
+
+    def fake_post(url, content, headers, timeout):
+        posted.update(url=url, content=content, auth=headers["Authorization"])
+        return httpx.Response(200, json={"route": "bluetooth"})
+    monkeypatch.setattr(httpx, "post", fake_post)
+    assert printer.send(b"\x1b@hi") == "deck:bluetooth"
+    assert posted == {"url": "http://100.67.251.17:8631/print", "content": b"\x1b@hi", "auth": "Bearer s3cret"}
+    assert not printer.keepalive_due(tmp_path, datetime.now(timezone.utc)), "the deck keeps it awake"
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(503, json={"error": "Host is down"}))
+    try:
+        printer.send(b"x")
+        raise AssertionError("should have raised")
+    except printer.PrinterUnavailable as exc:
+        assert "Host is down" in str(exc)                     # the queue keeps the job and retries

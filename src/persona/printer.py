@@ -239,8 +239,35 @@ def _send_bt(address: str, data: bytes) -> None:
         sock.close()
 
 
+def print_server() -> tuple[str, str]:
+    """(url, token) of the deck's print server (tui/mabel_tui/printserver.py), or ("", "") to print directly."""
+    return str(_setting("printer_server_url", "") or "").rstrip("/"), str(_setting("printer_server_token", "") or "")
+
+
+def _send_server(url: str, token: str, data: bytes) -> str:
+    import httpx
+    try:
+        r = httpx.post(f"{url}/print", content=data, headers={"Authorization": f"Bearer {token}",
+                                                              "Content-Type": "application/octet-stream"},
+                       timeout=httpx.Timeout(90.0, connect=8.0))
+    except httpx.HTTPError as exc:
+        raise PrinterUnavailable(f"print server {url}: {exc}") from exc
+    if r.status_code != 200:
+        try:
+            why = r.json().get("error")
+        except ValueError:
+            why = r.text[:120]
+        raise PrinterUnavailable(f"print server: {r.status_code} {why}")
+    return "deck:" + str(r.json().get("route", "?"))
+
+
 def send(data: bytes) -> str:
-    """Print raw ESC/POS bytes. USB if it's plugged in, else Bluetooth. Returns the route used."""
+    """Print raw ESC/POS bytes: through the deck's print server when one is set (it owns the printer
+    and keeps it awake), else directly: USB if it's plugged in, else Bluetooth. Returns the route used."""
+    server, token = print_server()
+    if server:
+        with _wire:
+            return _send_server(server, token, data)
     usb = str(_setting("printer_usb_device", DEFAULT_USB) or "")
     address = str(_setting("printer_bt_address", DEFAULT_BT) or "")
     errors = []
@@ -330,8 +357,8 @@ def _contact(data_dir: Path, now: datetime, *, ok: bool) -> None:
 def keepalive_due(data_dir: Path, now: datetime) -> bool:
     """Time to poke the printer so its auto-off timer doesn't run out (it only comes back with its button)."""
     minutes = float(_setting("printer_keepalive_minutes", KEEPALIVE_MINUTES) or 0)
-    if not enabled() or minutes <= 0:
-        return False
+    if not enabled() or minutes <= 0 or print_server()[0]:
+        return False                          # with a print server the deck keeps it awake, around the clock
     contact = load_state(data_dir).get("contact") or {}
     stamps = [datetime.fromisoformat(contact[k]) for k in ("ok_at", "tried_at") if contact.get(k)]
     return not stamps or now - max(stamps) >= timedelta(minutes=minutes)
