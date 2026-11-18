@@ -28,6 +28,7 @@ ALLOWED_SCOPES = {
     "cookbook:read",
     "cookbook:launch",
     "lifelog:write",
+    "images:generate",
     "music",          # the Navidrome proxy (/api/music/*): browse, stream, covers
     "life:read",      # /api/tui/life: what she's doing, her journal, his lists
 }
@@ -37,6 +38,7 @@ TOKEN_PROFILES = {
     "codex_documents": ["documents:read", "documents:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
     "lifelog_collector": ["lifelog:write"],
+    "gremlin_images": ["images:generate"],
     "tui": ["chat", "music", "life:read"],
 }
 

@@ -745,6 +745,8 @@ from routes.lifelog_routes import setup_lifelog_routes
 app.include_router(setup_lifelog_routes())
 from routes.hub_routes import setup_hub_routes
 app.include_router(setup_hub_routes())
+from routes.image_service_routes import setup_image_service_routes
+app.include_router(setup_image_service_routes())
 from routes.music_routes import setup_music_routes
 app.include_router(setup_music_routes())
 from routes.tui_routes import setup_tui_routes

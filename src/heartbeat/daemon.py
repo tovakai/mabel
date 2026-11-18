@@ -103,6 +103,10 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     if dreams.running():                          # her model is stepped aside for a dream; decide nothing
         _last.update(at=now.isoformat(), running=False, dreaming=True)
         return _last
+    from src import image_service
+    if image_service.running():                   # stepped aside for pictures another app asked for
+        _last.update(at=now.isoformat(), running=False, dreaming=False, making_pictures=True)
+        return _last
     sig = await asyncio.to_thread(read)
     _maybe_morning(sig, now)
     _maybe_gremlin_checkin(sig, now)
@@ -147,7 +151,8 @@ async def tick(*, now: datetime | None = None, read=signals.collect) -> dict:
     if not decision.allow:
         research_running = bool(runner.status().get("running"))
         if not _maybe_check_letters(sig, now, research_running=research_running) \
-                and not _maybe_read_news(sig, now, research_running=research_running):
+                and not _maybe_read_news(sig, now, research_running=research_running) \
+                and not _maybe_make_pictures(sig, now, research_running=research_running):
             _maybe_start_dream(sig, now, research_running=research_running)
             if not (_dream_task and not _dream_task.done()):
                 _maybe_revisit(sig, now, research_running=research_running)
@@ -254,6 +259,16 @@ def _maybe_read_news(sig, now: datetime, *, research_running: bool) -> bool:
     _news_task.add_done_callback(lambda t: t.exception() and logger.warning(
         "[heartbeat] reading the news failed: %s", t.exception()))
     return True
+
+
+def _maybe_make_pictures(sig, now: datetime, *, research_running: bool) -> bool:
+    """Pictures other apps queued (src/image_service.py), all in one GPU swap while she's idle."""
+    from src import image_service
+    try:
+        return image_service.start_idle(sig, now=now, research_running=research_running)
+    except Exception:
+        logger.debug("[heartbeat] image service gate failed", exc_info=True)
+        return False
 
 
 def _maybe_start_dream(sig, now: datetime, *, research_running: bool) -> None:

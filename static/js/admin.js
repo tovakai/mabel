@@ -3334,6 +3334,7 @@ const _TOKEN_SCOPES = [
   { key: 'memory:write',      label: 'Memory write',      detail: 'Write memory when enabled' },
   { key: 'cookbook:read',     label: 'Cookbook read',     detail: 'List cookbook tasks + tail their tmux output' },
   { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
+  { key: 'images:generate',   label: 'Images generate',   detail: 'Queue pictures on the GPU swap (TK Index); she steps aside to make them' },
 ];
 
 function _renderTokenScopeRows(t) {
