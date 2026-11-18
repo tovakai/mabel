@@ -38,6 +38,21 @@ def _clean(text, limit: int = TEXT_LIMIT) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
+# Mail and login page titles carry one-time codes ("Your one-time code is 472679").
+# He asked (2026-11-14) that those never reach the log, her day account or her memory.
+_CODE_WORDS = re.compile(r"code|kod|otp|one-time|engångs|verif|pin\b|passcode|password|lösen|säkerhet|2fa|"
+                         r"two-factor|sign-?in|log-?in|inloggning|token", re.I)
+# 5+ digits (spaces/dashes allowed), 4 digits that don't look like a year, or a 6-8 char letter+digit code.
+_CODE = re.compile(r"(?<![\w.,])(?:(?:\d[ -]?){4,9}\d|(?!19|20)\d{4})(?![\w.,])"
+                   r"|\b(?=[A-Z0-9]{6,8}\b)(?=[A-Z]*\d)[A-Z0-9]+\b")
+
+
+def scrub_codes(title: str) -> str:
+    """Replace codes in a title that talks about codes with [code]; other numbers stay."""
+    title = str(title or "")
+    return _CODE.sub("[code]", title) if _CODE_WORDS.search(title) else title
+
+
 def _excluded(span: dict, sites: list[str], apps: list[str]) -> bool:
     site = span.get("site") or ""
     if site and any(site == s or site.endswith("." + s) for s in sites):
@@ -90,7 +105,7 @@ class Store:
             if start.tzinfo is None or end < start or end - start > timedelta(days=2) or start > now + timedelta(minutes=10):
                 skipped += 1
                 continue
-            span = {"kind": raw["kind"], "title": _clean(raw.get("title")), "app": _clean(raw.get("app"), 80),
+            span = {"kind": raw["kind"], "title": scrub_codes(_clean(raw.get("title"))), "app": _clean(raw.get("app"), 80),
                     "site": site_of(raw.get("site") or raw.get("url") or "")}
             if _excluded(span, list(exclude_sites), list(exclude_apps)):
                 skipped += 1

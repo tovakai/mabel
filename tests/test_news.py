@@ -247,3 +247,14 @@ def test_research_messages_teach_first_with_the_facts_in_hand():
     described = outreach._describe(1, {"source": "research", "title": "T", "found": "OLM animates Pokémon.", "take": "Mine."})
     assert "What you found: OLM animates Pokémon." in described
     assert "teach first" in inspect.getsource(outreach.review) and outreach.MESSAGE_LIMIT >= 900
+
+
+def test_a_long_news_message_ends_at_a_sentence():
+    from src.persona import news
+    sentence = "Teddy Riner is running for president. "
+    reply = "journal\n\n" + news.MESSAGE_HEADING + "\n\n" + sentence * 80
+    _, message = news.split_reply(reply)
+    assert len(message) <= news.MESSAGE_LIMIT
+    assert message.endswith("president.")
+    _, short = news.split_reply("j\n" + news.MESSAGE_HEADING + "\nOne thing happened. It was odd")
+    assert short == "One thing happened. It was odd"

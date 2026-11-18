@@ -300,7 +300,7 @@ def _prompt(label: str, *, weather_text: str, news_text: str, sparks: list[str],
     picked = "\n".join(f"- {e['day']}: {e['project']}" + (f" / song: {e['song']}" if e.get("song") else "")
                        for e in earlier[-7:] if e.get("project"))
     lately = "\n".join(f"- {s}" for s in sparks)
-    return f"""It's {label}. Anthon just woke up and sat down at his desk (he's a night owl; this is his morning, whatever the clock says). The little thermal printer on his desk is about to print your morning page for him. It's yours to write.
+    return f"""It's {label}. Anthon just woke up and sat down at his desk (he's a night owl; this is his morning, whatever the clock says. In a Swedish winter the sun is often down by the time he's up; that's just how his days run). The little thermal printer on his desk is about to print your morning page for him. It's yours to write.
 
 The page goes like this:
 1. A casual morning message from you, in your own words. Say good morning however you like. You can tell him about the weather, a thought you've had, a headline or two worth his time, anything. Use what's below if you want; skip what you don't care about.

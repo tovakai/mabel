@@ -42,7 +42,7 @@ ITEMS_PER_TOPIC = 8
 MAX_FEED_BYTES = 3_000_000
 MAX_TOPICS = 30
 MAX_SEEN = 1500
-MESSAGE_LIMIT = 1200
+MESSAGE_LIMIT = 2000                 # a few paragraphs; longer ones end at a sentence, never mid-word
 PUSH_LIMIT = 350
 USER_AGENT = "Mozilla/5.0 (compatible; MabelNews/1.0)"
 MESSAGE_HEADING = "## Message to Anthon"
@@ -366,7 +366,16 @@ def split_reply(text: str) -> tuple[str, str]:
     message = re.sub(r"\n#+ .*", "", tail).strip()
     if not sep or not message:
         raise ValueError("the news came back without a message")
-    return head.strip(), message[:MESSAGE_LIMIT]
+    return head.strip(), _clip(message)
+
+
+def _clip(message: str, limit: int = MESSAGE_LIMIT) -> str:
+    """Fit the message under the limit by dropping whole sentences from the end."""
+    if len(message) <= limit:
+        return message
+    cut = message[:limit]
+    ends = [m.end() for m in re.finditer(r"[.!?…][\"'”’)]*(?=\s)", cut)]
+    return cut[:ends[-1]].rstrip() if ends else cut.rstrip()
 
 
 def _sources(sections: list[dict], opened: list[dict] | None = None) -> str:

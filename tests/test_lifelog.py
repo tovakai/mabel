@@ -1,3 +1,4 @@
+import os
 """Life log: store, summary, Home Assistant spans, collector, daily composer, ingest auth."""
 import asyncio
 import importlib.util
@@ -103,6 +104,42 @@ def test_collector_spans_names_and_browser_privacy(tmp_path, monkeypatch):
     assert [(v["site"], v["title"]) for v in visits] == [("example.org", "Example page")]
     assert "token" not in json.dumps(visits) and "/private/" not in json.dumps(visits)
     assert c.browser_visits(cursors) == [], "the cursor prevents re-sending"
+
+
+def test_one_time_codes_never_reach_the_log():
+    from src.lifelog.store import scrub_codes
+    assert scrub_codes("Your one-time code for your account is 472679 - Gmail") == \
+        "Your one-time code for your account is [code] - Gmail"
+    assert scrub_codes("123 456 is your security code") == "[code] is your security code"
+    assert scrub_codes("Din engångskod: AB12CD") == "Din engångskod: [code]"
+    # titles that aren't about codes keep their numbers
+    assert scrub_codes("Order 472679 has shipped") == "Order 472679 has shipped"
+    assert scrub_codes("Llama.cpp b12366 release notes") == "Llama.cpp b12366 release notes"
+    assert scrub_codes("Login - 2026 settings") == "Login - 2026 settings"
+    assert scrub_codes("Your PIN is 4821") == "Your PIN is [code]"
+
+
+def test_stored_titles_lose_their_codes(tmp_path):
+    store = Store(tmp_path / "l.sqlite")
+    store.ingest("desktop", [{"id": "m", "kind": "browse", "start": "2026-11-05T12:00:00+00:00",
+                              "title": "Your verification code is 004211", "site": "mail.google.com"}],
+                 now=NOW + timedelta(days=1))
+    assert "004211" not in json.dumps(store.spans(datetime(2026, 11, 5, tzinfo=TZ),
+                                                          datetime(2026, 11, 6, tzinfo=TZ)))
+
+
+def test_journal_skips_the_notes_she_writes_herself(tmp_path):
+    from src.lifelog.compose import journal_for
+    from src.persona.morning import PICKS_NOTE
+    day = datetime(2026, 11, 5, 6, 0, tzinfo=TZ)
+    vault = tmp_path / "vault"
+    (vault / "daily life of Anthon").mkdir(parents=True)
+    (vault / "daily life of Anthon" / "2026-11-05.md").write_text("Went to the shop.")
+    (vault / PICKS_NOTE).write_text("- Portishead - Roads, wet, slow, dark")
+    edited = (day + timedelta(hours=10)).timestamp()
+    os.utime(vault / PICKS_NOTE, (edited, edited))  # she appended to it that day
+    notes = journal_for(day, day + timedelta(days=1), vault=vault)
+    assert [n["text"] for n in notes] == ["Went to the shop."]
 
 
 def test_compose_day_writes_her_account(tmp_path, monkeypatch):

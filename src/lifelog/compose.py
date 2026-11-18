@@ -35,6 +35,11 @@ def _setting(key, default):
         return default
 
 
+# Notes in his journal folder that she writes herself (persona/morning.py PICKS_NOTE).
+# Read as his journal, her song picks became "his soundtrack" in the day account.
+HER_NOTES = {"Mabel's picks.md"}
+
+
 def journal_for(day_start: datetime, day_end: datetime, *, vault: Path | None = None) -> list[dict]:
     """His journal notes for that day: files named with the date, or edited during it."""
     if vault is None:
@@ -47,6 +52,8 @@ def journal_for(day_start: datetime, day_end: datetime, *, vault: Path | None = 
     date = day_start.strftime("%Y-%m-%d")
     notes, used = [], 0
     for path in sorted(folder.rglob("*.md")):
+        if path.name in HER_NOTES:
+            continue
         try:
             stat = path.stat()
             edited = datetime.fromtimestamp(stat.st_mtime, timezone.utc)

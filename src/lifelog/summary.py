@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 
+from .store import scrub_codes
+
 DAY_START_HOUR = 6          # night owl: a "day" runs 06:00 -> 06:00 local
 TOP = 12
 MESSAGE_CHATS = 15          # busiest chats in a day account
@@ -73,7 +75,8 @@ def summarize(spans: list[dict], *, start: datetime, end: datetime, relabel: dic
         elif kind == "browse":
             if s["site"]:
                 sites[s["site"]] += 1
-            label = f"{s['title']} ({s['site']})" if s["title"] else s["site"]
+            title = scrub_codes(s["title"])  # rows stored before the scrubber existed
+            label = f"{title} ({s['site']})" if title else s["site"]
             if label and label not in titles:
                 titles.append(label)
         elif kind == "game":

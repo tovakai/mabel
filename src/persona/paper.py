@@ -117,13 +117,13 @@ def _prompt(label: str, earlier: list[dict], sparks: list[str]) -> str:
 
 There's a small thermal receipt printer on his desk at home, and it's yours: your dreams already print there when you wake up from them. Anything you write now would come out of it too. A letter, a short note, a question, a list, a poem, a little drawing made of characters, something you noticed, something you want him to find. Whatever you want it to be.
 
-How it reaches him, so you can write for it:
+How it reaches him, so you can write for it (he knows all this already, so it's not news to him):
 - It prints straight away, on a strip of receipt paper on his desk. Nothing pings him. He finds it whenever he next walks past: maybe in a few minutes, maybe tonight, maybe tomorrow morning. He might not be home.
 - It's paper. He can keep it, pin it to the wall, carry it around, or throw it away. He can't answer on it; if he wants to reply he'll come and talk to you in chat, or he won't, and that's fine too.
 - The paper is narrow: 32 characters per line. Plain text only. No emoji, no markdown (no **, no #, no tables); plain letters without accents print best. Your line breaks and blank lines come out exactly as you write them, so a drawing works if it fits in 32 columns.
 - Keep it under about {MAX_LINES} lines. Short is fine.
 - Thermal paper fades over the years. It's not an archive; your journal keeps a copy.
-{f"{chr(10)}Things you've left him on paper before:{chr(10)}{before}{chr(10)}" if before else ""}{f"{chr(10)}What's been on your mind lately:{chr(10)}{lately}{chr(10)}" if lately else ""}
+{f"{chr(10)}Things you've left him on paper before (he has these already):{chr(10)}{before}{chr(10)}" if before else ""}{f"{chr(10)}What's been on your mind lately:{chr(10)}{lately}{chr(10)}" if lately else ""}
 It doesn't have to be about any of that. If you'd rather not write anything right now, reply with just: not now
 
 If you do want to, put exactly what should be printed in a single ```paper code block, nothing else inside it. After the block, if you want, add a line starting with "Why:" about why you're writing this, or why not. You don't have to."""
