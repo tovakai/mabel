@@ -38,6 +38,9 @@ pub struct Config {
     /// A folder with another avatar for COMMS ("" = the built-in one), and its frames per second (4).
     pub avatar: String,
     pub avatar_fps: f64,
+    /// HOME's wallpaper: a .png (Aseprite exports these) or a PIXEL .mpx; "" = none. PIXEL's
+    /// :wallpaper sets it.
+    pub wallpaper: String,
     /// Bitrate for offline downloads in kbps (0 = the original files).
     pub offline_bitrate: i64,
     /// Where PIXEL and TRACKER keep their files.
@@ -76,6 +79,46 @@ pub fn config_path() -> PathBuf {
 /// TRACKER's last-opened file, the player's socket if there is no runtime dir).
 pub fn cache_dir() -> PathBuf {
     xdg("XDG_CACHE_HOME", ".cache").join("mabel-tui")
+}
+
+/// `text` (a config.toml) with the top-level `key` set to the string `value`. An existing
+/// `key = …` line before the first `[section]` is replaced; otherwise a new line goes at the
+/// top. The rest of the file (comments, layout) stays as it is.
+pub fn set_top_key(text: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = {}", toml::Value::from(value));
+    let mut out = Vec::new();
+    let mut done = false;
+    let mut in_top = true;
+    for l in text.lines() {
+        let t = l.trim_start();
+        if t.starts_with('[') {
+            in_top = false;
+        }
+        let is_key = t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='));
+        if in_top && !done && is_key {
+            out.push(line.clone());
+            done = true;
+        } else {
+            out.push(l.to_string());
+        }
+    }
+    if !done {
+        out.insert(0, line);
+    }
+    let mut joined = out.join("\n");
+    joined.push('\n');
+    joined
+}
+
+/// Set one top-level key in this machine's config.toml (made if missing).
+pub fn save_top_key(key: &str, value: &str) -> std::io::Result<PathBuf> {
+    let path = config_path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, set_top_key(&text, key, value))?;
+    Ok(path)
 }
 
 /// `~/…` → the home directory.
@@ -133,6 +176,7 @@ pub fn parse(text: &str, path: &Path) -> Result<Config> {
         preset: raw.get("preset").and_then(|v| v.as_str()).unwrap_or("custom").to_string(),
         avatar: t.str("avatar", ""),
         avatar_fps: t.float("avatar_fps", 4.0),
+        wallpaper: t.str("wallpaper", ""),
         offline_bitrate: t.int("offline_bitrate", 0),
         pixel_dir: t.str("pixel_dir", "~/Pictures/MABEL-OS"),
         tracker_dir: t.str("tracker_dir", "~/Music/MABEL-OS"),
@@ -184,6 +228,17 @@ impl Lookup<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_top_key_replaces_or_adds_and_keeps_the_rest() {
+        let text = "# mine\nurl = \"http://x\"\nwallpaper = \"old.png\"\n\n[colors]\nwallpaper = \"no\"\n";
+        let out = set_top_key(text, "wallpaper", "~/new.mpx");
+        assert_eq!(out, "# mine\nurl = \"http://x\"\nwallpaper = \"~/new.mpx\"\n\n[colors]\nwallpaper = \"no\"\n");
+        let added = set_top_key("url = \"http://x\"\n", "wallpaper", "a.png");
+        assert_eq!(added, "wallpaper = \"a.png\"\nurl = \"http://x\"\n");
+        // A key that only starts the same is left alone.
+        assert!(set_top_key("wallpapers = 1\n", "wallpaper", "b").starts_with("wallpaper = \"b\"\n"));
+    }
 
     fn p(text: &str) -> Result<Config> {
         parse(text, Path::new("test.toml"))

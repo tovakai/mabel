@@ -4,7 +4,7 @@ A one-sitting tour of the code. Read this first; then `HOWTO.md` has step-by-ste
 
 ## The big picture
 
-MABEL-OS is one Rust program (`mabel-os`) that draws a whole "operating system" in a terminal: nine channels (COMMS, LIFE, AUDIO, …), each a screen of panels. It's built on **ratatui** (drawing in a terminal) and **crossterm** (keys, mouse, terminal modes), with **tokio** for doing slow things (network, files, processes) without freezing the screen.
+MABEL-OS is one Rust program (`mabel-os`) that draws a whole "operating system" in a terminal: a handful of broad channels (HOME, COMMS, LIFE, MEDIA, CREATIVE, TERM, TAPES, SYS), most of them suites of apps, each app a screen of panels. It's built on **ratatui** (drawing in a terminal) and **crossterm** (keys, mouse, terminal modes), with **tokio** for doing slow things (network, files, processes) without freezing the screen.
 
 It talks to Mabel over HTTP (`src/os/api.rs`; the contract is `../docs/README/MABEL_OS_API_CONTRACT.md`) and reads `~/.config/mabel-tui/config.toml` (`src/os/config.rs`).
 
@@ -57,12 +57,12 @@ Each frame, a channel's `render` returns its **sections**: the rectangles of its
 
 In this order, the first that takes it wins:
 
-1. **Raw sections**: inside a TERM shell or a running tape, everything goes to the program except alt+1–9 (switch channel) and ctrl+] (TERM: back to nav; TAPES: the pause menu, via `Channel::escape`).
+1. **Raw sections**: inside a TERM shell or a running tape, everything goes to the program except alt+0–9 (switch channel) and ctrl+] (TERM: back to nav; TAPES: the pause menu, via `Channel::escape`).
 2. ctrl+q quits.
 3. The colour tuner (ctrl+t) and the help card (`?`) take keys while they're open.
 4. A channel's popup (`captures_keys`), like "pick a playlist".
 5. F12 installs an update.
-6. **Channel keys**: F1–F9 or alt+1–9 switch channel (the same key again on a suite: its next app).
+6. **Channel keys**: F1–F9 or alt+1–9 switch channel by number, F10 / alt+0 is SYS (the same key again on a suite: its next app). Numbers come from the place in `all()`, except SYS, always CH-00 and last (`channel::number`).
 7. ctrl+z (a shell), ctrl+p (play/pause), ctrl+t (the tuner).
 8. **Inside a section**: the channel's `key`. If it says `Ignored`, h/j/k/l are tried as arrows, then esc/ctrl+] (back to nav) and `?`.
 9. **Nav mode**: h/j/k/l, i/a/enter, esc, `?`; anything else goes to the channel's `nav_key` (so AUDIO's space pauses without going in first).
@@ -120,7 +120,7 @@ The result travels as a `Msg::For(id, value)` through a channel (`tx`) to the ma
 
 ### Suites (`src/os/suite.rs`)
 
-COMMS (MABEL, INBOX, COURSE), CREATIVE (PIXEL, TRACKER) and SYS (STATUS, NETWORK, …) are **suites**: one channel holding several apps, each itself a `Channel`. A bar on top lists the apps; the channel's F-key again cycles them. The suite passes calls to the app on screen and takes messages for every app (`accepts`). `Request::Deliver` switches to another channel or app and hands it something (VAULT's "ask Mabel about this note" opens COMMS ▸ MABEL with the note).
+COMMS (MABEL, INBOX, COURSE), LIFE (HER, VAULT, INVENTORY), MEDIA (AUDIO), CREATIVE (PIXEL, TRACKER) and SYS (STATUS, NETWORK, …) are **suites**: one channel holding several apps, each itself a `Channel`. A bar on top lists the apps; the channel's F-key again cycles them. The suite passes calls to the app on screen and takes messages for every app (`accepts`). `Request::Deliver` switches to another channel or app and hands it something (VAULT's "ask Mabel about this note" opens COMMS ▸ MABEL with the note).
 
 ## The look (`src/os/ui.rs`, `src/os/palette.rs`)
 
@@ -160,7 +160,7 @@ The screen, top to bottom: the **casing** (MABEL-OS, the link to Mabel, the cloc
 | word | meaning |
 |---|---|
 | channel | one tab (COMMS … TAPES); a type implementing `Channel` |
-| suite | a channel made of several apps (COMMS, CREATIVE, SYS) |
+| suite | a channel made of several apps (COMMS, LIFE, MEDIA, CREATIVE, SYS) |
 | app | one screen inside a suite (INBOX, PIXEL, NETWORK…) |
 | section | one panel of a channel, the unit nav moves between |
 | nav mode | moving between sections with h/j/k/l; one section is *lit* |

@@ -172,6 +172,15 @@ impl PixelView {
                 }
                 String::new()
             }
+            "wallpaper" => {
+                // HOME reads the file, so the picture has to be saved somewhere first.
+                let Some(path) = self.doc.path.clone() else {
+                    return Ok("save it first (:w name.mpx), then :wallpaper".into());
+                };
+                crate::os::config::save_top_key("wallpaper", &path.to_string_lossy())?;
+                let unsaved = if self.dirty { " (your unsaved changes show once you :w)" } else { "" };
+                format!("wallpaper set{unsaved} · HOME (F1) shows it")
+            }
             "help" | "h" => {
                 ctx.toast("PIXEL COMMANDS", COMMANDS);
                 String::new()

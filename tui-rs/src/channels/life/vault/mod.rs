@@ -1,4 +1,4 @@
-//! CH-05 VAULT: his Obsidian vault in MABEL-OS.
+//! LIFE ▸ VAULT: his Obsidian vault in MABEL-OS.
 //!
 //! Left: the explorer (folders drill down; / searches contents; # tags; r recent). Centre: the
 //! note, rendered (wiki links, callouts, tags, properties) or in the vim editor (e, or i inside).
@@ -18,7 +18,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::channels::vault::notes::{INLINE_TAG, Note, Vault, WIKILINK, split_frontmatter};
+use crate::channels::life::vault::notes::{INLINE_TAG, Note, Vault, WIKILINK, split_frontmatter};
 use crate::os::channel::{AskAbout, Channel, Ctx, OpenNote, Outcome, Request, View};
 use crate::os::keys;
 use crate::os::palette::Palette;

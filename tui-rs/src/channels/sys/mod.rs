@@ -1,4 +1,4 @@
-//! CH-08 SYS: the machine MABEL-OS runs on (backend: sysinfo.rs).
+//! CH-00 SYS (always the last tab): the machine MABEL-OS runs on (backend: sysinfo.rs).
 //!
 //! On the deck (config `deck = true`) it's a suite: STATUS · NETWORK · BLUETOOTH · AUDIO · TIME.
 //! Elsewhere just STATUS: a fastfetch-style card for the faux OS, plus restart / shut down.

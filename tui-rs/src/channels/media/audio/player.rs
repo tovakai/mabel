@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::channels::audio::music::Music;
+use crate::channels::media::audio::music::Music;
 use crate::os::channel::Msg;
 
 /// Where a song plays from: a downloaded file, else the stream.

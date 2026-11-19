@@ -71,7 +71,8 @@ MABEL_SANDBOX=<scratch dir> scripts/sandbox.sh --keep   # run it against a fake 
 
 ## Words
 
-Channel = a tab (CH-01…09). Suite = a channel holding several apps (COMMS: MABEL, INBOX,
-COURSE). Section = a panel inside a channel. Nav mode / inside = where the keys go.
+Channel = a tab (CH-01 HOME … CH-07 TAPES, then CH-00 SYS, always last). Suite = a channel
+holding several apps (LIFE: HER, VAULT, INVENTORY). New programs go into a fitting suite
+rather than becoming new tabs. Section = a panel inside a channel. Nav mode / inside = where the keys go.
 DreamTape (`.dtape`) = a game for TAPES, written against `crates/mabel-kit`. The deck = the
 Pi with the 7" screen.

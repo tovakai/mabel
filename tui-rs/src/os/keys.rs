@@ -35,10 +35,10 @@ pub fn ctrl_bracket(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char(']' | '5'))
 }
 
-/// alt+1…8 → 1…8 (the channel keys that work without F-keys).
+/// alt+0…9 → 0…9 (the channel keys that work without F-keys; 0 is SYS).
 pub fn alt_digit(key: &KeyEvent) -> Option<usize> {
     match key.code {
-        KeyCode::Char(c @ '1'..='9') if key.modifiers == KeyModifiers::ALT => c.to_digit(10).map(|d| d as usize),
+        KeyCode::Char(c @ '0'..='9') if key.modifiers == KeyModifiers::ALT => c.to_digit(10).map(|d| d as usize),
         _ => None,
     }
 }

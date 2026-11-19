@@ -12,7 +12,7 @@ use zbus::interface;
 use zbus::object_server::SignalEmitter;
 use zbus::{ObjectPath, OwnedVariant as OwnedValue, Variant as Value};
 
-use crate::channels::audio::player::Player;
+use crate::channels::media::audio::player::Player;
 use crate::os::channel::Msg;
 
 /// The name the desktop finds the deck by (a second MABEL-OS adds `.instance<pid>`).
@@ -35,9 +35,9 @@ fn cover_file(cover_id: &str) -> Option<PathBuf> {
     let safe: String =
         cover_id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(60).collect();
     let cached = crate::os::config::cache_dir().join(format!("cover-{safe}.jpg"));
-    let offline = crate::channels::audio::offline::root()
+    let offline = crate::channels::media::audio::offline::root()
         .join("covers")
-        .join(format!("{}.jpg", crate::channels::audio::offline::safe(cover_id, 60)));
+        .join(format!("{}.jpg", crate::channels::media::audio::offline::safe(cover_id, 60)));
     [cached, offline].into_iter().find(|p| p.exists())
 }
 

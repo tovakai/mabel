@@ -46,7 +46,7 @@ impl App {
             }
             return;
         }
-        let labels: Vec<&str> = self.channels.iter().map(|c| c.tab()).collect();
+        let labels = self.tab_labels();
         ui::tabs(frame, tabs, &pal, &labels, self.active);
         self.tab_row = Rect { height: 1, ..tabs };
 
@@ -72,9 +72,9 @@ impl App {
             })
         });
         ui::statusline(frame, status, &pal, playing.as_ref().map(|(t, p)| (t.as_str(), *p)), &self.status);
-        let mut footer_keys = vec![("F1", "COMMS"), ("F2", "LIFE"), ("F3", "AUDIO"), ("F4", "INVENTORY")];
+        let mut footer_keys = vec![("F1", "HOME"), ("F2", "COMMS"), ("F3", "LIFE"), ("F4", "MEDIA")];
         if self.narrow {
-            footer_keys = vec![("alt+1–9", "channels")];
+            footer_keys = vec![("alt+0–9", "channels")];
         }
         footer_keys.extend([("?", "keys"), ("^p", "play/pause"), ("^q", "power off")]);
         ui::footer(frame, footer, &pal, &footer_keys);

@@ -1,4 +1,4 @@
-//! CH-03 AUDIO: Navidrome (through Mabel's proxy, or directly), played locally by mpv.
+//! MEDIA ▸ AUDIO: Navidrome (through Mabel's proxy, or directly), played locally by mpv.
 //!
 //! Left: the library (newest albums first; / searches; enter opens an album or artist, or plays
 //! from that song; a appends, n plays next; backspace goes back; p playlists). Right: the deck
@@ -24,11 +24,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Row, Table, TableState};
 use serde_json::{Value, json};
 
-use crate::channels::audio::music::Music;
+use crate::channels::media::audio::music::Music;
 use crate::os::channel::{Channel, Ctx, Outcome, View};
 use crate::os::keys;
 
-use crate::channels::audio::player::Player;
+use crate::channels::media::audio::player::Player;
 use crate::os::ui::{self, PanelState, bold};
 use crate::widgets::input::{Input, InputResult};
 use crate::widgets::picture::Picture;

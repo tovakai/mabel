@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::channels::vault::notes::split_frontmatter;
+use crate::channels::life::vault::notes::split_frontmatter;
 
 /// The tutor's material goes along with the first question of a lesson, then every this many.
 pub const FULL_CONTEXT_EVERY: u32 = 8;

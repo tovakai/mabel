@@ -1,6 +1,6 @@
 # MABEL-OS
 
-Mabel in a terminal: a retro-futuristic "operating system" of nine channels (COMMS, LIFE, AUDIO, INVENTORY, VAULT, TERM, CREATIVE, SYS, TAPES), written in Rust with ratatui. It runs on the PC, laptops and the deck (a Pi 3B with a 7" screen). It talks to Mabel over HTTP and reads `~/.config/mabel-tui/config.toml`.
+Mabel in a terminal: a retro-futuristic "operating system" of channels (HOME, COMMS, LIFE, MEDIA, CREATIVE, TERM, TAPES, and SYS last). Broad channels hold several apps: LIFE has HER, VAULT and INVENTORY; COMMS has MABEL, INBOX and COURSE; MEDIA has AUDIO, written in Rust with ratatui. It runs on the PC, laptops and the deck (a Pi 3B with a 7" screen). It talks to Mabel over HTTP and reads `~/.config/mabel-tui/config.toml`.
 
 ## Where to start
 

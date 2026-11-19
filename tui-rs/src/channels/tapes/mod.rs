@@ -1,4 +1,4 @@
-//! CH-09 TAPES: DreamTapes, my own games, run inside MABEL-OS.
+//! CH-07 TAPES: DreamTapes, my own games, run inside MABEL-OS.
 //!
 //! LIBRARY lists three kinds of tape:
 //! - DEV: the ones I'm making, listed in config.toml as `tapes_dev = ["~/code/tapes/snake"]`

@@ -41,7 +41,7 @@ impl Audio {
     /// The ids of every downloaded song.
     pub(super) fn downloaded_ids(
         &self,
-        off: &crate::channels::audio::offline::Offline,
+        off: &crate::channels::media::audio::offline::Offline,
     ) -> std::collections::HashSet<String> {
         off.collections().iter().flat_map(|(_, c)| c.song_ids.clone()).filter(|i| off.has(i)).collect()
     }
@@ -104,7 +104,7 @@ impl Audio {
                 let _ = tx.send(crate::os::channel::Msg::For(ID, Box::new(Got::Progress(line))));
             };
             let cover = (!cover.is_empty()).then_some(cover.as_str());
-            let result = crate::channels::audio::offline::download(
+            let result = crate::channels::media::audio::offline::download(
                 &offline,
                 &music,
                 &songs,

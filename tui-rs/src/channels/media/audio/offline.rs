@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::channels::audio::music::Music;
+use crate::channels::media::audio::music::Music;
 
 /// One downloaded song: its Navidrome JSON, its file (relative to the root), its size.
 #[derive(Serialize, Deserialize, Clone)]

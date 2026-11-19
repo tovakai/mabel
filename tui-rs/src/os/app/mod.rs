@@ -21,8 +21,8 @@ use ratatui::style::Style;
 use ratatui::widgets::Block;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::channels::audio::music::Music;
-use crate::channels::audio::player::Player;
+use crate::channels::media::audio::music::Music;
+use crate::channels::media::audio::player::Player;
 use crate::os::api::Mabel;
 use crate::os::channel::{self, Channel, Ctx, Msg, Outcome, Request, View};
 use crate::os::config::Config;
@@ -43,8 +43,8 @@ pub struct App {
     pub api: Mabel,
     pub music: Music,
     pub player: Player,
-    pub offline: crate::channels::audio::offline::Shared,
-    mpris: crate::channels::audio::mpris::Mpris,
+    pub offline: crate::channels::media::audio::offline::Shared,
+    mpris: crate::channels::media::audio::mpris::Mpris,
     tx: UnboundedSender<Msg>,
     channels: Vec<Box<dyn Channel>>,
     active: usize,
@@ -83,18 +83,18 @@ impl App {
         let pal = Palette::from_config(&cfg.raw);
         let api = Mabel::new(&cfg.url, &cfg.token, &cfg.preset)?;
         let music = Music::new(&api, cfg.navidrome.as_ref());
-        let offline = std::sync::Arc::new(std::sync::Mutex::new(crate::channels::audio::offline::Offline::load(
-            crate::channels::audio::offline::root(),
-        )));
+        let offline = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::channels::media::audio::offline::Offline::load(crate::channels::media::audio::offline::root()),
+        ));
         // A downloaded song plays from disk; the rest streams.
         let locate = {
             let (music, offline) = (music.clone(), offline.clone());
             std::sync::Arc::new(move |id: &str| {
                 offline.lock().expect("offline").local(id).unwrap_or_else(|| music.stream_url(id))
-            }) as crate::channels::audio::player::Locate
+            }) as crate::channels::media::audio::player::Locate
         };
         let player = Player::new(music.clone(), locate, cfg.volume, tx.clone());
-        let mpris = crate::channels::audio::mpris::Mpris::start(player.clone(), tx.clone());
+        let mpris = crate::channels::media::audio::mpris::Mpris::start(player.clone(), tx.clone());
         let channels = channel::all(&cfg);
         Ok(App {
             cfg,
@@ -252,6 +252,16 @@ impl App {
 
     // ── channels and nav ─────────────────────────────────────────────────
 
+    /// Each tab's number (CH-nn) and name, in tab order.
+    pub(super) fn tab_labels(&self) -> Vec<(usize, &'static str)> {
+        self.channels.iter().enumerate().map(|(i, c)| (channel::number(c.id(), i), c.tab())).collect()
+    }
+
+    /// The tab with this number (from F-keys and alt+digits), if there is one.
+    pub(super) fn channel_numbered(&self, n: usize) -> Option<usize> {
+        self.channels.iter().enumerate().position(|(i, c)| channel::number(c.id(), i) == n)
+    }
+
     /// Whose keys `?` would show now (the suite app on screen).
     fn help_id_now(&self) -> &'static str {
         self.channels[self.active].help_id()
@@ -271,7 +281,7 @@ impl App {
     /// Go to channel `index` (the same one again on a suite: its next app).
     fn switch(&mut self, index: usize) {
         if index == self.active && self.channels[index].cycle() {
-            self.settle = true; // F1 / F7 / F8 again: the next app in the suite
+            self.settle = true; // a suite's key again (F2, F3…): its next app
             return;
         }
         self.active = index;

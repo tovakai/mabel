@@ -4,7 +4,8 @@
 pub type Keys = &'static [(&'static str, &'static str)];
 
 pub const EVERYWHERE: Keys = &[
-    ("alt+1–9 / F1–F9", "switch channel (again on COMMS, CREATIVE or SYS: their next app)"),
+    ("F1–F7 / alt+1–7", "switch channel: HOME COMMS LIFE MEDIA CREATIVE TERM TAPES (again: a suite's next app)"),
+    ("F10 / alt+0", "SYS (always the last tab)"),
     ("h j k l", "move between sections (the lit border)"),
     ("i / a / enter", "go into the lit section"),
     ("esc", "back out to the sections"),
@@ -20,7 +21,7 @@ pub const EVERYWHERE: Keys = &[
 /// A channel's own keys by its id. Empty until the channel is ported.
 pub fn channel(id: &str) -> Keys {
     match id {
-        "comms" => &[
+        "mabel" | "comms" => &[
             ("enter", "send"),
             ("ctrl+n", "new chat"),
             ("ctrl+s", "show/hide the chat list"),
@@ -28,10 +29,10 @@ pub fn channel(id: &str) -> Keys {
             ("PgUp / PgDn", "scroll the conversation from the prompt"),
             ("y / n", "allow once / deny a held action (keys land in the conversation)"),
             ("ctrl+s, then h → list", "open another chat (the list hides on the deck)"),
-            ("F1 again", "COMMS: MABEL ⇄ INBOX"),
+            ("F2 again", "COMMS: MABEL → INBOX → COURSE"),
         ],
         "sys-status" | "sys-network" | "sys-bluetooth" | "sys-audio" | "sys-time" => &[
-            ("F8 / alt+8 again", "next app (the deck: STATUS · NETWORK · BLUETOOTH · AUDIO · TIME)"),
+            ("F10 / alt+0 again", "next app (the deck: STATUS · NETWORK · BLUETOOTH · AUDIO · TIME)"),
             ("j k  enter", "move · do the line (connect, pair, switch, change)"),
             ("h l  or  - +", "adjust a value (volume, brightness)"),
             ("x", "forget a Wi-Fi network · remove a Bluetooth device"),
@@ -57,7 +58,7 @@ pub fn channel(id: &str) -> Keys {
             ("DECK: j k enter", "jump to a song in the queue"),
         ],
         "course" => &[
-            ("F1 again", "COMMS: MABEL → INBOX → COURSE"),
+            ("F2 again", "COMMS: MABEL → INBOX → COURSE"),
             ("OUTLINE: j k  enter", "pick a lesson · open it (r reads the courses again)"),
             ("LESSON: j k  space  g G", "scroll the lesson"),
             ("c", "run the lesson's check (passing marks it done)"),
@@ -77,7 +78,7 @@ pub fn channel(id: &str) -> Keys {
             ("playing: z x c v", "A B X Y"),
             ("playing: enter / backspace", "START / SELECT"),
             ("ctrl+]", "pause menu: resume · reset · screenshot · console · quit"),
-            ("alt+1–9", "another channel (the tape pauses)"),
+            ("alt+0–9", "another channel (the tape pauses)"),
             ("dev tapes", "tapes_dev = [\"~/code/tapes/snake\"] in config.toml; a rebuild restarts it"),
             ("new tape", "mabel-os new-tape <name> in a shell (PC or laptop)"),
             ("share it", "mabel-os tape publish in its folder: every device can install it"),
@@ -86,13 +87,14 @@ pub fn channel(id: &str) -> Keys {
         "term" => &[
             ("(inside a shell)", "every key goes to the program: vim, htop, ssh all work"),
             ("ctrl+]", "back out to the sections"),
-            ("alt+1–8", "switch channel (still works inside)"),
+            ("alt+0–9", "switch channel (still works inside)"),
             ("shift+PgUp / PgDn", "scroll back"),
             ("N", "new shell tab (in nav mode)"),
             ("[ ]  or  < >", "previous / next shell (nav mode)"),
             ("X", "close the shell tab (nav mode)"),
         ],
         "vault" => &[
+            ("F3 again", "LIFE: HER → VAULT → INVENTORY"),
             ("o", "open a note (fuzzy)"),
             ("/", "search the vault's text"),
             ("#", "browse tags"),
@@ -114,6 +116,7 @@ pub fn channel(id: &str) -> Keys {
             ("M", "ask Mabel about this note"),
         ],
         "inventory" => &[
+            ("F3 again", "LIFE: HER → VAULT → INVENTORY"),
             ("↑↓←→ enter", "move between cards and lines, open"),
             ("backspace", "zoom out one step"),
             ("H", "home"),
@@ -127,7 +130,7 @@ pub fn channel(id: &str) -> Keys {
             ("ctrl+s", "save in a form"),
         ],
         "tracker" => &[
-            ("F7 / alt+7 again", "next app: PIXEL · TRACKER"),
+            ("F5 / alt+5 again", "next app: PIXEL · TRACKER"),
             ("hjkl / arrows", "move (on INSTRUMENT h/l change the value, on WAVE j/k)"),
             ("H L / shift+← →", "previous / next panel: SONG CHAIN PHRASE INSTRUMENT TABLE WAVE"),
             ("enter", "dive in: song → chain → phrase · on IN → instrument → table → wave"),
@@ -142,7 +145,7 @@ pub fn channel(id: &str) -> Keys {
             (":", ":w file · :e file · :new 4 · :demo · :bpm 140 · :export wav|mid · :midi · :help"),
         ],
         "pixel" | "creative" => &[
-            ("F7 / alt+7 again", "next app: PIXEL · TRACKER"),
+            ("F5 / alt+5 again", "next app: PIXEL · TRACKER"),
             ("hjkl / arrows", "move the cursor (HJKL or shift ×4); space or enter uses the tool"),
             ("b e f n r o c", "pencil · eraser · fill · line · rect · ellipse · pick a colour"),
             ("t", "pen down: moving draws (t / esc lifts it)"),
@@ -154,16 +157,17 @@ pub fn channel(id: &str) -> Keys {
             ("< > N p", "previous / next frame · new frame (a copy) · play the animation"),
             ("u ctrl+r ctrl+s", "undo · redo · save"),
             ("ctrl+o", "files: enter open · n new · m folder · r rename · c copy · D delete · / filter"),
-            (":", ":new 28 28 · :w file · :e file · :avatar · :export strip 4 · :help for all"),
+            (":", ":new 28 28 · :w file · :e file · :avatar · :export strip 4 · :wallpaper · :help for all"),
             ("mouse", "left draws with FG, right with BG; drag draws with the pencil"),
         ],
-        "life" => &[
+        "her" => &[
+            ("F3 again", "LIFE: HER → VAULT → INVENTORY"),
             ("r", "refresh now (it also does every minute)"),
             ("v / p", "open her last dream / paper note in VAULT"),
             ("inside: j k  PgUp PgDn  g G", "scroll the panel"),
         ],
         "inbox" => &[
-            ("F1 again", "COMMS: MABEL ⇄ INBOX"),
+            ("F2 again", "COMMS: MABEL → INBOX → COURSE"),
             ("CHATS: j k enter", "move · open a chat"),
             ("/  u  , .", "filter chats · unread only · step through networks"),
             ("r", "refresh the chats"),
@@ -171,6 +175,11 @@ pub fn channel(id: &str) -> Keys {
             ("i / tab / enter", "write (enter sends, esc stops)"),
             ("r  e  +  m", "reply to it · edit yours · react · mark the chat unread"),
             ("h / esc", "back to the chats"),
+        ],
+        "home" => &[
+            ("PIXEL: :wallpaper", "use the picture open in PIXEL as the wallpaper"),
+            ("config.toml", "wallpaper = \"~/Pictures/wall.png\" (a .png, e.g. from Aseprite, or a PIXEL .mpx)"),
+            ("r", "open the wallpaper again (it also notices changes by itself)"),
         ],
         _ => &[],
     }

@@ -2,8 +2,8 @@
 //! never shows up; it's compiled with everything else, so it can't quietly go out of date.
 //!
 //! To try it: in `src/os/channel.rs`, add `boxed(crate::channels::example::Example::new()),`
-//! to the end of the list in `all()`, then `scripts/sandbox.sh`. It becomes CH-10: F10 opens
-//! it (alt+digit only goes to 9).
+//! to the list in `all()` just before SYS, then `scripts/sandbox.sh`. It becomes CH-08: F8 or
+//! alt+8 opens it. (A real program usually belongs in a suite instead: see HOWTO.)
 //!
 //! What it shows:
 //! - two sections (panels) you move between with h/l in nav mode, and go into with i/enter;

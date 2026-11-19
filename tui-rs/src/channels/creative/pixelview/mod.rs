@@ -42,7 +42,8 @@ const CHECKER: [[u8; 3]; 2] = [[0x1b, 0x15, 0x10], [0x25, 0x1d, 0x15]];
 const COMMANDS: &str = ":new W H [palette] · :w [file] · :e file · :avatar · :e! / :new! (drop changes) · \
 :export png|strip|sheet [scale] [file] [columns] · :palette NAME (pico8 db16 db32 gameboy grayscale phosphor) · \
 :flip h|v · :rotate cw|ccw · :resize W H · :ms N · :ms all N · :tag NAME FROM TO · :untag NAME · \
-:layer name NAME · :layer del · :layer up|down · :frame del · :frame left|right · :hex #rrggbb";
+:layer name NAME · :layer del · :layer up|down · :frame del · :frame left|right · :hex #rrggbb · \
+:wallpaper (this picture on HOME)";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 /// What space/enter does on the canvas.

@@ -21,7 +21,7 @@ When the compiler complains, read the whole message: it points at the line and u
 
 ## Add a key to a channel
 
-1. Find the channel's `fn key` (keys inside a section) or `fn nav_key` (keys in nav mode). For AUDIO: `src/channels/audio/mod.rs`.
+1. Find the channel's `fn key` (keys inside a section) or `fn nav_key` (keys in nav mode). For AUDIO: `src/channels/media/audio/mod.rs`.
 2. Add an arm to its `match`, next to similar keys. Match characters with `keys::ch(&key)` / `keys::is(&key, 'x')` (they work on a Swedish keyboard), ctrl combos with `keys::ctrl(&key, 'x')`:
    ```rust
    (Some('x'), _) => { /* what x does */ }
@@ -43,7 +43,7 @@ When the compiler complains, read the whole message: it points at the line and u
 3. Use it in a channel through `ctx.cfg.inbox_every` (or pass it in from `os/channel.rs` when the channel is built).
 4. A config test lives at the bottom of `config.rs`; add a line for your option.
 
-## Add an app to a suite (COMMS, CREATIVE, SYS)
+## Add an app to a suite (COMMS, LIFE, MEDIA, CREATIVE, SYS)
 
 1. Make the app: a type implementing `Channel` (copy `src/channels/example.rs`), in the suite's folder.
 2. Declare it in the folder's `mod.rs` (`/// what it is` + `pub mod myapp;`).

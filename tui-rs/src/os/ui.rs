@@ -75,15 +75,16 @@ pub fn casing(
     );
 }
 
-/// Tab labels as drawn, and where each one sits (for clicks). Too narrow for "CH-01 COMMS" on
+/// Tab labels as drawn (`labels`: each tab's number and name), and where each one sits (for
+/// clicks). Too narrow for "CH-01 COMMS" on
 /// every tab (the deck), the inactive ones drop their "CH-0n".
-pub fn tab_places(area: Rect, labels: &[&str], active: usize) -> Vec<(String, Rect)> {
-    let full: Vec<String> = labels.iter().enumerate().map(|(i, l)| format!("CH-{:02} {l}", i + 1)).collect();
+pub fn tab_places(area: Rect, labels: &[(usize, &str)], active: usize) -> Vec<(String, Rect)> {
+    let full: Vec<String> = labels.iter().map(|(n, l)| format!("CH-{n:02} {l}")).collect();
     let width = |names: &[String]| names.iter().map(|n| n.chars().count() as u16 + 4).sum::<u16>();
     let names = if width(&full) <= area.width {
         full
     } else {
-        full.iter().enumerate().map(|(i, n)| if i == active { n.clone() } else { labels[i].to_string() }).collect()
+        full.iter().enumerate().map(|(i, n)| if i == active { n.clone() } else { labels[i].1.to_string() }).collect()
     };
     let mut x = area.x;
     names
@@ -98,7 +99,7 @@ pub fn tab_places(area: Rect, labels: &[&str], active: usize) -> Vec<(String, Re
 }
 
 /// The channel tabs and the line under them.
-pub fn tabs(frame: &mut Frame, area: Rect, pal: &Palette, labels: &[&str], active: usize) {
+pub fn tabs(frame: &mut Frame, area: Rect, pal: &Palette, labels: &[(usize, &str)], active: usize) {
     let [row, under] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
     frame.render_widget(Block::new().style(Style::new().bg(pal.bg)), area);
     let mut active_place = Rect::default();

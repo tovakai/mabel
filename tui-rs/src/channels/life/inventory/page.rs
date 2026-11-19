@@ -212,7 +212,7 @@ impl Inventory {
                         Target::Zoom(s.route.clone()),
                     ));
                 }
-                let mut sorted: Vec<&crate::channels::inventory::tkindex::Block> = bins.iter().collect();
+                let mut sorted: Vec<&crate::channels::life::inventory::tkindex::Block> = bins.iter().collect();
                 sorted.sort_by_key(|b| (b.r, b.c));
                 for b in sorted {
                     blocks.push(Block::Select(

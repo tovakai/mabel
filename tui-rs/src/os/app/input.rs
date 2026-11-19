@@ -39,8 +39,8 @@ impl App {
             && self.help.is_none()
             && self.channels[self.active].raw_keys(section)
         {
-            if let Some(n) = keys::alt_digit(&key).filter(|n| (1..=self.channels.len()).contains(n)) {
-                self.switch(n - 1);
+            if let Some(i) = keys::alt_digit(&key).and_then(|n| self.channel_numbered(n)) {
+                self.switch(i);
             } else if keys::ctrl_bracket(&key) {
                 let active = self.active;
                 if !self.with_channel(active, |ch, ctx| ch.escape(section, ctx)) {
@@ -95,12 +95,12 @@ impl App {
             self.update_key();
             return;
         }
-        // The channel keys work everywhere: F1–F9, and alt+1–9 for keyboards without F-keys.
-        let channel = keys::alt_digit(&key)
-            .or(keys::fkey(&key).map(usize::from))
-            .filter(|n| (1..=self.channels.len()).contains(n));
-        if let Some(n) = channel {
-            self.switch(n - 1);
+        // The channel keys work everywhere: F1–F9 and F10 (SYS), and alt+0–9 for keyboards
+        // without F-keys.
+        let number =
+            keys::alt_digit(&key).or(keys::fkey(&key).filter(|f| (1..=10).contains(f)).map(|f| usize::from(f) % 10));
+        if let Some(i) = number.and_then(|n| self.channel_numbered(n)) {
+            self.switch(i);
             return;
         }
         if keys::ctrl(&key, 'z') {
@@ -187,7 +187,7 @@ impl App {
             return;
         }
         if left && self.tab_row.contains((x, y).into()) {
-            let labels: Vec<&str> = self.channels.iter().map(|c| c.tab()).collect();
+            let labels = self.tab_labels();
             let places = ui::tab_places(self.tab_row, &labels, self.active);
             if let Some(i) = places.iter().position(|(_, r)| r.contains((x, y).into())) {
                 self.switch(i);

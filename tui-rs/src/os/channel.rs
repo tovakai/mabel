@@ -1,4 +1,4 @@
-//! A channel is one tab (CH-01 COMMS … CH-09 TAPES). The app owns the frame around it and the
+//! A channel is one tab (CH-01 HOME … CH-07 TAPES, then CH-00 SYS). The app owns the frame around it and the
 //! nav mode; a channel draws its panels, says where its sections are, and handles keys inside.
 //! A suite (suite.rs) is a channel made of several apps, each of them a channel too.
 
@@ -10,8 +10,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::channels::audio::music::Music;
-use crate::channels::audio::player::Player;
+use crate::channels::media::audio::music::Music;
+use crate::channels::media::audio::player::Player;
 use crate::os::api::Mabel;
 use crate::os::config::Config;
 use crate::os::nav::Focus;
@@ -109,7 +109,7 @@ pub struct Ctx<'a> {
     pub music: &'a Music,
     pub player: &'a Player,
     /// Downloaded music (AUDIO's offline library).
-    pub offline: &'a crate::channels::audio::offline::Shared,
+    pub offline: &'a crate::channels::media::audio::offline::Shared,
     /// The colours as they are now (the tuner changes them live).
     pub pal: Palette,
     pub requests: Vec<Request>,
@@ -123,7 +123,7 @@ impl<'a> Ctx<'a> {
         tx: &'a UnboundedSender<Msg>,
         music: &'a Music,
         player: &'a Player,
-        offline: &'a crate::channels::audio::offline::Shared,
+        offline: &'a crate::channels::media::audio::offline::Shared,
         pal: Palette,
     ) -> Self {
         Ctx { api, cfg, tx, music, player, offline, pal, requests: vec![] }
@@ -274,11 +274,14 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
         })
         .collect();
 
+    // The tab order. Channels are numbered by place (CH-01 = F1 / alt+1 …), except SYS, which is
+    // always CH-00 (F10 / alt+0) and sits last. A suite's key ("F2") must match its place.
     vec![
+        boxed(crate::channels::home::Home::new(cfg)),
         boxed(Suite::new(
             "comms",
             "COMMS",
-            "F1",
+            "F2",
             vec![
                 (app("mabel", "MABEL", "talk with her"), boxed(crate::channels::comms::Comms::new(cfg))),
                 (
@@ -291,15 +294,38 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
                 ),
             ],
         )),
-        boxed(crate::channels::life::Life::new()),
-        boxed(crate::channels::audio::Audio::new()),
-        boxed(crate::channels::inventory::Inventory::new(&cfg.index_url, &cfg.vault)),
-        boxed(crate::channels::vault::VaultView::new(&cfg.vault, &cfg.journal)),
-        boxed(crate::channels::term::Term::new()),
+        boxed(Suite::new(
+            "life",
+            "LIFE",
+            "F3",
+            vec![
+                (
+                    app("her", "HER", "what Mabel is doing · her journal, last dream, your lists"),
+                    boxed(crate::channels::life::her::Her::new()),
+                ),
+                (
+                    app("vault", "VAULT", "the Obsidian vault · vim editor"),
+                    boxed(crate::channels::life::vault::VaultView::new(&cfg.vault, &cfg.journal)),
+                ),
+                (
+                    app("inventory", "INVENTORY", "the Gremlin Index · where everything is"),
+                    boxed(crate::channels::life::inventory::Inventory::new(&cfg.index_url, &cfg.vault)),
+                ),
+            ],
+        )),
+        boxed(Suite::new(
+            "media",
+            "MEDIA",
+            "F4",
+            vec![(
+                app("audio", "AUDIO", "music from Navidrome · offline downloads"),
+                boxed(crate::channels::media::audio::Audio::new()),
+            )],
+        )),
         boxed(Suite::new(
             "creative",
             "CREATIVE",
-            "F7",
+            "F5",
             vec![
                 (
                     app("pixel", "PIXEL", "sprites and animation"),
@@ -311,7 +337,14 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
                 ),
             ],
         )),
-        boxed(Suite::new("sys", "SYS", "F8", sys_apps)),
+        boxed(crate::channels::term::Term::new()),
         boxed(crate::channels::tapes::Tapes::new(cfg)),
+        boxed(Suite::new("sys", "SYS", "F10", sys_apps)),
     ]
+}
+
+/// A channel's number (CH-nn, and its F-key / alt+digit): its place in `all()` from 1, but SYS
+/// is always 0 (F10 / alt+0).
+pub fn number(id: &str, index: usize) -> usize {
+    if id == "sys" { 0 } else { index + 1 }
 }

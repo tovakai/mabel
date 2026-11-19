@@ -1,4 +1,4 @@
-//! CH-02 LIFE: what Mabel is doing and has been up to, from /api/tui/life. Refreshes every
+//! LIFE ▸ HER: what Mabel is doing and has been up to, from /api/tui/life. Refreshes every
 //! minute (r: now). v / p open her last dream / paper note in VAULT.
 //!
 //! PC: SYSTEMS | LAST DREAM | JOURNAL over LISTS. The deck: a 2×2 grid.
@@ -21,7 +21,7 @@ use crate::os::ui::{self, bold};
 use crate::widgets::picture::Picture;
 use crate::widgets::wrap;
 
-const ID: &str = "life";
+const ID: &str = "her";
 const SYSTEMS: usize = 0;
 const DREAM: usize = 1;
 const JOURNAL: usize = 2;
@@ -34,7 +34,7 @@ enum Got {
     Dream { at: String, bytes: Option<Vec<u8>> },
 }
 
-/// A job's name as LIFE shows it (her internal names → words).
+/// A job's name as HER shows it (her internal names → words).
 fn job_name(job: &str) -> &str {
     match job {
         "letters" => "tova letters",
@@ -165,8 +165,8 @@ fn list_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     out
 }
 
-/// CH-02 LIFE: her day at a glance.
-pub struct Life {
+/// LIFE ▸ HER: her day at a glance.
+pub struct Her {
     data: Option<Value>,
     error: Option<String>,
     picture: Option<Picture>,
@@ -178,10 +178,10 @@ pub struct Life {
     last_refresh: Option<Instant>,
 }
 
-impl Life {
+impl Her {
     /// Empty until the first fetch.
     pub fn new() -> Self {
-        Life {
+        Her {
             data: None,
             error: None,
             picture: None,
@@ -192,7 +192,7 @@ impl Life {
         }
     }
 
-    /// Fetch LIFE (and the dream picture) again.
+    /// Fetch her LIFE data (and the dream picture) again.
     fn refresh(&mut self, ctx: &Ctx) {
         self.last_refresh = Some(Instant::now());
         ctx.spawn(ID, |api| async move { Got::Life(api.life().await.map_err(|e| e.to_string())) });
@@ -202,7 +202,7 @@ impl Life {
     fn open_in_vault(&self, part: &str, ctx: &mut Ctx) {
         let note = self.data.as_ref().map(|d| s(&d[part], "note")).unwrap_or("");
         if note.is_empty() {
-            ctx.toast("LIFE", "Nothing to open yet");
+            ctx.toast("HER", "Nothing to open yet");
             return;
         }
         // Her notes live in her journal; the snapshot names them from the journal's parent.
@@ -316,13 +316,13 @@ impl Life {
     }
 }
 
-impl Channel for Life {
+impl Channel for Her {
     fn id(&self) -> &'static str {
         ID
     }
 
     fn tab(&self) -> &'static str {
-        "LIFE"
+        "HER"
     }
 
     fn start(&mut self, ctx: &mut Ctx) {

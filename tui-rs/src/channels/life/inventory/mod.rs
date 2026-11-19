@@ -1,4 +1,4 @@
-//! CH-04 INVENTORY: the Gremlin Index, zoomed like its web UI (home → room → furniture → place →
+//! LIFE ▸ INVENTORY: the Gremlin Index, zoomed like its web UI (home → room → furniture → place →
 //! spot).
 //!
 //! Left: where you are (breadcrumbs), place cards to zoom into, the place drawn as a map
@@ -23,8 +23,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use serde_json::{Value, json};
 
-use crate::channels::inventory::housekeeping::{self as hk, Suggestion};
-use crate::channels::inventory::tkindex::{Card, Item, Page, TkIndex, World, Zone, pos};
+use crate::channels::life::inventory::housekeeping::{self as hk, Suggestion};
+use crate::channels::life::inventory::tkindex::{Card, Item, Page, TkIndex, World, Zone, pos};
 use crate::os::channel::{Channel, Ctx, OpenNote, Outcome, Request, View};
 use crate::os::keys;
 use crate::os::palette::Palette;
