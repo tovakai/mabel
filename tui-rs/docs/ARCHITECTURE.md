@@ -42,7 +42,9 @@ tui-rs/
 
 ratatui is **immediate mode**: the whole screen is drawn from the app's state every time, and ratatui sends the terminal only what changed. So drawing code never "updates" anything on screen; it just describes the screen as it should look now.
 
-## The app (`src/os/app.rs`)
+## The app (`src/os/app/`)
+
+`mod.rs` holds the state and plumbing, `input.rs` the key and mouse routing below, `updates.rs` the F12 updates, `draw.rs` the drawing.
 
 `App` owns the channels, which one is on screen (`active`), and **where the keyboard is** (`focus`):
 
@@ -142,7 +144,7 @@ The screen, top to bottom: the **casing** (MABEL-OS, the link to Mabel, the cloc
 
 ## The crates
 
-- **mabel-media**: `.mpx` pictures (PIXEL), `.mtk` songs (TRACKER), the synth (`tracksynth`) and its audio output. Shared so games can read the same files.
+- **mabel-media**: `.mpx` pictures (PIXEL), `.mtk` songs (TRACKER), the synth (`tracksynth/`: voices, sequencer, MIDI, live output, file export) and its audio output. Shared so games can read the same files.
 - **mabel-console**: what runs a DreamTape: the pixel framebuffer and its half-block rendering, the wasm runner (`host.rs`, wasmi), buttons, sound, saves, `tape.toml`.
 - **mabel-kit**: the API a tape is written against, compiled to wasm (calls into TAPES) or natively (the standalone runner).
 
