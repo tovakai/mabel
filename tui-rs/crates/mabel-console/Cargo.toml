@@ -9,7 +9,10 @@ description = "The console behind PROGRAM: a pixel framebuffer, half-block rende
 host = ["dep:wasmi"]
 
 [dependencies]
+mabel-media = { path = "../mabel-media" }
 ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.1"
 wasmi = { version = "2.0.2", optional = true }
 
 [dev-dependencies]

@@ -7,9 +7,6 @@ edition = "2024"
 
 [workspace]
 
-[lib]
-crate-type = ["cdylib"]
-
 [features]
 pset = []    # one pset call per pixel, every frame (the slow way)
 blit = []    # the tape fills its own buffer, then one blit

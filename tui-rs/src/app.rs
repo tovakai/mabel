@@ -191,6 +191,11 @@ impl App {
         self.channels[self.active].next_wake()
     }
 
+    /// Should the terminal send key releases now? (A running tape on screen.)
+    pub fn wants_key_releases(&self) -> bool {
+        self.help.is_none() && self.tuner.is_none() && self.channels[self.active].key_releases()
+    }
+
     // ── updates pushed from the PC (update.rs) ───────────────────────────
 
     fn check_update(&mut self, quiet: bool) {
@@ -300,6 +305,16 @@ impl App {
         }
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
+            // Releases only go to a running tape (the terminal sends them only while it runs).
+            Event::Key(key) => {
+                if let Focus::Inside(section) = self.focus
+                    && self.channels[self.active].key_releases()
+                    && self.channels[self.active].raw_keys(section)
+                {
+                    let active = self.active;
+                    self.with_channel(active, |ch, ctx| ch.key(section, key, ctx));
+                }
+            }
             Event::Mouse(mouse) => self.on_mouse(mouse),
             Event::Paste(text) => {
                 if let Focus::Inside(section) = self.focus {
@@ -312,7 +327,7 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
-        // Inside a TERM shell the program gets every key but alt+1–8 and ctrl+].
+        // Inside a TERM shell or a running tape, the program gets every key but alt+1–9 and ctrl+].
         if let Focus::Inside(section) = self.focus
             && self.help.is_none()
             && self.channels[self.active].raw_keys(section)
@@ -320,7 +335,10 @@ impl App {
             if let Some(n) = keys::alt_digit(&key).filter(|n| (1..=self.channels.len()).contains(n)) {
                 self.switch(n - 1);
             } else if keys::ctrl_bracket(&key) {
-                self.focus = Focus::Nav(Some(section));
+                let active = self.active;
+                if !self.with_channel(active, |ch, ctx| ch.escape(section, ctx)) {
+                    self.focus = Focus::Nav(Some(section));
+                }
             } else {
                 let active = self.active;
                 self.with_channel(active, |ch, ctx| ch.key(section, key, ctx));
@@ -369,7 +387,7 @@ impl App {
             self.update_key();
             return;
         }
-        // The channel keys work everywhere: F1–F8, and alt+1–8 for keyboards without F-keys.
+        // The channel keys work everywhere: F1–F9, and alt+1–9 for keyboards without F-keys.
         let channel = keys::alt_digit(&key)
             .or(keys::fkey(&key).map(usize::from))
             .filter(|n| (1..=self.channels.len()).contains(n));
@@ -541,6 +559,24 @@ impl App {
             None
         };
         ui::casing(frame, casing, &pal, self.host(), self.link, badge, &clock);
+        // A running tape: everything under the casing bar is the game.
+        if self.channels[self.active].takes_screen() {
+            let game = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
+            let view =
+                View { pal: &pal, narrow: self.narrow, focus: self.focus, now: Instant::now(), player: &self.player };
+            self.sections = self.channels[self.active].render(frame, game, &view);
+            if self.settle {
+                self.settle_focus();
+            }
+            ui::toasts(frame, game, &pal, &self.toasts);
+            if let Some((id, scroll)) = &mut self.help {
+                ui::help_card(frame, area, &pal, id, scroll);
+            }
+            if let Some(tuner) = &mut self.tuner {
+                tuner.render(frame, area, &pal);
+            }
+            return;
+        }
         let labels: Vec<&str> = self.channels.iter().map(|c| c.tab()).collect();
         ui::tabs(frame, tabs, &pal, &labels, self.active);
         self.tab_row = Rect { height: 1, ..tabs };
@@ -569,7 +605,7 @@ impl App {
         ui::statusline(frame, status, &pal, playing.as_ref().map(|(t, p)| (t.as_str(), *p)), &self.status);
         let mut footer_keys = vec![("F1", "COMMS"), ("F2", "LIFE"), ("F3", "AUDIO"), ("F4", "INVENTORY")];
         if self.narrow {
-            footer_keys = vec![("alt+1–8", "channels")];
+            footer_keys = vec![("alt+1–9", "channels")];
         }
         footer_keys.extend([("?", "keys"), ("^p", "play/pause"), ("^q", "power off")]);
         ui::footer(frame, footer, &pal, &footer_keys);

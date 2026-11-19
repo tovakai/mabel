@@ -298,6 +298,11 @@ impl Engine {
         self.mode.is_some()
     }
 
+    /// A track has come back round to its start (a phrase loop, or the song's end).
+    pub fn looped_once(&self) -> bool {
+        self.tracks.iter().any(|t| t.looped)
+    }
+
     pub fn muted(&self, track: usize) -> bool {
         self.mutes.contains(&track) || self.solo.is_some_and(|s| s != track)
     }
@@ -663,6 +668,7 @@ impl Engine {
         }
         (tr.pstep, tr.hop) = (0, false);
         if self.mode == Some(Mode::Phrase) {
+            tr.looped = true; // came round once: a one-shot sound effect stops here
             return;
         }
         self.tracks[t].cstep += 1;
@@ -771,6 +777,22 @@ impl Engine {
 
 // ── live output ──────────────────────────────────────────────────────────
 
+/// Anything Output can play: an Engine, or a mix of several (DreamTapes: music + sound effects).
+pub trait Source: Send {
+    fn sample_rate(&self) -> u32;
+    /// `frames` stereo samples in -1..1.
+    fn render(&mut self, frames: usize) -> Vec<[f32; 2]>;
+}
+
+impl Source for Engine {
+    fn sample_rate(&self) -> u32 {
+        self.sr
+    }
+    fn render(&mut self, frames: usize) -> Vec<[f32; 2]> {
+        Engine::render(self, frames)
+    }
+}
+
 /// Plays an Engine: a thread renders blocks and pipes them to `aplay` (the deck) or `pw-cat`
 /// (PipeWire). The pipe is kept small, so a note you play is heard within a few blocks.
 pub struct Output {
@@ -780,8 +802,8 @@ pub struct Output {
 }
 
 impl Output {
-    pub fn start(engine: Arc<Mutex<Engine>>, block: usize) -> Self {
-        let sr = engine.lock().map(|e| e.sr).unwrap_or(44100);
+    pub fn start<S: Source + 'static>(engine: Arc<Mutex<S>>, block: usize) -> Self {
+        let sr = engine.lock().map(|e| e.sample_rate()).unwrap_or(44100);
         let players: [(&str, Vec<String>); 2] = [
             (
                 "aplay",

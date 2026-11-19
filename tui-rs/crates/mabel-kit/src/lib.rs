@@ -3,26 +3,33 @@
 //! ```ignore
 //! use mabel_kit::*;
 //!
-//! struct Game { x: f32 }
+//! struct Game { x: f32, hero: Sprite }
 //!
 //! impl Tape for Game {
-//!     fn init() -> Self { Game { x: 10.0 } }
-//!     fn update(&mut self, dt: f32) { self.x += 20.0 * dt; }
+//!     fn init() -> Self {
+//!         music("theme");                               // music/theme.mtk, from TRACKER
+//!         Game { x: 10.0, hero: sprite("hero") }       // art/hero.mpx, from PIXEL
+//!     }
+//!     fn update(&mut self, dt: f32) {
+//!         if btn(Btn::Right) { self.x += 40.0 * dt; }
+//!         if btnp(Btn::A) { sfx("blips", 0); }          // phrase 00 of music/blips.mtk, once
+//!     }
 //!     fn draw(&self) {
-//!         cls(rgb(0x1b, 0x15, 0x10));
-//!         rectfill(self.x as i32, 10, 8, 8, AMBER);
+//!         cls(BG);
+//!         spr(&self.hero, self.x as i32, 20);
+//!         print(1, 1, "hello from a tape", AMBER);
 //!     }
 //! }
 //!
 //! tape!(Game);
 //! ```
 //!
-//! Built for `wasm32-unknown-unknown`, every function here is an import that
-//! PROGRAM (MABEL-OS) provides. Built natively, the same functions draw into
-//! kit's own screen, which is how a game will run outside MABEL-OS later.
+//! Built for `wasm32-unknown-unknown`, every function here is an import that the
+//! TAPES channel (MABEL-OS) provides. Built natively, the same functions work on
+//! kit's own screen, which is how a game will run outside MABEL-OS (milestone 2).
 //!
-//! Milestone 0 (2026-11-19): drawing, time and `log` only. Input, sprites,
-//! text and sound come in milestone 1.
+//! **Coordinates:** pixels, (0, 0) top-left. A terminal cell is 1 pixel wide and
+//! 2 pixels high, so `print` uses cells: column = x, row = y / 2.
 
 /// A colour as 0xRRGGBB.
 pub type Color = u32;
@@ -32,12 +39,17 @@ pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
     (r as u32) << 16 | (g as u32) << 8 | b as u32
 }
 
-/// MABEL-OS's amber.
+pub const BLACK: Color = 0x000000;
+pub const WHITE: Color = 0xffffff;
+/// MABEL-OS's amber, and its dimmer shade.
 pub const AMBER: Color = rgb(0xff, 0xb0, 0x00);
+pub const AMBER_DIM: Color = rgb(0x8a, 0x5e, 0x00);
+/// MABEL-OS's dark brown background.
+pub const BG: Color = rgb(0x1b, 0x15, 0x10);
 /// In `blit` pictures, a pixel of this value is see-through.
 pub const TRANSPARENT: Color = 0xff00_0000;
 
-/// A game. PROGRAM calls `init` once, then `update` and `draw` every frame.
+/// A game. TAPES calls `init` once, then `update` and `draw` every frame.
 pub trait Tape {
     fn init() -> Self;
     /// Move the world forward by `dt` seconds.
@@ -46,7 +58,33 @@ pub trait Tape {
     fn draw(&self);
 }
 
-// ---- the functions a tape calls ---------------------------------------------------------
+/// The buttons. Keys: arrows / h j k l / w a s d, z x c v for A B X Y,
+/// enter for START, backspace for SELECT (a tape can change them in tape.toml).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Btn {
+    Left = 0,
+    Right = 1,
+    Up = 2,
+    Down = 3,
+    A = 4,
+    B = 5,
+    X = 6,
+    Y = 7,
+    Start = 8,
+    Select = 9,
+}
+
+/// A picture from PIXEL, loaded with [`sprite`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sprite {
+    id: i32,
+    /// Size in pixels, and how many animation frames it has (0 if it couldn't be loaded).
+    pub w: i32,
+    pub h: i32,
+    pub frames: i32,
+}
+
+// ---- drawing --------------------------------------------------------------------------
 
 /// Fill the whole screen with one colour.
 pub fn cls(c: Color) {
@@ -63,9 +101,29 @@ pub fn pget(x: i32, y: i32) -> Color {
     sys::pget(x, y)
 }
 
-/// A filled rectangle `w` wide and `h` high, with its top-left corner at (x, y).
+/// A straight line, both ends included.
+pub fn line(x0: i32, y0: i32, x1: i32, y1: i32, c: Color) {
+    sys::line(x0, y0, x1, y1, c)
+}
+
+/// A rectangle's outline, `w` wide and `h` high, top-left corner at (x, y).
+pub fn rect(x: i32, y: i32, w: i32, h: i32, c: Color) {
+    sys::rect(x, y, w, h, c)
+}
+
+/// A filled rectangle, `w` wide and `h` high, top-left corner at (x, y).
 pub fn rectfill(x: i32, y: i32, w: i32, h: i32, c: Color) {
     sys::rectfill(x, y, w, h, c)
+}
+
+/// A circle's outline around (x, y) with radius `r`.
+pub fn circ(x: i32, y: i32, r: i32, c: Color) {
+    sys::circ(x, y, r, c)
+}
+
+/// A filled circle around (x, y) with radius `r`.
+pub fn circfill(x: i32, y: i32, r: i32, c: Color) {
+    sys::circfill(x, y, r, c)
 }
 
 /// Copy a whole picture (`w`×`h` colours, row by row) to (x, y) in one call.
@@ -74,6 +132,62 @@ pub fn blit(x: i32, y: i32, w: u32, h: u32, pixels: &[Color]) {
     assert!(pixels.len() >= (w * h) as usize, "blit: the picture has fewer than w*h pixels");
     sys::blit(x, y, w, h, pixels)
 }
+
+/// Text as real terminal characters, at cell `col`, `row` (row = y / 2). Crisp, but
+/// snapped to cells, and drawn over the pixels after `draw` returns.
+pub fn print(col: i32, row: i32, text: &str, c: Color) {
+    sys::print(col, row, text, c)
+}
+
+// ---- sprites --------------------------------------------------------------------------
+
+/// Load `art/<name>.mpx` (or `.png`). Do this once, in `init`, and keep the Sprite.
+/// If the file is missing, the Sprite draws nothing and the console says why.
+pub fn sprite(name: &str) -> Sprite {
+    sys::sprite(name)
+}
+
+/// Draw a sprite's first frame with its top-left corner at (x, y).
+pub fn spr(s: &Sprite, x: i32, y: i32) {
+    sys::spr(s.id, 0, x, y, 0)
+}
+
+/// Draw animation frame `frame` (it wraps round), optionally mirrored.
+pub fn spr_ex(s: &Sprite, frame: i32, x: i32, y: i32, flip_x: bool, flip_y: bool) {
+    sys::spr(s.id, frame, x, y, flip_x as u32 | (flip_y as u32) << 1)
+}
+
+// ---- input ----------------------------------------------------------------------------
+
+/// Is the button held down this frame?
+pub fn btn(b: Btn) -> bool {
+    sys::btn(b as i32)
+}
+
+/// Was the button pressed since the last frame? (Once per press: menus, jumps, shots.)
+pub fn btnp(b: Btn) -> bool {
+    sys::btnp(b as i32)
+}
+
+// ---- sound ----------------------------------------------------------------------------
+
+/// Play `music/<name>.mtk` from the start, looping. Replaces the music playing.
+pub fn music(name: &str) {
+    sys::music(name)
+}
+
+/// Stop the music.
+pub fn music_stop() {
+    sys::music_stop()
+}
+
+/// Play phrase `phrase` of `music/<name>.mtk` once, over the music: a sound effect
+/// is just a short phrase made in TRACKER. Phrase numbers are TRACKER's (hex: 0x0A).
+pub fn sfx(name: &str, phrase: i32) {
+    sys::sfx(name, phrase)
+}
+
+// ---- screen, time, debugging ----------------------------------------------------------
 
 /// Screen width in pixels.
 pub fn width() -> i32 {
@@ -85,7 +199,7 @@ pub fn height() -> i32 {
     sys::height()
 }
 
-/// Seconds since the tape started.
+/// Seconds of play since the tape started (paused time doesn't count).
 pub fn time() -> f32 {
     sys::time()
 }
@@ -95,16 +209,16 @@ pub fn frame() -> u32 {
     sys::frame()
 }
 
-/// Write a line to PROGRAM's console (for debugging).
+/// Write a line to the console (for debugging; shown under the tape in TAPES).
 pub fn log(msg: &str) {
     sys::log(msg)
 }
 
-// ---- inside a wasm tape: imports from PROGRAM -------------------------------------------
+// ---- inside a wasm tape: imports from TAPES ---------------------------------------------
 
 #[cfg(target_arch = "wasm32")]
 mod sys {
-    use super::Color;
+    use super::{Color, Sprite};
 
     mod ffi {
         #[link(wasm_import_module = "mabel")]
@@ -112,8 +226,23 @@ mod sys {
             pub fn cls(c: u32);
             pub fn pset(x: i32, y: i32, c: u32);
             pub fn pget(x: i32, y: i32) -> u32;
+            pub fn line(x0: i32, y0: i32, x1: i32, y1: i32, c: u32);
+            pub fn rect(x: i32, y: i32, w: i32, h: i32, c: u32);
             pub fn rectfill(x: i32, y: i32, w: i32, h: i32, c: u32);
+            pub fn circ(x: i32, y: i32, r: i32, c: u32);
+            pub fn circfill(x: i32, y: i32, r: i32, c: u32);
             pub fn blit(x: i32, y: i32, w: u32, h: u32, ptr: u32);
+            pub fn print(col: i32, row: i32, ptr: u32, len: u32, c: u32);
+            pub fn sprite(ptr: u32, len: u32) -> i32;
+            pub fn sprite_w(id: i32) -> i32;
+            pub fn sprite_h(id: i32) -> i32;
+            pub fn sprite_frames(id: i32) -> i32;
+            pub fn spr(id: i32, frame: i32, x: i32, y: i32, flags: u32);
+            pub fn btn(b: i32) -> i32;
+            pub fn btnp(b: i32) -> i32;
+            pub fn music(ptr: u32, len: u32);
+            pub fn music_stop();
+            pub fn sfx(ptr: u32, len: u32, phrase: i32);
             pub fn width() -> i32;
             pub fn height() -> i32;
             pub fn time() -> f32;
@@ -122,7 +251,7 @@ mod sys {
         }
     }
 
-    // The host only reads its arguments, so these calls are safe to wrap.
+    // The host only reads what it's given (strings by pointer and length), so these are safe.
     pub fn cls(c: Color) {
         unsafe { ffi::cls(c) }
     }
@@ -132,11 +261,50 @@ mod sys {
     pub fn pget(x: i32, y: i32) -> Color {
         unsafe { ffi::pget(x, y) }
     }
+    pub fn line(x0: i32, y0: i32, x1: i32, y1: i32, c: Color) {
+        unsafe { ffi::line(x0, y0, x1, y1, c) }
+    }
+    pub fn rect(x: i32, y: i32, w: i32, h: i32, c: Color) {
+        unsafe { ffi::rect(x, y, w, h, c) }
+    }
     pub fn rectfill(x: i32, y: i32, w: i32, h: i32, c: Color) {
         unsafe { ffi::rectfill(x, y, w, h, c) }
     }
+    pub fn circ(x: i32, y: i32, r: i32, c: Color) {
+        unsafe { ffi::circ(x, y, r, c) }
+    }
+    pub fn circfill(x: i32, y: i32, r: i32, c: Color) {
+        unsafe { ffi::circfill(x, y, r, c) }
+    }
     pub fn blit(x: i32, y: i32, w: u32, h: u32, pixels: &[Color]) {
         unsafe { ffi::blit(x, y, w, h, pixels.as_ptr() as u32) }
+    }
+    pub fn print(col: i32, row: i32, text: &str, c: Color) {
+        unsafe { ffi::print(col, row, text.as_ptr() as u32, text.len() as u32, c) }
+    }
+    pub fn sprite(name: &str) -> Sprite {
+        unsafe {
+            let id = ffi::sprite(name.as_ptr() as u32, name.len() as u32);
+            Sprite { id, w: ffi::sprite_w(id), h: ffi::sprite_h(id), frames: ffi::sprite_frames(id) }
+        }
+    }
+    pub fn spr(id: i32, frame: i32, x: i32, y: i32, flags: u32) {
+        unsafe { ffi::spr(id, frame, x, y, flags) }
+    }
+    pub fn btn(b: i32) -> bool {
+        unsafe { ffi::btn(b) != 0 }
+    }
+    pub fn btnp(b: i32) -> bool {
+        unsafe { ffi::btnp(b) != 0 }
+    }
+    pub fn music(name: &str) {
+        unsafe { ffi::music(name.as_ptr() as u32, name.len() as u32) }
+    }
+    pub fn music_stop() {
+        unsafe { ffi::music_stop() }
+    }
+    pub fn sfx(name: &str, phrase: i32) {
+        unsafe { ffi::sfx(name.as_ptr() as u32, name.len() as u32, phrase) }
     }
     pub fn width() -> i32 {
         unsafe { ffi::width() }
@@ -156,11 +324,14 @@ mod sys {
 }
 
 // ---- a native build: kit keeps its own screen -------------------------------------------
+// The standalone runner that shows it in a terminal comes in milestone 2; until then a
+// native build draws off-screen (handy for testing game logic with `cargo test`).
 
 #[cfg(not(target_arch = "wasm32"))]
 mod sys {
-    use super::Color;
-    use mabel_console::Frame;
+    use super::{Color, Sprite};
+    use mabel_console::input::Buttons;
+    use mabel_console::{Frame, Sprite as Picture, Text};
     use std::cell::RefCell;
     use std::time::Instant;
 
@@ -168,11 +339,20 @@ mod sys {
         frame: Frame,
         frame_no: u32,
         started: Instant,
+        buttons: Buttons,
+        sprites: Vec<Picture>,
+        texts: Vec<Text>,
     }
 
     thread_local! {
-        static NATIVE: RefCell<Native> =
-            RefCell::new(Native { frame: Frame::new(128, 72), frame_no: 0, started: Instant::now() });
+        static NATIVE: RefCell<Native> = RefCell::new(Native {
+            frame: Frame::new(128, 72),
+            frame_no: 0,
+            started: Instant::now(),
+            buttons: Buttons::default(),
+            sprites: vec![],
+            texts: vec![],
+        });
     }
 
     fn with<R>(f: impl FnOnce(&mut Native) -> R) -> R {
@@ -188,12 +368,58 @@ mod sys {
     pub fn pget(x: i32, y: i32) -> Color {
         with(|n| n.frame.pget(x, y))
     }
+    pub fn line(x0: i32, y0: i32, x1: i32, y1: i32, c: Color) {
+        with(|n| n.frame.line(x0, y0, x1, y1, c))
+    }
+    pub fn rect(x: i32, y: i32, w: i32, h: i32, c: Color) {
+        with(|n| n.frame.rect(x, y, w, h, c))
+    }
     pub fn rectfill(x: i32, y: i32, w: i32, h: i32, c: Color) {
         with(|n| n.frame.rectfill(x, y, w, h, c))
+    }
+    pub fn circ(x: i32, y: i32, r: i32, c: Color) {
+        with(|n| n.frame.circ(x, y, r, c))
+    }
+    pub fn circfill(x: i32, y: i32, r: i32, c: Color) {
+        with(|n| n.frame.circfill(x, y, r, c))
     }
     pub fn blit(x: i32, y: i32, w: u32, h: u32, pixels: &[Color]) {
         with(|n| n.frame.blit(x, y, w as usize, h as usize, pixels))
     }
+    pub fn print(col: i32, row: i32, text: &str, color: Color) {
+        with(|n| n.texts.push(Text { col, row, text: text.to_string(), color }))
+    }
+    pub fn sprite(name: &str) -> Sprite {
+        let path = std::path::Path::new("art").join(format!("{name}.mpx"));
+        match Picture::load(&path) {
+            Ok(p) => with(|n| {
+                let s =
+                    Sprite { id: n.sprites.len() as i32, w: p.w as i32, h: p.h as i32, frames: p.frames.len() as i32 };
+                n.sprites.push(p);
+                s
+            }),
+            Err(e) => {
+                log(&format!("sprite {name}: {e}"));
+                Sprite { id: -1, w: 0, h: 0, frames: 0 }
+            }
+        }
+    }
+    pub fn spr(id: i32, frame: i32, x: i32, y: i32, flags: u32) {
+        with(|n| {
+            if let Some(p) = usize::try_from(id).ok().and_then(|i| n.sprites.get(i)) {
+                p.draw(&mut n.frame, frame.max(0) as usize, x, y, flags & 1 != 0, flags & 2 != 0);
+            }
+        })
+    }
+    pub fn btn(b: i32) -> bool {
+        with(|n| n.buttons.btn(b as usize))
+    }
+    pub fn btnp(b: i32) -> bool {
+        with(|n| n.buttons.btnp(b as usize))
+    }
+    pub fn music(_name: &str) {}
+    pub fn music_stop() {}
+    pub fn sfx(_name: &str, _phrase: i32) {}
     pub fn width() -> i32 {
         with(|n| n.frame.w as i32)
     }
@@ -214,8 +440,8 @@ mod sys {
 /// The standalone runner (a game in any terminal) arrives in milestone 2.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native {
-    pub fn run<C: super::Tape>() {
-        eprintln!("mabel-kit: the standalone build comes in milestone 2; build this as a tape for now:");
+    pub fn run<T: super::Tape>() {
+        eprintln!("mabel-kit: the standalone build comes in milestone 2. Build the tape for TAPES with:");
         eprintln!("  cargo build --release --target wasm32-unknown-unknown");
     }
 }
@@ -226,7 +452,7 @@ pub mod native {
 #[doc(hidden)]
 pub struct Slot<T>(core::cell::UnsafeCell<Option<T>>);
 
-// A wasm tape runs on one thread: PROGRAM never calls into it from two at once.
+// A wasm tape runs on one thread: TAPES never calls into it from two at once.
 unsafe impl<T> Sync for Slot<T> {}
 
 impl<T> Slot<T> {
@@ -248,8 +474,15 @@ impl<T> Default for Slot<T> {
     }
 }
 
-/// Turn a type that implements [`Tape`] into a game: the wasm exports PROGRAM
-/// calls (`init`, `update`, `draw`), or `main()` in a native build.
+/// A panic inside a tape: its message goes to the console before the tape stops, so the
+/// error card in TAPES can say what happened ("panic: index out of bounds…").
+#[doc(hidden)]
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| log(&format!("panic: {info}"))));
+}
+
+/// Turn a type that implements [`Tape`] into a game: the wasm exports TAPES calls
+/// (`init`, `update`, `draw`), or `main()` in a native build.
 #[macro_export]
 macro_rules! tape {
     ($game:ty) => {
@@ -260,6 +493,7 @@ macro_rules! tape {
 
             #[unsafe(no_mangle)]
             pub extern "C" fn init() {
+                $crate::install_panic_hook();
                 let game = <$game as $crate::Tape>::init();
                 unsafe { GAME.with(|g| *g = Some(game)) }
             }
@@ -272,6 +506,10 @@ macro_rules! tape {
                 unsafe { GAME.with(|g| g.as_ref().map(|g| $crate::Tape::draw(g))) };
             }
         }
+
+        // A tape is a normal program (src/main.rs): TAPES never calls this one.
+        #[cfg(target_arch = "wasm32")]
+        pub fn main() {}
 
         #[cfg(not(target_arch = "wasm32"))]
         pub fn main() {

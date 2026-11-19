@@ -24,6 +24,7 @@ mod life;
 mod mpris;
 mod music;
 mod nav;
+mod newtape;
 mod offline;
 mod palette;
 mod pixelview;
@@ -33,6 +34,7 @@ mod printserver;
 mod suite;
 mod sysinfo;
 mod sysview;
+mod tapes;
 mod term;
 mod timefmt;
 mod tkindex;
@@ -64,6 +66,11 @@ async fn main() -> Result<()> {
     // `mabel-os print-server`: the deck's print server (mabel-print.service), not the TUI.
     if std::env::args().nth(1).as_deref() == Some("print-server") {
         return tokio::task::spawn_blocking(printserver::run).await?;
+    }
+    // `mabel-os new-tape snake`: a new DreamTape project in the current folder.
+    if std::env::args().nth(1).as_deref() == Some("new-tape") {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        return newtape::run(&args);
     }
     if let Ok(pid) = std::env::var(PAUSED_ENV) {
         eprintln!(
@@ -110,6 +117,7 @@ fn enter() -> DefaultTerminal {
     let terminal = ratatui::init(); // also restores the terminal if we panic
     let _ = execute!(stdout(), EnableMouseCapture, EnableBracketedPaste);
     if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        KITTY_KEYS.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = execute!(stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
     }
     let hook = std::panic::take_hook();
@@ -118,6 +126,27 @@ fn enter() -> DefaultTerminal {
         hook(info);
     }));
     terminal
+}
+
+/// The terminal speaks the kitty keyboard protocol (kitty, foot): key releases can be had.
+static KITTY_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask for key releases (a running tape's held buttons) or stop asking. Returns the new state.
+fn key_releases(on: bool, now: bool) -> bool {
+    if on == now || !KITTY_KEYS.load(std::sync::atomic::Ordering::Relaxed) {
+        return now && KITTY_KEYS.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    let _ = if on {
+        execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )
+    } else {
+        execute!(stdout(), PopKeyboardEnhancementFlags)
+    };
+    on
 }
 
 fn leave() {
@@ -132,14 +161,17 @@ async fn run(
 ) -> Result<()> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(500)); // the clock, toasts running out
+    let mut releases = false;
     loop {
         terminal.draw(|f| app.render(f))?;
         if std::mem::take(&mut app.redraw) {
             terminal.draw(|f| app.render(f))?;
         }
         if app.quit {
+            key_releases(false, releases);
             return Ok(());
         }
+        releases = key_releases(app.wants_key_releases() && !app.shell, releases);
         if std::mem::take(&mut app.shell) {
             drop(events); // its reader would steal the shell's keystrokes
             shell();

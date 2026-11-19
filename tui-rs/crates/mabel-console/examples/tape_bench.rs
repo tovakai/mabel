@@ -13,7 +13,7 @@ use std::io::Write;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use mabel_console::host::Tape;
+use mabel_console::host::{Options, Tape};
 use mabel_console::{Frame, render};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
@@ -31,6 +31,11 @@ impl Write for Count {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+fn opts(path: &str, w: usize, h: usize) -> Options {
+    let root = std::path::Path::new(path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    Options { w, h, root, rate: 44100 }
 }
 
 fn ms(d: Duration) -> f64 {
@@ -57,7 +62,7 @@ fn main() -> anyhow::Result<()> {
     let (w, h) = (size.w, size.h);
 
     let t = Instant::now();
-    let mut tape = Tape::load(&std::fs::read(path)?, w, h).map_err(anyhow::Error::msg)?;
+    let mut tape = Tape::load(&std::fs::read(path)?, opts(path, w, h)).map_err(anyhow::Error::msg)?;
     println!("{path}: {w}x{h} px ({cols}x{rows} cells), loaded in {:.1} ms", ms(t.elapsed()));
 
     let area = Rect::new(0, 0, cols, rows);
@@ -70,12 +75,12 @@ fn main() -> anyhow::Result<()> {
     let start = Instant::now();
     for _ in 0..frames {
         let t0 = Instant::now();
-        tape.step(1.0 / 30.0).map_err(anyhow::Error::msg)?;
+        tape.step(1.0 / 30.0, Instant::now()).map_err(anyhow::Error::msg)?;
         let t1 = Instant::now();
         let mut rendered = Duration::ZERO;
         term.draw(|fr| {
             let t = Instant::now();
-            render(tape.frame(), fr.buffer_mut(), area);
+            render(tape.frame(), tape.texts(), fr.buffer_mut(), area, 1);
             rendered = t.elapsed();
         })?;
         let t2 = Instant::now();
@@ -103,7 +108,7 @@ fn live(path: &str, frames: usize) -> anyhow::Result<()> {
     let mut term = ratatui::init();
     let area = term.get_frame().area();
     let size = Frame::for_cells(area.width, area.height);
-    let loaded = Tape::load(&std::fs::read(path)?, size.w, size.h).map_err(anyhow::Error::msg);
+    let loaded = Tape::load(&std::fs::read(path)?, opts(path, size.w, size.h)).map_err(anyhow::Error::msg);
     let mut tape = match loaded {
         Ok(c) => c,
         Err(e) => {
@@ -116,11 +121,11 @@ fn live(path: &str, frames: usize) -> anyhow::Result<()> {
     let mut result = Ok(());
     for _ in 0..frames {
         let t = Instant::now();
-        if let Err(e) = tape.step(1.0 / 30.0) {
+        if let Err(e) = tape.step(1.0 / 30.0, Instant::now()) {
             result = Err(anyhow::Error::msg(e));
             break;
         }
-        if let Err(e) = term.draw(|fr| render(tape.frame(), fr.buffer_mut(), area)) {
+        if let Err(e) = term.draw(|fr| render(tape.frame(), tape.texts(), fr.buffer_mut(), area, 1)) {
             result = Err(e.into());
             break;
         }

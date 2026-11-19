@@ -1338,7 +1338,10 @@ name = "mabel-console"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mabel-media",
  "ratatui",
+ "serde",
+ "toml",
  "wasmi",
 ]
 
@@ -1370,6 +1373,7 @@ dependencies = [
  "futures",
  "image",
  "libc",
+ "mabel-console",
  "mabel-media",
  "md5",
  "png",

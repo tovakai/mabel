@@ -4,7 +4,7 @@
 pub type Keys = &'static [(&'static str, &'static str)];
 
 pub const EVERYWHERE: Keys = &[
-    ("alt+1–8 / F1–F8", "switch channel (again on COMMS, CREATIVE or SYS: their next app)"),
+    ("alt+1–9 / F1–F9", "switch channel (again on COMMS, CREATIVE or SYS: their next app)"),
     ("h j k l", "move between sections (the lit border)"),
     ("i / a / enter", "go into the lit section"),
     ("esc", "back out to the sections"),
@@ -55,6 +55,17 @@ pub fn channel(id: &str) -> Keys {
             ("← →", "seek 10 s"),
             ("+ -", "volume"),
             ("DECK: j k enter", "jump to a song in the queue"),
+        ],
+        "tapes" => &[
+            ("j k  enter", "pick a DreamTape · play it"),
+            ("r", "look for tapes again (new installs, new dev tapes)"),
+            ("playing: arrows / hjkl / wasd", "move (the tape's tape.toml can change keys)"),
+            ("playing: z x c v", "A B X Y"),
+            ("playing: enter / backspace", "START / SELECT"),
+            ("ctrl+]", "pause menu: resume · reset · quit to the library"),
+            ("alt+1–9", "another channel (the tape pauses)"),
+            ("dev tapes", "tapes_dev = [\"~/code/tapes/snake\"] in config.toml; a rebuild restarts it"),
+            ("new tape", "mabel-os new-tape <name> in a shell"),
         ],
         "term" => &[
             ("(inside a shell)", "every key goes to the program: vim, htop, ssh all work"),

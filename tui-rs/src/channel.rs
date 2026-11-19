@@ -1,4 +1,4 @@
-//! A channel is one tab (CH-01 COMMS … CH-08 SYS). The app owns the frame around it and the
+//! A channel is one tab (CH-01 COMMS … CH-09 TAPES). The app owns the frame around it and the
 //! nav mode; a channel draws its panels, says where its sections are, and handles keys inside.
 //! A suite (suite.rs) is a channel made of several apps, each of them a channel too.
 
@@ -215,13 +215,27 @@ pub trait Channel {
     fn next_wake(&self) -> Option<Instant> {
         None
     }
-    /// Inside this section every key is the channel's (TERM's shells): only alt+1–8 and ctrl+]
+    /// Inside this section every key is the channel's (TERM's shells, a running tape): only alt+1–9 and ctrl+]
     /// stay with MABEL-OS. F-keys and ctrl+q go to the program.
     fn raw_keys(&self, _section: usize) -> bool {
         false
     }
     /// A popup is open: every key comes here first (before channel keys and nav).
     fn captures_keys(&self) -> bool {
+        false
+    }
+    /// ctrl+] inside a raw-keys section. True = the channel used it (TAPES: the pause menu);
+    /// false = back out to the sections (TERM).
+    fn escape(&mut self, _section: usize, _ctx: &mut Ctx) -> bool {
+        false
+    }
+    /// Draw over everything below the casing bar: no tabs, status line or footer (a running tape).
+    fn takes_screen(&self) -> bool {
+        false
+    }
+    /// Wants key releases now (a running tape's "held" buttons). The terminal is asked for them
+    /// only while this is true, and they reach `key` with `KeyEventKind::Release`.
+    fn key_releases(&self) -> bool {
         false
     }
     /// Twice a second, for every channel: polling and timers. `visible` = on screen now.
@@ -234,7 +248,7 @@ fn boxed(c: impl Channel + 'static) -> Box<dyn Channel> {
     Box::new(c)
 }
 
-/// The eight channels, in tab order.
+/// The nine channels, in tab order.
 pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
     let app = |key, label, hint| SuiteApp { key, label, hint };
     let pal = crate::palette::Palette::from_config(&cfg.raw);
@@ -277,5 +291,6 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
             ],
         )),
         boxed(Suite::new("sys", "SYS", "F8", sys_apps)),
+        boxed(crate::tapes::Tapes::new(cfg)),
     ]
 }

@@ -8,6 +8,7 @@ members = ["crates/*"]
 exclude = ["tapes"]
 
 [dependencies]
+mabel-console = { path = "crates/mabel-console", features = ["host"] }
 mabel-media = { path = "crates/mabel-media" }
 anyhow = "1.0.104"
 chrono = "0.4.45"
