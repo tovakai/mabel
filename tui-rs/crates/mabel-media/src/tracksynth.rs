@@ -823,6 +823,9 @@ impl Output {
                 "pw-cat",
                 vec![
                     "--playback".into(),
+                    // Raw samples on stdin: without it, pw-cat (PipeWire 1.6) reads "-" as a sound
+                    // file and quits with "Format not recognised", so nothing played on the PC.
+                    "--raw".into(),
                     "--format".into(),
                     "s16".into(),
                     "--rate".into(),
