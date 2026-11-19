@@ -1,0 +1,8 @@
+[package]
+name = "mabel-kit"
+version = "0.1.0"
+edition = "2024"
+description = "What a tape is written against: drawing, input, sound and time, as wasm imports or natively"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mabel-console = { path = "../mabel-console" }

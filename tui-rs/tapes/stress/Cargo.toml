@@ -1,0 +1,23 @@
+# Milestone 0 benchmark tape: how hard can the deck push a full screen through wasmi?
+# cargo build --release --target wasm32-unknown-unknown --features pset|blit|rects
+[package]
+name = "stress"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+pset = []    # one pset call per pixel, every frame (the slow way)
+blit = []    # the tape fills its own buffer, then one blit
+rects = []   # a game-like scene: cls + 300 moving 8×8 rectfills
+
+[dependencies]
+mabel-kit = { path = "../../crates/mabel-kit" }
+
+[profile.release]
+opt-level = "s"
+lto = true

@@ -1,0 +1,12 @@
+[package]
+name = "mabel-media"
+version = "0.1.0"
+edition = "2024"
+description = "PIXEL pictures, TRACKER songs and the tracker synth, shared by MABEL-OS and DreamTapes"
+
+[dependencies]
+anyhow = "1.0.104"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

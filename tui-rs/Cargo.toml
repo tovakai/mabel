@@ -3,7 +3,12 @@ name = "mabel-os"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/*"]
+exclude = ["tapes"]
+
 [dependencies]
+mabel-media = { path = "crates/mabel-media" }
 anyhow = "1.0.104"
 chrono = "0.4.45"
 crossterm = { version = "0.29.0", features = ["event-stream"] }

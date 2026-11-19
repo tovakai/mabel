@@ -126,6 +126,7 @@ enum Stage {
 }
 
 struct Voice {
+    #[allow(dead_code)] // kept to mirror the Python engine; handy when debugging
     track: usize,
     inst: Option<Instrument>,
     inst_id: Option<i64>,
@@ -214,6 +215,7 @@ pub enum Mode {
 }
 
 struct Track {
+    #[allow(dead_code)] // kept to mirror the Python engine; handy when debugging
     i: usize,
     row: usize,
     cstep: usize,
@@ -811,7 +813,7 @@ impl Output {
                 ],
             ),
         ];
-        let Some((name, args)) = players.into_iter().find(|(n, _)| crate::sysinfo::have(n)) else {
+        let Some((name, args)) = players.into_iter().find(|(n, _)| crate::have(n)) else {
             return Output { how: "none".into(), stop: Arc::new(AtomicBool::new(true)), thread: None };
         };
         let child = std::process::Command::new(name)

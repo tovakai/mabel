@@ -1,1 +1,3 @@
 /target
+tapes/*/target
+tapes/*/*.wasm

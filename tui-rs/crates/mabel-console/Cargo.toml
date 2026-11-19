@@ -1,0 +1,20 @@
+[package]
+name = "mabel-console"
+version = "0.1.0"
+edition = "2024"
+description = "The console behind PROGRAM: a pixel framebuffer, half-block rendering and (with `host`) the wasm tape runner"
+
+[features]
+# The wasmi tape runner. MABEL-OS turns it on; a standalone game doesn't need it.
+host = ["dep:wasmi"]
+
+[dependencies]
+ratatui = "0.30.2"
+wasmi = { version = "2.0.2", optional = true }
+
+[dev-dependencies]
+anyhow = "1.0.104"
+
+[[example]]
+name = "tape_bench"
+required-features = ["host"]
