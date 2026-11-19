@@ -23,8 +23,10 @@ use crate::os::ui::bold;
 use crate::widgets::input::{Input, InputResult};
 use crate::widgets::wrap::width;
 
+/// D moves things here (inside the app's folder), so a delete can always be undone by hand.
 const TRASH: &str = ".trash";
 
+/// Which preview the right side shows (each app provides its own).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Preview {
     Sprite,
@@ -34,6 +36,7 @@ pub enum Preview {
 /// What an app tells the browser.
 pub struct Spec {
     pub title: String,
+    /// The app's folder (`pixel_dir`, `tracker_dir`).
     pub root: PathBuf,
     /// Files the app opens (extensions, no dot).
     pub suffixes: Vec<String>,
@@ -43,9 +46,11 @@ pub struct Spec {
     pub document_dir: Option<String>,
     /// Extra entries outside the folder: (path, label).
     pub extras: Vec<(PathBuf, String)>,
+    /// The extension n gives a new file.
     pub new_suffix: String,
     /// The app has unsaved changes.
     pub dirty: bool,
+    /// The file open in the app now (the browser starts next to it, cursor on it).
     pub current: Option<PathBuf>,
     pub preview: Preview,
 }
@@ -57,14 +62,17 @@ pub struct Choice {
     pub save_first: bool,
 }
 
+/// What a key did: the browser stays open, was closed, or something was chosen.
 pub enum Answer {
     Open,
     Cancel,
     Chosen(Choice),
 }
 
+/// What a line in the list is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
+    /// "..": the folder above.
     Up,
     Dir,
     File,
@@ -74,6 +82,7 @@ enum Kind {
     Extra,
 }
 
+/// One line in the list.
 struct Entry {
     path: PathBuf,
     label: String,
@@ -81,6 +90,7 @@ struct Entry {
     mtime: Option<SystemTime>,
 }
 
+/// The question in the input line: a new file's name, a new folder's, a new name, a filter.
 enum Ask {
     New,
     Folder,
@@ -88,26 +98,33 @@ enum Ask {
     Filter,
 }
 
+/// A yes/no question: delete this? / the app has unsaved changes: save first? (the bool: a new file)
 enum Confirm {
     Delete(PathBuf),
     Dirty(PathBuf, bool),
 }
 
+/// The browser, opened by an app over its own screen.
 pub struct Browser {
     spec: Spec,
+    /// The folder being listed, its lines, and the cursor.
     dir: PathBuf,
     entries: Vec<Entry>,
     index: usize,
+    /// s: sort by name instead of newest first.
     by_name: bool,
     filter: String,
     ask: Option<(Ask, Input)>,
     confirm: Option<Confirm>,
+    /// What just happened (or went wrong).
     message: String,
     /// The open file was renamed (old, new): the app follows it.
     pub renamed: Option<(PathBuf, PathBuf)>,
+    /// The preview drawn last, for which file and size (made again only when those change).
     preview: Option<(PathBuf, u16, u16, Vec<Line<'static>>)>,
 }
 
+/// "12 min ago", "3 h ago", or the date.
 fn ago(t: SystemTime) -> String {
     let secs = SystemTime::now().duration_since(t).map_or(0, |d| d.as_secs());
     if secs < 3600 {
@@ -119,10 +136,12 @@ fn ago(t: SystemTime) -> String {
     }
 }
 
+/// A path's extension, lowercase ("" if none).
 fn ext_of(p: &Path) -> String {
     p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
+/// Copy a folder and everything in it (c on a project folder).
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for e in std::fs::read_dir(from)?.flatten() {
@@ -137,6 +156,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 impl Browser {
+    /// Open the browser in the folder of the app's current file (or its root).
     pub fn new(spec: Spec) -> Self {
         let _ = std::fs::create_dir_all(&spec.root);
         let here = spec
@@ -168,6 +188,8 @@ impl Browser {
         b
     }
 
+    /// List the folder: up, folders (projects), files newest first (or by name), the app's
+    /// extras, filtered.
     fn reload(&mut self) {
         let mut entries = vec![];
         if self.dir != self.spec.root {
@@ -228,10 +250,12 @@ impl Browser {
         self.index = self.index.min(self.entries.len().saturating_sub(1));
     }
 
+    /// The line under the cursor.
     fn entry(&self) -> Option<&Entry> {
         self.entries.get(self.index)
     }
 
+    /// Put the cursor on `path`, if it's listed.
     fn select(&mut self, path: &Path) {
         if let Some(i) = self.entries.iter().position(|e| e.path == path) {
             self.index = i;
@@ -240,6 +264,7 @@ impl Browser {
 
     // ── keys ─────────────────────────────────────────────────────────────
 
+    /// A key (the list is at the top of this file).
     pub fn key(&mut self, key: &KeyEvent) -> Answer {
         self.message.clear();
         if let Some((what, input)) = &mut self.ask {
@@ -326,12 +351,15 @@ impl Browser {
         Answer::Open
     }
 
+    /// Ask a question in the input line.
     fn prompt(&mut self, what: Ask, label: &str, value: &str) {
         let mut input = Input::new(label);
         input.set(value);
         self.ask = Some((what, input));
     }
 
+    /// enter: go into a folder (`go_in`), or choose a file (asking first if the app has
+    /// unsaved changes). A folder that is one document (an avatar) opens as a file.
     fn open(&mut self, go_in: bool) -> Option<Answer> {
         let e = self.entry()?;
         let (path, kind) = (e.path.clone(), e.kind);
@@ -351,6 +379,7 @@ impl Browser {
         }
     }
 
+    /// h/backspace: the folder above (never above the app's root).
     fn go_up(&mut self) {
         if self.dir != self.spec.root {
             let came_from = self.dir.clone();
@@ -360,6 +389,7 @@ impl Browser {
         }
     }
 
+    /// A typed name made safe as a file name: slashes become dashes; empty, . and .. are refused.
     fn safe(name: &str) -> anyhow::Result<String> {
         let n = name.replace('/', "-").trim().to_string();
         if n.is_empty() || n == "." || n == ".." {
@@ -368,6 +398,8 @@ impl Browser {
         Ok(n)
     }
 
+    /// enter on a question: make the new file (chosen at once) or folder, rename (telling the
+    /// app if its open file moved), or filter.
     fn answered(&mut self, what: Ask, text: &str) -> anyhow::Result<Option<Answer>> {
         match what {
             Ask::Filter => {
@@ -431,6 +463,7 @@ impl Browser {
         Ok(None)
     }
 
+    /// c: copy a file or folder next to itself ("name 2", then "name 3"…).
     fn duplicate(&mut self, path: &Path) -> anyhow::Result<()> {
         let stem = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
         let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
@@ -451,6 +484,7 @@ impl Browser {
         Ok(())
     }
 
+    /// D (after a yes): move it into .trash.
     fn trash(&mut self, path: &Path) -> anyhow::Result<()> {
         let trash = self.spec.root.join(TRASH);
         std::fs::create_dir_all(&trash)?;
@@ -464,6 +498,7 @@ impl Browser {
 
     // ── drawing ──────────────────────────────────────────────────────────
 
+    /// The preview for the line under the cursor (the app's sprite or song card), cached.
     fn preview_lines(&mut self, w: u16, h: u16, pal: &Palette) -> Vec<Line<'static>> {
         let Some(e) = self.entry() else { return vec![] };
         let (path, kind) = (e.path.clone(), e.kind);
@@ -514,6 +549,7 @@ impl Browser {
         }
     }
 
+    /// Draw the browser over the app: the list, the preview, and the question or message line.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, pal: &Palette) {
         let w = area.width * 9 / 10;
         let h = area.height * 85 / 100;
