@@ -197,6 +197,28 @@ impl Avatar {
     }
 }
 
+/// This machine's editable copy of the avatar (PIXEL's :avatar), next to MABEL-OS's other data.
+pub fn user_dir() -> std::path::PathBuf {
+    let base = match std::env::var_os("XDG_DATA_HOME") {
+        Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => crate::config::home().join(".local/share"),
+    };
+    base.join("mabel-os").join("avatar")
+}
+
+/// Make `dir` hold an avatar to edit: if it has none yet, the built-in one is copied there.
+pub fn ensure_user_copy(dir: &Path) -> Result<()> {
+    if dir.join("avatar.json").exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("avatar.json"), BUILTIN_JSON)?;
+    for (name, bytes) in BUILTIN {
+        std::fs::write(dir.join(name), bytes)?;
+    }
+    Ok(())
+}
+
 /// The built-in avatar's still frame as half-block lines: SYS STATUS's logo.
 pub fn still_lines() -> Vec<ratatui::text::Line<'static>> {
     use ratatui::style::Style;

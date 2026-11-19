@@ -303,8 +303,6 @@ fn split_v(area: Rect, c: &[Constraint]) -> Vec<Rect> {
     Layout::vertical(c.to_vec()).split(area).to_vec()
 }
 
-use Constraint::{Fill, Length};
-
 fn boxed(c: impl Channel + 'static) -> Box<dyn Channel> {
     Box::new(c)
 }
@@ -343,26 +341,13 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
             "creative",
             "CREATIVE",
             "F7",
-            [
-                ("pixel", "PIXEL", "sprites and animation"),
-                ("tracker", "TRACKER", "chip music + MIDI · song → chain → phrase"),
-            ]
-            .into_iter()
-            .map(|(key, label, hint)| {
-                let page = Placeholder::new(
-                    key,
-                    "CREATIVE",
-                    5,
-                    &[("CANVAS", "the app's main view"), ("TOOLS", "its side panel")],
-                    |a, _| {
-                        let c = split_h(a, &[Length(24), Fill(1)]);
-                        vec![c[1], c[0]]
-                    },
-                )
-                .lands(0);
-                (app(key, label, hint), boxed(page))
-            })
-            .collect(),
+            vec![
+                (app("pixel", "PIXEL", "sprites and animation"), boxed(crate::pixelview::PixelView::new(cfg))),
+                (
+                    app("tracker", "TRACKER", "chip music + MIDI · song → chain → phrase"),
+                    boxed(crate::trackerview::TrackerView::new(cfg)),
+                ),
+            ],
         )),
         boxed(Suite::new("sys", "SYS", "F8", sys_apps)),
     ]
