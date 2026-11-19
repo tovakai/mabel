@@ -12,6 +12,7 @@ Mabel in a terminal: a retro-futuristic "operating system" of nine channels (COM
 | read the code's own docs | `cargo doc --open --no-deps` |
 | know what Mabel's API looks like | [`../docs/README/MABEL_OS_API_CONTRACT.md`](../docs/README/MABEL_OS_API_CONTRACT.md) |
 | make games for TAPES | `mabel-os new-tape <name>`, and the Rust course in COMMS ▸ COURSE |
+| have an AI helper (Claude, ChatGPT, Gemini…) work on it | [`CLAUDE.md`](CLAUDE.md): how to work here, comment style, splitting, checks, machine limits |
 
 ## Trying a change safely
 
