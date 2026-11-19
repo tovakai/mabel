@@ -4,47 +4,10 @@
 
 use std::path::PathBuf;
 
-mod api;
-mod app;
-mod audio;
-mod avatar;
-mod browser;
-mod channel;
-mod comms;
-mod config;
-mod course;
-mod courses;
-mod dtape;
-mod help;
-mod housekeeping;
-mod inbox;
-mod inventory;
-mod keys;
-mod life;
-mod mpris;
-mod music;
-mod nav;
-mod newtape;
-mod offline;
-mod palette;
-mod pixelview;
-pub use mabel_media::{pixel, tracker, tracksynth};
-mod player;
+mod channels;
+mod os;
 mod printserver;
-mod suite;
-mod sysinfo;
-mod sysview;
-mod tapecli;
-mod tapes;
-mod term;
-mod timefmt;
-mod tkindex;
-mod trackerview;
-mod tuner;
-mod ui;
-mod update;
-mod vault;
-mod vaultview;
+pub use mabel_media::{pixel, tracker, tracksynth};
 mod widgets;
 
 use std::io::stdout;
@@ -60,7 +23,8 @@ use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
-use app::App;
+use os::app::App;
+use os::{channel, config};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,12 +35,12 @@ async fn main() -> Result<()> {
     // `mabel-os tape publish|pack|list|install|remove|unpublish`: the DreamTape repo.
     if std::env::args().nth(1).as_deref() == Some("tape") {
         let args: Vec<String> = std::env::args().skip(2).collect();
-        return tapecli::run(&args).await;
+        return channels::tapes::cli::run(&args).await;
     }
     // `mabel-os new-tape snake`: a new DreamTape project in the current folder.
     if std::env::args().nth(1).as_deref() == Some("new-tape") {
         let args: Vec<String> = std::env::args().skip(2).collect();
-        return newtape::run(&args);
+        return channels::tapes::newtape::run(&args);
     }
     if let Ok(pid) = std::env::var(PAUSED_ENV) {
         eprintln!(
@@ -84,7 +48,7 @@ async fn main() -> Result<()> {
         );
         std::process::exit(1);
     }
-    if std::env::var_os(term::INSIDE_ENV).is_some() {
+    if std::env::var_os(channels::term::INSIDE_ENV).is_some() {
         eprintln!("You're in a shell inside MABEL-OS's TERM. ctrl+] steps out of it; alt+1–8 switch channels.");
         std::process::exit(1);
     }

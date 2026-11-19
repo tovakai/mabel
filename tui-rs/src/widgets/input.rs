@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthChar;
 
-use crate::keys;
+use crate::os::keys;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum InputResult {

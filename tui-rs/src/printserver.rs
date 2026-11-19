@@ -48,7 +48,7 @@ pub struct PrintConfig {
 }
 
 pub fn config_path() -> PathBuf {
-    crate::config::config_path().with_file_name("printserver.toml")
+    crate::os::config::config_path().with_file_name("printserver.toml")
 }
 
 fn token() -> Result<String> {

@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::wrap::{self, width};
-use crate::palette::Palette;
+use crate::os::palette::Palette;
 
 /// Render `text` to lines no wider than `max` cells. `base` is the body style.
 pub fn render(text: &str, max: u16, pal: &Palette, base: Style) -> Vec<Line<'static>> {

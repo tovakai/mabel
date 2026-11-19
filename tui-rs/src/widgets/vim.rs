@@ -15,8 +15,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthChar;
 
-use crate::keys;
-use crate::palette::Palette;
+use crate::os::keys;
+use crate::os::palette::Palette;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {

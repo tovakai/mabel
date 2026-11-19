@@ -11,9 +11,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::keys;
-use crate::palette::Palette;
-use crate::ui::bold;
+use crate::os::keys;
+use crate::os::palette::Palette;
+use crate::os::ui::bold;
 use crate::widgets::input::{Input, InputResult};
 use crate::widgets::popup::{Answer, frame_box};
 
