@@ -120,6 +120,9 @@ impl App {
                 Request::Status(text) => self.status = text,
                 Request::Toast { title, text, error } => self.toast(&title, &text, error),
                 Request::Link(ok) => self.link = Some(ok),
+                Request::Deliver { to, msg } => {
+                    let _ = self.tx.send(Msg::Deliver(to, msg));
+                }
                 Request::Quit { restart } => {
                     self.quit = true;
                     self.restart = restart;
@@ -162,6 +165,17 @@ impl App {
                 self.quit = true;
                 return;
             }
+            Msg::Deliver(to, data) => {
+                // Another channel's request: go there, bring its app on screen, hand it over.
+                if let Some(i) = self.channels.iter().position(|c| c.accepts(to)) {
+                    self.switch(i);
+                    self.channels[i].show_app(to);
+                    self.settle = false;
+                    self.with_channel(i, |ch, ctx| ch.on_msg(to, data, ctx));
+                    self.redraw = true;
+                }
+                return;
+            }
             Msg::For(id, data) => (id, data),
         };
         if id == "player" {
@@ -187,6 +201,21 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        // Inside a TERM shell the program gets every key but alt+1–8 and ctrl+].
+        if let Focus::Inside(section) = self.focus
+            && self.help.is_none()
+            && self.channels[self.active].raw_keys(section)
+        {
+            if let Some(n) = keys::alt_digit(&key).filter(|n| (1..=self.channels.len()).contains(n)) {
+                self.switch(n - 1);
+            } else if keys::ctrl_bracket(&key) {
+                self.focus = Focus::Nav(Some(section));
+            } else {
+                let active = self.active;
+                self.with_channel(active, |ch, ctx| ch.key(section, key, ctx));
+            }
+            return;
+        }
         if keys::ctrl(&key, 'q') {
             self.quit = true;
             return;

@@ -675,6 +675,16 @@ impl Channel for Comms {
     }
 
     fn on_msg(&mut self, _id: &str, msg: Box<dyn std::any::Any + Send>, ctx: &mut Ctx) {
+        let msg = match msg.downcast::<crate::channel::AskAbout>() {
+            Ok(ask) => {
+                // VAULT's M: the next message goes with this note.
+                self.prompt.placeholder = format!("ask Mabel about “{}”…", ask.name);
+                self.pending_note = Some((ask.name, ask.rel, ask.content));
+                ctx.focus(PROMPT);
+                return;
+            }
+            Err(other) => other,
+        };
         let Ok(got) = msg.downcast::<Got>() else { return };
         match *got {
             Got::Sessions { result: Ok(sessions), select_first } => {

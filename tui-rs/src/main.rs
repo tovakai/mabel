@@ -25,8 +25,11 @@ mod player;
 mod suite;
 mod sysinfo;
 mod sysview;
+mod term;
 mod timefmt;
 mod ui;
+mod vault;
+mod vaultview;
 mod widgets;
 
 use std::io::stdout;
@@ -50,6 +53,10 @@ async fn main() -> Result<()> {
         eprintln!(
             "This shell belongs to a paused MABEL-OS (pid {pid}).\nType exit to go back to it, instead of starting a second one."
         );
+        std::process::exit(1);
+    }
+    if std::env::var_os(term::INSIDE_ENV).is_some() {
+        eprintln!("You're in a shell inside MABEL-OS's TERM. ctrl+] steps out of it; alt+1–8 switch channels.");
         std::process::exit(1);
     }
     let cfg = match config::load(&config::config_path()) {

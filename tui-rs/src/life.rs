@@ -193,9 +193,12 @@ impl Life {
         let note = self.data.as_ref().map(|d| s(&d[part], "note")).unwrap_or("");
         if note.is_empty() {
             ctx.toast("LIFE", "Nothing to open yet");
-        } else {
-            ctx.toast("LIFE", "VAULT isn't ported to this build yet (phase 4).");
+            return;
         }
+        // Her notes live in her journal; the snapshot names them from the journal's parent.
+        let rel = note.strip_prefix("journal/").unwrap_or(note).to_string();
+        let open = crate::channel::OpenNote { vault: "Mabel's journal".into(), rel, line: None };
+        ctx.requests.push(crate::channel::Request::Deliver { to: "vault", msg: Box::new(open) });
     }
 
     /// Keys that work both in nav mode and inside a panel.

@@ -55,6 +55,23 @@ pub enum Msg {
     For(&'static str, Box<dyn Any + Send>),
     /// Quit MABEL-OS (the desktop's media widget asked, over MPRIS).
     Quit,
+    /// Switch to channel/app `to` and hand it this (see Request::Deliver).
+    Deliver(&'static str, Box<dyn Any + Send>),
+}
+
+/// Open a note in VAULT (sent with Request::Deliver).
+pub struct OpenNote {
+    /// "core of truth" or "Mabel's journal".
+    pub vault: String,
+    pub rel: String,
+    pub line: Option<usize>,
+}
+
+/// The next COMMS message goes to Mabel with this note attached (VAULT's M).
+pub struct AskAbout {
+    pub name: String,
+    pub rel: String,
+    pub content: String,
 }
 
 /// What a channel asks of the app while handling something.
@@ -70,6 +87,12 @@ pub enum Request {
     },
     /// Does Mabel answer? (Shown in the casing.)
     Link(bool),
+    /// Switch to the channel (or suite app) with this id and hand it `msg` (VAULT → COMMS's
+    /// "ask Mabel about this note", LIFE → VAULT's "open her dream").
+    Deliver {
+        to: &'static str,
+        msg: Box<dyn Any + Send>,
+    },
     /// Shut MABEL-OS down, or restart it (the same binary, so a new build takes over).
     Quit {
         restart: bool,
@@ -187,9 +210,16 @@ pub trait Channel {
         id == self.id()
     }
     fn on_msg(&mut self, _id: &str, _msg: Box<dyn Any + Send>, _ctx: &mut Ctx) {}
+    /// Bring the suite app with this id on screen (a no-op for plain channels).
+    fn show_app(&mut self, _id: &str) {}
     /// When this channel next wants a redraw by itself (an animation frame, a spinner).
     fn next_wake(&self) -> Option<Instant> {
         None
+    }
+    /// Inside this section every key is the channel's (TERM's shells): only alt+1–8 and ctrl+]
+    /// stay with MABEL-OS. F-keys and ctrl+q go to the program.
+    fn raw_keys(&self, _section: usize) -> bool {
+        false
     }
     /// A popup is open: every key comes here first (before channel keys and nav).
     fn captures_keys(&self) -> bool {
@@ -308,27 +338,8 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
             &[("INVENTORY", "the Gremlin Index: rooms, places, items"), ("ITEM", "the open item's card")],
             |a, narrow| if narrow { split_v(a, &[Fill(3), Fill(2)]) } else { split_h(a, &[Fill(3), Fill(2)]) },
         )),
-        boxed(Placeholder::new(
-            "vault",
-            "VAULT",
-            4,
-            &[
-                ("VAULT", "folders and notes"),
-                ("NOTE", "read, or edit vim-style"),
-                ("OUTLINE · LINKS", "headings and links of the note"),
-            ],
-            |a, narrow| {
-                if narrow {
-                    let c = split_h(a, &[Length(28), Fill(1)]);
-                    vec![c[0], c[1], Rect::default()]
-                } else {
-                    split_h(a, &[Length(32), Fill(1), Length(36)])
-                }
-            },
-        )),
-        boxed(Placeholder::new("term", "TERM", 4, &[("TERM", "shells in tabs: vim, htop, ssh all work")], |a, _| {
-            vec![a]
-        })),
+        boxed(crate::vaultview::VaultView::new(&cfg.vault, &cfg.journal)),
+        boxed(crate::term::Term::new()),
         boxed(Suite::new(
             "creative",
             "CREATIVE",

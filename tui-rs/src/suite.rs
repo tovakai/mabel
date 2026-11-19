@@ -169,6 +169,12 @@ impl Channel for Suite {
         }
     }
 
+    fn show_app(&mut self, id: &str) {
+        if let Some(i) = self.apps.iter().position(|(_, app)| app.accepts(id)) {
+            self.current = i;
+        }
+    }
+
     fn next_wake(&self) -> Option<Instant> {
         self.apps[self.current].1.next_wake()
     }
