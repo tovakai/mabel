@@ -36,7 +36,7 @@ pub fn panel<'a>(pal: &Palette, title: &str, state: PanelState) -> Block<'a> {
         .borders(Borders::ALL)
         .border_type(border)
         .border_style(Style::new().fg(colour))
-        .title(Span::styled(format!(" {title} "), bold(pal.beige)))
+        .title(if title.is_empty() { Span::raw("") } else { Span::styled(format!(" {title} "), bold(pal.beige)) })
         .style(Style::new().bg(bg).fg(pal.amber))
         .padding(ratatui::widgets::Padding::horizontal(1))
 }
@@ -145,10 +145,11 @@ pub fn help_text(pal: &Palette, id: &str) -> Text<'static> {
         }
         lines.push(Line::raw(""));
     };
+    let heading = if id.starts_with("sys-") { "sys" } else { id };
     if own.is_empty() {
-        part(id, &[("(not ported yet)", "the Python MABEL-OS has this channel's keys")]);
+        part(heading, &[("(not ported yet)", "the Python MABEL-OS has this channel's keys")]);
     } else {
-        part(id, own);
+        part(heading, own);
     }
     part("everywhere", help::EVERYWHERE);
     Text::from(lines)
@@ -185,6 +186,7 @@ pub fn help_card(frame: &mut Frame, area: Rect, pal: &Palette, id: &str, scroll:
 pub struct Toast {
     pub title: String,
     pub text: String,
+    pub error: bool,
     pub until: std::time::Instant,
 }
 
@@ -202,9 +204,10 @@ pub fn toasts(frame: &mut Frame, area: Rect, pal: &Palette, toasts: &[Toast]) {
         }
         bottom -= height;
         let r = Rect::new(area.right() - width, bottom, width, height);
+        let edge = if toast.error { pal.red } else { pal.amber };
         let block = Block::bordered()
             .border_type(BorderType::Thick)
-            .border_style(Style::new().fg(pal.amber))
+            .border_style(Style::new().fg(edge))
             .title(Span::styled(format!(" {} ", toast.title), bold(pal.beige)))
             .style(Style::new().bg(pal.panel).fg(pal.amber_hi))
             .padding(ratatui::widgets::Padding::horizontal(1));

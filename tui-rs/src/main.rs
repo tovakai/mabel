@@ -2,26 +2,35 @@
 //!
 //! Run: `cargo run --release` in tui-rs/ (reads the same ~/.config/mabel-tui/config.toml).
 
-// The API client and config are ahead of the channels that will use them (phase 2 on).
+// The API client and config are ahead of the channels that will use them (until phase 5).
 #![allow(dead_code)]
 
 mod api;
 mod app;
+mod avatar;
 mod channel;
+mod comms;
 mod config;
 mod help;
+mod inbox;
 mod keys;
+mod life;
 mod nav;
 mod palette;
+mod suite;
+mod sysinfo;
+mod sysview;
+mod timefmt;
 mod ui;
+mod widgets;
 
 use std::io::stdout;
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, EventStream, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, EventStream,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use futures::StreamExt;
@@ -46,6 +55,13 @@ async fn main() -> Result<()> {
     let mut terminal = enter();
     let result = run(&mut terminal, &mut app, rx).await;
     leave();
+    if app.restart && result.is_ok() {
+        // The same program from disk again: a freshly copied build takes over here.
+        use std::os::unix::process::CommandExt;
+        let exe = std::env::current_exe()?;
+        let err = std::process::Command::new(exe).args(std::env::args_os().skip(1)).exec();
+        return Err(err.into());
+    }
     result
 }
 
@@ -54,20 +70,20 @@ async fn main() -> Result<()> {
 /// protocol and gets plain keys.
 fn enter() -> DefaultTerminal {
     let terminal = ratatui::init(); // also restores the terminal if we panic
-    let _ = execute!(stdout(), EnableMouseCapture);
+    let _ = execute!(stdout(), EnableMouseCapture, EnableBracketedPaste);
     if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
     }
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture);
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste);
         hook(info);
     }));
     terminal
 }
 
 fn leave() {
-    let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture);
+    let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste);
     ratatui::restore();
 }
 
@@ -93,11 +109,25 @@ async fn run(
             events = EventStream::new();
             continue;
         }
+        // An animation frame or spinner wants drawing at this time, input or not.
+        let wake = app.next_wake().map(tokio::time::Instant::from_std);
         tokio::select! {
             Some(Ok(event)) = events.next() => app.on_event(event),
             _ = tick.tick() => app.tick(),
             Some(msg) = rx.recv() => app.on_msg(msg),
+            _ = sleep_until(wake) => {}
         }
+        // A reply streams in as many small chunks: take all that are waiting, then draw once.
+        while let Ok(msg) = rx.try_recv() {
+            app.on_msg(msg);
+        }
+    }
+}
+
+async fn sleep_until(when: Option<tokio::time::Instant>) {
+    match when {
+        Some(t) => tokio::time::sleep_until(t).await,
+        None => std::future::pending().await,
     }
 }
 

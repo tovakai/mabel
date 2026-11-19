@@ -12,7 +12,7 @@ use ratatui::widgets::Block;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::Mabel;
-use crate::channel::{self, Channel, Ctx, Msg, Outcome, View};
+use crate::channel::{self, Channel, Ctx, Msg, Outcome, Request, View};
 use crate::config::Config;
 use crate::keys;
 use crate::nav::{self, Focus};
@@ -45,6 +45,8 @@ pub struct App {
     /// Draw again straight away (the focus changed during the last draw).
     pub redraw: bool,
     pub quit: bool,
+    /// Start again after quitting (SYS ▸ restart MABEL-OS).
+    pub restart: bool,
     /// ctrl+z: the main loop hands the terminal to a plain shell.
     pub shell: bool,
 }
@@ -72,32 +74,49 @@ impl App {
             link: None,
             redraw: false,
             quit: false,
+            restart: false,
             shell: false,
         })
     }
 
-    /// Background work at start: does Mabel answer with this token?
-    pub fn start(&self) {
-        let (api, tx) = (self.api.clone(), self.tx.clone());
-        tokio::spawn(async move {
-            let result = api.sessions().await.map(|s| s.len()).map_err(|e| e.to_string());
-            let _ = tx.send(Msg::Link(result));
-        });
+    /// Every channel's first loads (COMMS: the chat list, which also tells whether Mabel answers).
+    pub fn start(&mut self) {
+        for i in 0..self.channels.len() {
+            self.with_channel(i, |ch, ctx| ch.start(ctx));
+        }
+    }
+
+    /// Call into channel `index` with a context, then carry out what it asked for.
+    fn with_channel<R>(&mut self, index: usize, f: impl FnOnce(&mut dyn Channel, &mut Ctx) -> R) -> R {
+        let mut ctx = Ctx::new(&self.api, &self.cfg, &self.tx);
+        let result = f(self.channels[index].as_mut(), &mut ctx);
+        let requests = ctx.requests;
+        for request in requests {
+            match request {
+                // Only the channel on screen moves the keyboard.
+                Request::Focus(section) if index == self.active => self.focus = Focus::Inside(section),
+                Request::Focus(_) => {}
+                Request::Status(text) => self.status = text,
+                Request::Toast { title, text, error } => self.toast(&title, &text, error),
+                Request::Link(ok) => self.link = Some(ok),
+                Request::Quit { restart } => {
+                    self.quit = true;
+                    self.restart = restart;
+                }
+            }
+        }
+        result
     }
 
     fn host(&self) -> &str {
         self.cfg.url.split_once("//").map_or(&self.cfg.url, |(_, h)| h)
     }
 
-    pub fn toast(&mut self, title: &str, text: &str) {
-        self.toasts.push(Toast { title: title.into(), text: text.into(), until: Instant::now() + TOAST_FOR });
+    pub fn toast(&mut self, title: &str, text: &str, error: bool) {
+        self.toasts.push(Toast { title: title.into(), text: text.into(), error, until: Instant::now() + TOAST_FOR });
         if self.toasts.len() > 4 {
             self.toasts.remove(0);
         }
-    }
-
-    pub fn set_status(&mut self, text: &str) {
-        self.status = text.into();
     }
 
     // ── events ───────────────────────────────────────────────────────────
@@ -105,24 +124,21 @@ impl App {
     pub fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|t| t.until > now);
+        for i in 0..self.channels.len() {
+            let visible = i == self.active;
+            self.with_channel(i, |ch, ctx| ch.tick(now, visible, ctx));
+        }
+    }
+
+    /// When the screen next needs drawing without any input (an animation frame, a spinner).
+    pub fn next_wake(&self) -> Option<Instant> {
+        self.channels[self.active].next_wake()
     }
 
     pub fn on_msg(&mut self, msg: Msg) {
-        match msg {
-            Msg::Link(Ok(_)) => {
-                self.link = Some(true);
-                self.set_status("");
-            }
-            Msg::Link(Err(e)) => {
-                self.link = Some(false);
-                self.set_status(&format!("✖ no link to Mabel: {}", e.chars().take(80).collect::<String>()));
-            }
-            Msg::Toast { title, text } => self.toast(&title, &text),
-            Msg::For(id, data) => {
-                if let Some(ch) = self.channels.iter_mut().find(|c| c.id() == id) {
-                    ch.on_msg(data);
-                }
-            }
+        let Msg::For(id, data) = msg;
+        if let Some(i) = self.channels.iter().position(|c| c.accepts(id)) {
+            self.with_channel(i, |ch, ctx| ch.on_msg(id, data, ctx));
         }
     }
 
@@ -130,13 +146,14 @@ impl App {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Mouse(mouse) => self.on_mouse(mouse),
+            Event::Paste(text) => {
+                if let Focus::Inside(section) = self.focus {
+                    let active = self.active;
+                    self.with_channel(active, |ch, ctx| ch.paste(section, &text, ctx));
+                }
+            }
             _ => {}
         }
-    }
-
-    fn ctx_parts(&mut self) -> (&mut Box<dyn Channel>, Ctx<'_>) {
-        let ch = &mut self.channels[self.active];
-        (ch, Ctx { api: &self.api, cfg: &self.cfg, tx: &self.tx })
     }
 
     fn on_key(&mut self, key: KeyEvent) {
@@ -166,11 +183,15 @@ impl App {
             return;
         }
         if keys::ctrl(&key, 'p') {
-            self.toast("AUDIO", "Music comes with the AUDIO port (phase 3).");
+            self.toast("AUDIO", "Music comes with the AUDIO port (phase 3).", false);
             return;
         }
         if keys::ctrl(&key, 't') {
-            self.toast("COLOURS", "The colour tuner isn't ported yet. palette and [colors] in config.toml work.");
+            self.toast(
+                "COLOURS",
+                "The colour tuner isn't ported yet. palette and [colors] in config.toml work.",
+                false,
+            );
             return;
         }
         match self.focus {
@@ -180,14 +201,13 @@ impl App {
     }
 
     fn key_inside(&mut self, section: usize, key: KeyEvent) {
-        let (ch, mut ctx) = self.ctx_parts();
-        if ch.key(section, key, &mut ctx) == Outcome::Used {
+        let active = self.active;
+        if self.with_channel(active, |ch, ctx| ch.key(section, key, ctx)) == Outcome::Used {
             return;
         }
         // Inside, h j k l are the arrows wherever the section doesn't use the letter.
         if let Some(arrow) = keys::ch(&key).and_then(keys::arrow_for) {
-            let (ch, mut ctx) = self.ctx_parts();
-            ch.key(section, arrow, &mut ctx);
+            self.with_channel(active, |ch, ctx| ch.key(section, arrow, ctx));
             return;
         }
         if key.code == KeyCode::Esc || keys::ctrl_bracket(&key) {
@@ -198,8 +218,7 @@ impl App {
     }
 
     fn key_nav(&mut self, lit: Option<usize>, key: KeyEvent) {
-        let c = keys::ch(&key);
-        match (c, key.code) {
+        match (keys::ch(&key), key.code) {
             (Some(k @ ('h' | 'j' | 'k' | 'l')), _) => match lit.filter(|&i| self.visible(i)) {
                 None => self.start_nav(),
                 Some(current) => {
@@ -220,40 +239,46 @@ impl App {
             }
             (Some('?'), _) => self.open_help(),
             _ => {
-                let (ch, mut ctx) = self.ctx_parts();
-                ch.nav_key(key, &mut ctx);
+                let active = self.active;
+                self.with_channel(active, |ch, ctx| ch.nav_key(key, ctx));
             }
         }
     }
 
     fn on_mouse(&mut self, mouse: MouseEvent) {
-        let MouseEventKind::Down(MouseButton::Left) = mouse.kind else {
-            return;
-        };
         let (x, y) = (mouse.column, mouse.row);
+        let left = mouse.kind == MouseEventKind::Down(MouseButton::Left);
         if self.help.is_some() {
-            self.help = None;
+            if left {
+                self.help = None;
+            }
             return;
         }
-        if self.tab_row.contains((x, y).into()) {
+        if left && self.tab_row.contains((x, y).into()) {
             let labels: Vec<&str> = self.channels.iter().map(|c| c.tab()).collect();
-            if let Some(i) =
-                ui::tab_places(self.tab_row, &labels, self.active).iter().position(|(_, r)| r.contains((x, y).into()))
-            {
+            let places = ui::tab_places(self.tab_row, &labels, self.active);
+            if let Some(i) = places.iter().position(|(_, r)| r.contains((x, y).into())) {
                 self.switch(i);
             }
             return;
         }
-        if self.channels[self.active].click(x, y) {
-            self.settle = true;
-            return;
-        }
-        if let Some(i) = nav::hit(&self.sections, x, y) {
+        let section = nav::hit(&self.sections, x, y);
+        if left && let Some(i) = section {
             self.focus = Focus::Inside(i); // clicked into it: inside now
+        }
+        let active = self.active;
+        let before = self.help_id_now();
+        let used = self.with_channel(active, |ch, ctx| ch.mouse(mouse, section, ctx));
+        if used == Outcome::Used && self.help_id_now() != before {
+            self.settle = true; // a suite's bar was clicked: another app is on screen
         }
     }
 
     // ── channels and nav ─────────────────────────────────────────────────
+
+    fn help_id_now(&self) -> &'static str {
+        self.channels[self.active].help_id()
+    }
 
     fn visible(&self, i: usize) -> bool {
         self.sections.get(i).is_some_and(|r| r.width > 0 && r.height > 0)
@@ -266,7 +291,7 @@ impl App {
 
     fn switch(&mut self, index: usize) {
         if index == self.active && self.channels[index].cycle() {
-            self.settle = true; // F7 / F8 again: the next app in the suite
+            self.settle = true; // F1 / F7 / F8 again: the next app in the suite
             return;
         }
         self.active = index;
@@ -275,7 +300,7 @@ impl App {
     }
 
     fn open_help(&mut self) {
-        self.help = Some((self.channels[self.active].help_id(), 0));
+        self.help = Some((self.help_id_now(), 0));
     }
 
     /// Where a channel starts once its layout is known: straight inside (COMMS: the prompt) or nav mode.
@@ -310,7 +335,7 @@ impl App {
         ui::tabs(frame, tabs, &pal, &labels, self.active);
         self.tab_row = Rect { height: 1, ..tabs };
 
-        let view = View { pal: &pal, narrow: self.narrow, focus: self.focus };
+        let view = View { pal: &pal, narrow: self.narrow, focus: self.focus, now: Instant::now() };
         self.sections = self.channels[self.active].render(frame, body, &view);
         // A resize can hide the section the keyboard was in (wide → narrow): back to nav mode.
         let current = match self.focus {
@@ -327,8 +352,7 @@ impl App {
         ui::statusline(frame, status, &pal, None, &self.status);
         let mut footer_keys = vec![("F1", "COMMS"), ("F2", "LIFE"), ("F3", "AUDIO"), ("F4", "INVENTORY")];
         if self.narrow {
-            footer_keys.clear();
-            footer_keys.push(("alt+1–8", "channels"));
+            footer_keys = vec![("alt+1–8", "channels")];
         }
         footer_keys.extend([("?", "keys"), ("^p", "play/pause"), ("^q", "power off")]);
         ui::footer(frame, footer, &pal, &footer_keys);
