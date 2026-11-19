@@ -46,23 +46,65 @@ def test_install_script_points_at_this_server():
     assert 'RS_BUILDS="x86_64:x1 aarch64:a1"' in with_rs
 
 
-def test_the_installer_picks_the_rust_build_for_this_arch(tmp_path):
-    """install_rust alone, against a fake fetch: the right binary, linked, its build recorded."""
-    script = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
-    body = script.split("main() {")[0]                     # the functions, without running main
+def _sh(tmp_path, script, extra, env=None):
+    """Run the installer's functions (not main) with `extra` appended, in a scratch home."""
+    body = script.split("\nmain() {")[0]
     home = tmp_path / "home"
-    harness = body + """
+    full_env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "XDG_DATA_HOME": str(home / "data"),
+                "XDG_CONFIG_HOME": str(home / "cfg"), **(env or {})}
+    done = subprocess.run(["sh", "-c", body + "\n" + extra], env=full_env, capture_output=True, text=True)
+    return done, home
+
+
+def test_the_installer_picks_the_rust_build_for_this_arch(tmp_path):
+    """rust_build + install_rust against a fake download: the right binary, linked as mabel and
+    mabel-os, its build recorded."""
+    script = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
+    done, home = _sh(tmp_path, script, """
 fetch() { printf 'binary from %s' "$1" > "$2"; }
 uname() { echo aarch64; }
-mkdir -p "$APP" "$BIN"; t=$(mktemp -d); install_rust "$t"
-"""
-    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "XDG_DATA_HOME": str(home / "data")}
-    done = subprocess.run(["sh", "-c", harness], env=env, capture_output=True, text=True)
+mkdir -p "$APP" "$BIN"; t=$(mktemp -d)
+found=$(rust_build); echo "found $found"; install_rust "$t" $found
+""")
     assert done.returncode == 0, done.stderr
+    assert "found aarch64 a1" in done.stdout
     app = home / "data" / "mabel-tui"
     assert (app / "mabel-os").read_text() == "binary from https://b/tui/rs/mabel-os-aarch64"
     assert (app / "build-rs").read_text().strip() == "a1"
-    assert (home / ".local" / "bin" / "mabel-os").resolve() == app / "mabel-os"
+    for name in ("mabel-os", "mabel"):
+        assert (home / ".local" / "bin" / name).resolve() == app / "mabel-os"
+    done, _ = _sh(tmp_path, script, "uname() { echo armv7l; }; rust_build || echo none")
+    assert done.stdout.strip() == "none", "a 32-bit Pi gets the Python TUI"
+
+
+def test_pairing_writes_the_config_and_keeps_the_rest(tmp_path):
+    script = ti.install_script("https://b", "w.whl", "abc", {})
+    conf = tmp_path / "home" / "cfg" / "mabel-tui" / "config.toml"
+    conf.parent.mkdir(parents=True)
+    conf.write_text('url = "http://old"\ntoken = "ody_old"\npalette = "deck"\n\n[colors]\nurl = "kept: not top-level"\n')
+    answer = '{"url":"https://box.ts.net","index_url":"https://box.ts.net:8765","token":"ody_new","name":"Mabel TUI · deck"}'
+    done, _ = _sh(tmp_path, script, f"""
+post_json() {{ printf '%s' '{answer}' > "$3"; echo 200; }}
+hostname() {{ echo 'mabel deck;'; }}
+t=$(mktemp -d); pair "$t"
+echo "url=$(conf_value url) token=$(conf_value token)"
+""")
+    assert done.returncode == 0, done.stderr
+    assert "url=https://box.ts.net token=ody_new" in done.stdout
+    text = conf.read_text()
+    assert text.startswith('url = "https://box.ts.net"\ntoken = "ody_new"\nindex_url = "https://box.ts.net:8765"\n')
+    assert 'palette = "deck"' in text and 'url = "kept: not top-level"' in text and "ody_old" not in text
+    assert conf.stat().st_mode & 0o777 == 0o600
+    assert list(conf.parent.glob("config.toml.bak-*")), "the old config is kept"
+
+
+def test_a_refused_pairing_says_why(tmp_path):
+    script = ti.install_script("https://b", "w.whl", "abc", {})
+    done, _ = _sh(tmp_path, script, """
+post_json() { printf '{"detail":"This device\\047s tailnet login isn\\047t allowed to pair"}' > "$3"; echo 403; }
+t=$(mktemp -d); pair "$t"
+""")
+    assert done.returncode != 0 and "isn't allowed to pair" in done.stderr
 
 
 def test_rust_builds_are_listed_by_content(tmp_path, monkeypatch):

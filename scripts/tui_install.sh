@@ -3,10 +3,13 @@
 #
 #   curl -fsSL @@BASE@@/tui/install.sh | sh
 #
-# Installs the TUI into ~/.local/share/mabel-tui, links `mabel` into ~/.local/bin (and the Rust
-# build as `mabel-os`, when Mabel has one for this machine's architecture) and, if
-# this device has no working config yet, pairs it with Mabel through its Tailscale login.
+# Installs MABEL-OS (the Rust build for this machine, tui-rs/) into ~/.local/share/mabel-tui, links
+# `mabel` and `mabel-os` into ~/.local/bin and, if this device has no working config yet, pairs it
+# with Mabel through its Tailscale login. Needs only sh, curl or wget, and awk/sed.
 # Run it again to update (or press F12 in MABEL-OS when it says UPDATE); a working config is kept.
+#
+# A machine Mabel has no Rust build for (not x86_64 or aarch64) gets the old Python TUI instead,
+# which needs Python 3.12+.
 set -eu
 
 BASE="@@BASE@@"
@@ -27,6 +30,69 @@ fetch() {
     else die "needs curl or wget"; fi
 }
 
+# GET $1 with a bearer token $2; succeeds only on a 2xx.
+get_auth() {
+    if command -v curl >/dev/null 2>&1; then curl -fsS --max-time 20 -o /dev/null -H "Authorization: Bearer $2" "$1"
+    else wget -q -T 20 -O /dev/null --header "Authorization: Bearer $2" "$1"; fi
+}
+
+# POST JSON $2 to $1; the answer's body goes to $3, its HTTP status to stdout.
+post_json() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -sS --max-time 30 -o "$3" -w '%{http_code}' -H 'Content-Type: application/json' -d "$2" "$1" || echo 000
+    else
+        if wget -q -T 30 -O "$3" --content-on-error --header 'Content-Type: application/json' --post-data "$2" "$1"
+        then echo 200; else echo 400; fi
+    fi
+}
+
+# A JSON string field from a flat object (Mabel's answers have no quotes inside the values).
+json_field() {
+    sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" "$2" | head -n 1
+}
+
+# A top-level `key = "value"` from the config (before its first [section]).
+conf_value() {
+    awk -v key="$1" '
+        /^[[:space:]]*\[/ { exit }
+        {
+            line = $0
+            if (match(line, "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*\"")) {
+                rest = substr(line, RLENGTH + 1)
+                sub(/".*$/, "", rest)
+                print rest
+                exit
+            }
+        }' "$CONF"
+}
+
+rust_build() {
+    case "$(uname -m)" in
+        x86_64|amd64) arch=x86_64 ;;
+        aarch64|arm64) arch=aarch64 ;;
+        *) return 1 ;;
+    esac
+    for pair in $RS_BUILDS; do
+        if [ "${pair%%:*}" = "$arch" ]; then
+            echo "$arch ${pair#*:}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+install_rust() {
+    tmp=$1 arch=$2 rs=$3
+    say "fetching MABEL-OS ${D}($arch, build $rs)${R}"
+    fetch "$BASE/tui/rs/mabel-os-$arch" "$tmp/mabel-os" || die "couldn't download $BASE/tui/rs/mabel-os-$arch (is this device on the tailnet?)"
+    chmod 755 "$tmp/mabel-os"
+    cp "$tmp/mabel-os" "$APP/mabel-os.new"
+    mv -f "$APP/mabel-os.new" "$APP/mabel-os"             # a rename: a running copy keeps going
+    ln -sf "$APP/mabel-os" "$BIN/mabel-os"
+    ln -sf "$APP/mabel-os" "$BIN/mabel"                   # `mabel` is the Rust MABEL-OS now
+    printf '%s\n' "$rs" > "$APP/build-rs"                 # what mabel-os compares with /tui/version (F12)
+}
+
 find_python() {
     for c in python3.14 python3.13 python3.12 python3; do
         if command -v "$c" >/dev/null 2>&1 &&
@@ -37,9 +103,10 @@ find_python() {
     return 1
 }
 
-install_app() {
+# The old Python TUI, for machines without a Rust build.
+install_python() {
     tmp=$1
-    say "fetching the TUI ${D}($WHEEL)${R}"
+    say "no Rust build for $(uname -m): installing the Python TUI ${D}($WHEEL)${R}"
     fetch "$BASE/tui/$WHEEL" "$tmp/$WHEEL" || die "couldn't download $BASE/tui/$WHEEL (is this device on the tailnet?)"
     if [ -x "$APP/venv/bin/python" ] &&
        ! "$APP/venv/bin/python" -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null; then
@@ -47,99 +114,64 @@ install_app() {
     fi
     if command -v uv >/dev/null 2>&1; then
         [ -x "$APP/venv/bin/python" ] || uv venv -q --python '>=3.12' "$APP/venv" </dev/null
-        say "installing ${D}(uv)${R}"
         uv pip install -q --python "$APP/venv/bin/python" --reinstall-package mabel-tui "$tmp/$WHEEL" </dev/null
     elif py=$(find_python); then
         [ -x "$APP/venv/bin/python" ] || "$py" -m venv "$APP/venv" </dev/null
-        say "installing ${D}(pip; the first time takes a while on a Pi)${R}"
         pip="$APP/venv/bin/python -m pip -q --disable-pip-version-check"
         $pip install --force-reinstall --no-deps "$tmp/$WHEEL" </dev/null
         $pip install "$tmp/$WHEEL" </dev/null                  # its dependencies, if any are missing
     else
-        die "needs Python 3.12+ with venv (Debian/Pi OS: sudo apt install python3-venv), or uv:
-  curl -LsSf https://astral.sh/uv/install.sh | sh"
+        die "needs Python 3.12+ with venv here (no Rust build for $(uname -m))"
     fi
     ln -sf "$APP/venv/bin/mabel" "$BIN/mabel"
     printf '%s\n' "$BUILD" > "$APP/build"                 # what the TUI compares with /tui/version (F12)
 }
 
-install_rust() {
-    tmp=$1
-    case "$(uname -m)" in
-        x86_64|amd64) arch=x86_64 ;;
-        aarch64|arm64) arch=aarch64 ;;
-        *) return 0 ;;
-    esac
-    rs=
-    for pair in $RS_BUILDS; do
-        [ "${pair%%:*}" = "$arch" ] && rs=${pair#*:}
-    done
-    [ -n "$rs" ] || return 0
-    say "fetching MABEL-OS in Rust ${D}($arch, $rs)${R}"
-    if ! fetch "$BASE/tui/rs/mabel-os-$arch" "$tmp/mabel-os"; then
-        say "${D}couldn't download the Rust build; mabel works without it${R}"
-        return 0
-    fi
-    chmod 755 "$tmp/mabel-os"
-    cp "$tmp/mabel-os" "$APP/mabel-os.new"
-    mv -f "$APP/mabel-os.new" "$APP/mabel-os"             # a rename: a running copy keeps going
-    ln -sf "$APP/mabel-os" "$BIN/mabel-os"
-    printf '%s\n' "$rs" > "$APP/build-rs"                 # what mabel-os compares with /tui/version (F12)
-}
-
 config_works() {
     [ -f "$CONF" ] || return 1
-    "$APP/venv/bin/python" - "$CONF" <<'PY' </dev/null
-import sys, tomllib, urllib.request
-try:
-    c = tomllib.load(open(sys.argv[1], "rb"))
-    req = urllib.request.Request(str(c["url"]).rstrip("/") + "/api/tui/life",
-                                 headers={"Authorization": "Bearer " + str(c["token"])})
-    sys.exit(0 if urllib.request.urlopen(req, timeout=20).status == 200 else 1)
-except Exception:
-    sys.exit(1)
-PY
+    url=$(conf_value url) token=$(conf_value token)
+    [ -n "$url" ] && [ -n "$token" ] || return 1
+    get_auth "${url%/}/api/tui/life" "$token" </dev/null 2>/dev/null
 }
 
 device_name() {
     hostname 2>/dev/null || uname -n 2>/dev/null || cat /etc/hostname 2>/dev/null || echo device
 }
 
+# Ask Mabel for a token through this device's Tailscale login; write url, token and index_url into
+# the config and keep everything else in it (the old file is kept as a .bak).
 pair() {
-    device=$(device_name)
-    say "pairing ${D}$device through your Tailscale login${R}"
-    "$APP/venv/bin/python" - "$CONF" "$BASE" "$device" <<'PY'
-import json, os, re, sys, time, urllib.error, urllib.request
-conf, base, device = sys.argv[1], sys.argv[2], sys.argv[3]
-req = urllib.request.Request(base + "/api/tui/pair", data=json.dumps({"device": device}).encode(),
-                             headers={"Content-Type": "application/json"}, method="POST")
-try:
-    got = json.load(urllib.request.urlopen(req, timeout=30))
-except urllib.error.HTTPError as e:
-    try:
-        why = json.load(e).get("detail")
-    except Exception:
-        why = e.reason
-    sys.exit(f"pairing refused: {why}")
-except Exception as e:
-    sys.exit(f"couldn't reach Mabel: {e}")
-os.makedirs(os.path.dirname(conf), exist_ok=True)
-keep = []
-if os.path.exists(conf):                                   # keep everything but where she is and the token
-    old = open(conf, encoding="utf-8").read()
-    os.replace(conf, conf + time.strftime(".bak-%Y%m%d-%H%M%S"))
-    top = True
-    for line in old.splitlines():
-        top = top and not line.lstrip().startswith("[")
-        if top and re.match(r"\s*(url|token|index_url)\s*=", line):
-            continue
-        keep.append(line)
-lines = [f'url = "{got["url"]}"', f'token = "{got["token"]}"', f'index_url = "{got["index_url"]}"']
-fd = os.open(conf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    f.write("\n".join(lines + keep).rstrip() + "\n")
-print(got["name"])
-PY
+    tmp=$1
+    device=$(device_name | tr -cd 'A-Za-z0-9._-')
+    say "pairing ${D}${device:-device} through your Tailscale login${R}"
+    code=$(post_json "$BASE/api/tui/pair" "{\"device\": \"${device:-device}\"}" "$tmp/pair.json")
+    if [ "$code" != 200 ]; then
+        why=$(json_field detail "$tmp/pair.json" 2>/dev/null || true)
+        [ "$code" = 000 ] && die "couldn't reach Mabel at $BASE"
+        die "pairing refused: ${why:-HTTP $code}"
+    fi
+    url=$(json_field url "$tmp/pair.json") token=$(json_field token "$tmp/pair.json")
+    index=$(json_field index_url "$tmp/pair.json") name=$(json_field name "$tmp/pair.json")
+    [ -n "$url" ] && [ -n "$token" ] || die "Mabel's answer had no url or token"
+    mkdir -p "$(dirname "$CONF")"
+    : > "$tmp/keep"
+    if [ -f "$CONF" ]; then
+        cp "$CONF" "$CONF.bak-$(date +%Y%m%d-%H%M%S)"
+        awk '
+            /^[[:space:]]*\[/ { section = 1 }
+            !section && /^[[:space:]]*(url|token|index_url)[[:space:]]*=/ { next }
+            { print }' "$CONF" > "$tmp/keep"
+    fi
+    (
+        umask 077
+        {
+            printf 'url = "%s"\ntoken = "%s"\nindex_url = "%s"\n' "$url" "$token" "$index"
+            cat "$tmp/keep"
+        } > "$CONF.new"
+    )
+    chmod 600 "$CONF.new"
+    mv -f "$CONF.new" "$CONF"
+    say "paired as ${A}$name${R} ${D}(config: $CONF)${R}"
 }
 
 main() {
@@ -147,21 +179,19 @@ main() {
     mkdir -p "$APP" "$BIN"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    install_app "$tmp"
-    install_rust "$tmp"
+    if found=$(rust_build); then
+        install_rust "$tmp" ${found}
+    else
+        install_python "$tmp"
+    fi
     if config_works; then
         say "kept your config ${D}($CONF)${R}"
     else
-        name=$(pair) || die "not paired. Is this device signed in to Tailscale as you?"
-        say "paired as ${A}$name${R} ${D}(config: $CONF)${R}"
+        pair "$tmp"
     fi
     command -v mpv >/dev/null 2>&1 || say "${D}AUDIO plays through mpv, which isn't installed here${R}"
     case ":$PATH:" in *":$BIN:"*) ;; *) say "${D}$BIN isn't on your PATH; add it, or run $BIN/mabel${R}" ;; esac
-    if [ -x "$APP/mabel-os" ]; then
-        say "done. Run ${A}mabel-os${R} ${D}(Rust) or mabel (Python)${R}"
-    else
-        say "done. Run ${A}mabel${R}"
-    fi
+    say "done. Run ${A}mabel${R}"
 }
 
 main "$@"

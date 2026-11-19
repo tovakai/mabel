@@ -29,6 +29,7 @@ mod palette;
 mod pixel;
 mod pixelview;
 mod player;
+mod printserver;
 mod suite;
 mod sysinfo;
 mod sysview;
@@ -62,6 +63,10 @@ use app::App;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `mabel-os print-server`: the deck's print server (mabel-print.service), not the TUI.
+    if std::env::args().nth(1).as_deref() == Some("print-server") {
+        return tokio::task::spawn_blocking(printserver::run).await?;
+    }
     if let Ok(pid) = std::env::var(PAUSED_ENV) {
         eprintln!(
             "This shell belongs to a paused MABEL-OS (pid {pid}).\nType exit to go back to it, instead of starting a second one."
