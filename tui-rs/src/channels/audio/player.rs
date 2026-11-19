@@ -21,17 +21,23 @@ use crate::os::channel::Msg;
 /// Where a song plays from: a downloaded file, else the stream.
 pub type Locate = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
+/// What's playing, as mpv last reported it (AUDIO, the status line and MPRIS read this).
 #[derive(Default)]
 pub struct State {
+    /// The queue (Navidrome song JSON) and which song is playing.
     pub queue: Vec<Value>,
     pub index: Option<usize>,
     pub paused: bool,
+    /// Seconds into the song, and its length (0 until mpv knows).
     pub position: f64,
     pub duration: f64,
+    /// 0-100.
     pub volume: i64,
     /// New plays start with the chosen song, the rest shuffled.
     pub shuffle: bool,
+    /// The last error (mpv missing, a song that won't play), shown once.
     pub error: String,
+    /// Songs already scrobbled this time through (each counts once).
     scrobbled: HashSet<String>,
 }
 
@@ -41,6 +47,7 @@ impl State {
     }
 
     /// The length of the song on now (mpv's word, else the library's).
+    /// The song's length: mpv's, else Navidrome's (mpv doesn't know a stream's length at first).
     pub fn length(&self) -> f64 {
         if self.duration > 0.0 {
             self.duration
@@ -62,6 +69,7 @@ pub struct Player {
 }
 
 /// Tiny shuffle without a dependency: xorshift seeded from the clock.
+/// Shuffle in place (a small random source; no extra crate needed).
 fn shuffle<T>(items: &mut [T]) {
     let mut x =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64) | 1;
@@ -73,11 +81,13 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
+/// A song's id.
 fn id(song: &Value) -> &str {
     song["id"].as_str().unwrap_or("")
 }
 
 impl Player {
+    /// A player; mpv starts with the first song. `app` hears about changes (Msg "player").
     pub fn new(music: Music, locate: Locate, volume: i64, app: UnboundedSender<Msg>) -> Self {
         let state = State { volume, ..Default::default() };
         Player { state: Arc::new(Mutex::new(state)), music, locate, mpv: Arc::new(Mutex::new(None)), app }
@@ -88,10 +98,12 @@ impl Player {
     }
 
     /// Read the state (the queue, what's on, the position…).
+    /// Look at the state for a moment.
     pub fn with<R>(&self, f: impl FnOnce(&State) -> R) -> R {
         f(&self.state.lock().expect("player state"))
     }
 
+    /// Change the state and tell the app.
     fn update(&self, f: impl FnOnce(&mut State)) {
         f(&mut self.state.lock().expect("player state"));
         self.changed();
@@ -102,6 +114,7 @@ impl Player {
     }
 
     /// Take (and clear) the last error, for a toast.
+    /// The last error, once (it's cleared).
     pub fn take_error(&self) -> Option<String> {
         let mut s = self.state.lock().expect("player state");
         (!s.error.is_empty()).then(|| std::mem::take(&mut s.error))
@@ -116,6 +129,7 @@ impl Player {
     }
 
     /// Start mpv if it isn't running. Commands sent meanwhile wait in the channel.
+    /// Start mpv if it isn't running (false: mpv isn't installed).
     fn ensure(&self) -> bool {
         let mut slot = self.mpv.lock().expect("mpv");
         if slot.as_ref().is_some_and(|tx| !tx.is_closed()) {
@@ -139,6 +153,8 @@ impl Player {
         true
     }
 
+    /// mpv's life: start it idle with a control socket, send it the queued commands, and turn
+    /// its property changes into `State` until it exits.
     async fn run_mpv(&self, mut rx: UnboundedReceiver<Value>) -> anyhow::Result<()> {
         let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(crate::os::config::cache_dir);
         std::fs::create_dir_all(&dir)?;
@@ -220,6 +236,8 @@ impl Player {
         Ok(())
     }
 
+    /// One property change from mpv: pause, position (scrobbling a song at half its length or
+    /// 4 minutes), duration, which song, idle. Tells Navidrome "now playing" on a new song.
     fn property(&self, name: &str, value: &Value, notify: bool) {
         let mut now_playing = None;
         let mut scrobble = None;
@@ -262,12 +280,14 @@ impl Player {
         }
     }
 
+    /// Give mpv a song: from disk if downloaded, else the stream (`how`: replace or append).
     fn load(&self, song: &Value, how: &str) {
         self.cmd(json!(["loadfile", (self.locate)(id(song)), how]));
     }
 
     // ── the queue ────────────────────────────────────────────────────────
 
+    /// Play `songs` from `start` (shuffled after it, if shuffle is on), replacing the queue.
     pub fn play(&self, songs: Vec<Value>, start: usize) {
         if songs.is_empty() || !self.ensure() {
             return;
@@ -295,6 +315,7 @@ impl Player {
         });
     }
 
+    /// Add songs to the end of the queue.
     pub fn enqueue(&self, songs: Vec<Value>) {
         if self.with(|s| s.queue.is_empty()) {
             return self.play(songs, 0);
@@ -322,6 +343,7 @@ impl Player {
     }
 
     /// Shuffle on: everything after the current song is shuffled now (and new plays start shuffled).
+    /// Shuffle on or off (on: the rest of the queue is shuffled now).
     pub fn set_shuffle(&self, on: bool) {
         let (index, len) = self.with(|s| (s.index, s.queue.len()));
         let after = index.map_or(0, |i| i + 1);
@@ -342,6 +364,7 @@ impl Player {
         self.update(|s| s.shuffle = on);
     }
 
+    /// Play the queue's song at `index`.
     pub fn jump(&self, index: usize) {
         if index < self.with(|s| s.queue.len()) {
             self.cmd(json!(["set_property", "playlist-pos", index]));
@@ -349,18 +372,22 @@ impl Player {
         }
     }
 
+    /// Pause or play.
     pub fn toggle(&self) {
         self.cmd(json!(["cycle", "pause"]));
     }
 
+    /// Pause or play, as told.
     pub fn set_paused(&self, paused: bool) {
         self.cmd(json!(["set_property", "pause", paused]));
     }
 
+    /// The next song.
     pub fn next(&self) {
         self.cmd(json!(["playlist-next"]));
     }
 
+    /// Back to the start of the song, or (in its first 5 seconds) the song before.
     pub fn previous(&self) {
         if self.with(|s| s.position) > 5.0 {
             self.cmd(json!(["seek", 0, "absolute"]));
@@ -369,6 +396,7 @@ impl Player {
         }
     }
 
+    /// Jump `seconds` forward (or back, negative).
     pub fn seek(&self, seconds: f64) {
         self.cmd(json!(["seek", seconds, "relative"]));
     }

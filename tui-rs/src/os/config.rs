@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use toml::Table;
 
+/// `[navidrome]` in config.toml: talk to Navidrome directly instead of through Mabel's proxy
+/// (the deck does, so music works when Mabel's PC sleeps).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Navidrome {
     pub url: String,
@@ -16,27 +18,43 @@ pub struct Navidrome {
 }
 
 #[derive(Debug, Clone)]
+/// Everything in ~/.config/mabel-tui/config.toml (defaults in `parse`). Each field is a key.
 pub struct Config {
+    /// Mabel's address, e.g. "http://127.0.0.1:7000" (required).
     pub url: String,
+    /// An API token with the tui profile, "ody_…" (required; pairing writes it).
     pub token: String,
+    /// Music volume at start, 0-100 (70).
     pub volume: i64,
+    /// tk-index (the Gremlin Index) for INVENTORY ("http://127.0.0.1:8766").
     pub index_url: String,
+    /// His Obsidian vault, and Mabel's journal (VAULT, COURSE, housekeeping).
     pub vault: String,
     pub journal: String,
+    /// `[navidrome]`: music straight from Navidrome (None: through Mabel).
     pub navidrome: Option<Navidrome>,
+    /// Mabel's character preset sent with chats ("custom"; "" sends none).
     pub preset: String,
+    /// A folder with another avatar for COMMS ("" = the built-in one), and its frames per second (4).
     pub avatar: String,
     pub avatar_fps: f64,
+    /// Bitrate for offline downloads in kbps (0 = the original files).
     pub offline_bitrate: i64,
+    /// Where PIXEL and TRACKER keep their files.
     pub pixel_dir: String,
     pub tracker_dir: String,
+    /// TRACKER's and tapes' audio sample rate (44100).
     pub tracker_rate: i64,
+    /// This is the deck: SYS gets every page and the machine's power (false). (The narrow
+    /// layouts come from the screen's width, not from this.)
     pub deck: bool,
+    /// Install updates by itself when idle and nothing plays (false: wait for F12).
     pub auto_update: bool,
     /// The whole file, for the parts other modules read themselves (palette, colors).
     pub raw: Table,
 }
 
+/// An XDG folder (`var` if set, else `~/fallback`).
 fn xdg(var: &str, fallback: &str) -> PathBuf {
     match std::env::var_os(var) {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
@@ -44,10 +62,12 @@ fn xdg(var: &str, fallback: &str) -> PathBuf {
     }
 }
 
+/// The home folder.
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// ~/.config/mabel-tui/config.toml (or under XDG_CONFIG_HOME).
 pub fn config_path() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("mabel-tui").join("config.toml")
 }
@@ -65,6 +85,7 @@ pub fn expand(path: &str) -> PathBuf {
     }
 }
 
+/// Read the config file (a missing file says what it needs).
 pub fn load(path: &Path) -> Result<Config> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -78,6 +99,7 @@ pub fn load(path: &Path) -> Result<Config> {
     parse(&text, path)
 }
 
+/// Config from TOML text, with every default. `path` is only for error messages.
 pub fn parse(text: &str, path: &Path) -> Result<Config> {
     let raw: Table = text.parse().with_context(|| format!("{}: not valid TOML", path.display()))?;
     let t = Lookup(&raw);
@@ -123,6 +145,7 @@ pub fn parse(text: &str, path: &Path) -> Result<Config> {
 struct Lookup<'a>(&'a Table);
 
 impl Lookup<'_> {
+    /// A text key, or `default`.
     fn str(&self, key: &str, default: &str) -> String {
         match self.0.get(key) {
             Some(toml::Value::String(s)) if !s.is_empty() => s.clone(),
@@ -131,6 +154,7 @@ impl Lookup<'_> {
         }
     }
 
+    /// A whole-number key, or `default`.
     fn int(&self, key: &str, default: i64) -> i64 {
         match self.0.get(key) {
             Some(toml::Value::Integer(n)) if *n != 0 => *n,
@@ -140,6 +164,7 @@ impl Lookup<'_> {
         }
     }
 
+    /// A number key, or `default`.
     fn float(&self, key: &str, default: f64) -> f64 {
         match self.0.get(key) {
             Some(toml::Value::Float(f)) if *f != 0.0 => *f,
@@ -148,6 +173,7 @@ impl Lookup<'_> {
         }
     }
 
+    /// A true/false key, or `default`.
     fn bool(&self, key: &str, default: bool) -> bool {
         self.0.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }

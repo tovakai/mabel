@@ -26,6 +26,7 @@ pub enum ChatEvent {
 }
 
 impl ChatEvent {
+    /// An `error` event carrying `text` (so failures come through the same stream).
     fn error(text: impl Into<String>) -> Self {
         let mut body = Map::new();
         body.insert("error".into(), Value::String(text.into()));
@@ -34,6 +35,7 @@ impl ChatEvent {
 }
 
 impl Mabel {
+    /// A client for Mabel at `url`, sending the token with every request.
     pub fn new(url: &str, token: &str, preset: &str) -> Result<Self> {
         let mut headers = header::HeaderMap::new();
         let mut auth = header::HeaderValue::from_str(&format!("Bearer {token}"))?;
@@ -48,10 +50,12 @@ impl Mabel {
         Ok(Mabel { url: url.trim_end_matches('/').to_string(), token: token.into(), preset: preset.into(), http })
     }
 
+    /// A request to `path` with the usual 30-second limit.
     fn req(&self, method: Method, path: &str) -> RequestBuilder {
         self.http.request(method, format!("{}{}", self.url, path)).timeout(Duration::from_secs(30))
     }
 
+    /// The response if it succeeded; otherwise an error with the status and the start of the body.
     async fn checked(path: &str, resp: Response) -> Result<Response> {
         let status = resp.status();
         if status.as_u16() >= 300 {
@@ -61,11 +65,13 @@ impl Mabel {
         Ok(resp)
     }
 
+    /// GET `path` and read its JSON.
     async fn get_json(&self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
         let resp = self.req(Method::GET, path).query(params).send().await?;
         Ok(Self::checked(path, resp).await?.json().await?)
     }
 
+    /// GET `path` as bytes (None on any failure: used for pictures).
     async fn get_bytes(&self, path: &str, params: &[(&str, &str)]) -> Option<Vec<u8>> {
         let resp = self.req(Method::GET, path).query(params).send().await.ok()?;
         if resp.status().as_u16() != 200 {
@@ -178,31 +184,37 @@ impl Mabel {
 
     // ── her day ──────────────────────────────────────────────────────────
 
+    /// LIFE: what she's doing, her jobs, her journal, his lists.
     pub async fn life(&self) -> Result<Value> {
         self.get_json("/api/tui/life", &[]).await
     }
 
+    /// The picture of her last dream, if there is one.
     pub async fn dream_image(&self) -> Option<Vec<u8>> {
         self.get_bytes("/api/tui/dream-image", &[]).await
     }
 
     // ── music (Mabel's Navidrome proxy) ──────────────────────────────────
 
+    /// A Subsonic call through her Navidrome proxy (`getAlbum`, `search3`…).
     pub async fn music(&self, method: &str, params: &[(&str, &str)]) -> Result<Value> {
         let data = self.get_json(&format!("/api/music/rest/{method}"), params).await?;
         Ok(if data.is_object() { data } else { Value::Object(Map::new()) })
     }
 
+    /// A Subsonic call that changes something (playlists, scrobbles).
     pub async fn music_write(&self, method: &str, params: &Value) -> Result<()> {
         let path = format!("/api/music/rest/{method}");
         let resp = self.req(Method::POST, &path).json(params).send().await?;
         Self::checked(&path, resp).await.map(|_| ())
     }
 
+    /// Cover art, `size` pixels wide.
     pub async fn cover(&self, cover_id: &str, size: u32) -> Option<Vec<u8>> {
         self.get_bytes(&format!("/api/music/cover/{cover_id}"), &[("size", &size.to_string())]).await
     }
 
+    /// The URL mpv streams a song from (through her proxy).
     pub fn stream_url(&self, song_id: &str) -> String {
         format!("{}/api/music/stream/{song_id}", self.url)
     }
@@ -226,24 +238,28 @@ impl Mabel {
         Ok(data["tapes"].as_array().cloned().unwrap_or_default())
     }
 
+    /// A tape's .dtape bytes from the repo.
     pub async fn tape_download(&self, name: &str) -> Result<Vec<u8>> {
         let path = format!("/api/tapes/{name}.dtape");
         let resp = self.req(Method::GET, &path).timeout(Duration::from_secs(120)).send().await?;
         Ok(Self::checked(&path, resp).await?.bytes().await?.to_vec())
     }
 
+    /// Put a .dtape in the repo under `name` (replacing an older one).
     pub async fn tape_publish(&self, name: &str, dtape: Vec<u8>) -> Result<Value> {
         let path = format!("/api/tapes/{name}");
         let resp = self.req(Method::PUT, &path).timeout(Duration::from_secs(120)).body(dtape).send().await?;
         Ok(Self::checked(&path, resp).await?.json().await?)
     }
 
+    /// Take a tape out of the repo.
     pub async fn tape_unpublish(&self, name: &str) -> Result<()> {
         let path = format!("/api/tapes/{name}");
         let resp = self.req(Method::DELETE, &path).send().await?;
         Self::checked(&path, resp).await.map(|_| ())
     }
 
+    /// Is Beeper reachable through her, and with which accounts?
     pub async fn beeper_status(&self) -> Result<Value> {
         self.get_json("/api/beeper/status", &[]).await
     }
@@ -307,6 +323,7 @@ pub async fn save_stream(resp: Response, path: &std::path::Path) -> Result<u64> 
     Ok(size)
 }
 
+/// `text` cut to `max` characters (for error messages).
 fn clip(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
@@ -325,10 +342,12 @@ struct Sse {
 }
 
 impl Sse {
+    /// Add bytes as they arrive.
     fn feed(&mut self, chunk: &[u8]) {
         self.buf.extend_from_slice(chunk);
     }
 
+    /// The next complete `data:` line as an event (None: need more bytes).
     fn next_event(&mut self) -> Option<SseItem> {
         while let Some(end) = self.buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = self.buf.drain(..=end).collect();
@@ -348,6 +367,8 @@ impl Sse {
     }
 }
 
+/// One `data:` payload: `{"delta": …}` is reply text, `{"type": …}` a typed event,
+/// `{"error": …}` an error; anything else is ignored.
 fn parse_event(payload: &str) -> Option<ChatEvent> {
     let Ok(Value::Object(body)) = serde_json::from_str::<Value>(payload) else {
         return None;

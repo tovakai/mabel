@@ -65,6 +65,8 @@ pub struct App {
 }
 
 impl App {
+    /// Build the app: the API client, the music player (playing from disk when a song is
+    /// downloaded), MPRIS, and every channel. `tx` is how background work reaches `on_msg`.
     pub fn new(cfg: Config, tx: UnboundedSender<Msg>) -> anyhow::Result<Self> {
         let pal = Palette::from_config(&cfg.raw);
         let api = Mabel::new(&cfg.url, &cfg.token, &cfg.preset)?;
@@ -162,10 +164,12 @@ impl App {
         }
     }
 
+    /// Mabel's address without "http://" (for the casing).
     fn host(&self) -> &str {
         self.cfg.url.split_once("//").map_or(&self.cfg.url, |(_, h)| h)
     }
 
+    /// Show a card for 5 seconds (at most 4 at once; the oldest goes).
     pub fn toast(&mut self, title: &str, text: &str, error: bool) {
         self.toasts.push(Toast { title: title.into(), text: text.into(), error, until: Instant::now() + TOAST_FOR });
         if self.toasts.len() > 4 {
@@ -175,6 +179,7 @@ impl App {
 
     // ── events ───────────────────────────────────────────────────────────
 
+    /// Twice a second: check for updates now and then, expire toasts, tick every channel.
     pub fn tick(&mut self) {
         let now = Instant::now();
         if now >= self.next_update_check {
@@ -200,6 +205,7 @@ impl App {
 
     // ── updates pushed from the PC (update.rs) ───────────────────────────
 
+    /// Ask Mabel which build she serves (`quiet`: no toast if it's the same).
     fn check_update(&mut self, quiet: bool) {
         if quiet && crate::os::update::installed().is_none() {
             return; // run from the source tree: always current
@@ -211,6 +217,7 @@ impl App {
         });
     }
 
+    /// F12: install the waiting update, or check for one.
     fn update_key(&mut self) {
         if self.updating {
             return;
@@ -224,6 +231,7 @@ impl App {
         }
     }
 
+    /// Run the installer in the background (it replaces the binary; then MABEL-OS restarts).
     fn install_update(&mut self) {
         self.updating = true;
         let (tx, url) = (self.tx.clone(), self.cfg.url.clone());
@@ -233,6 +241,8 @@ impl App {
         });
     }
 
+    /// What the update check or install said: show ▲ UPDATE F12, install by itself when
+    /// `auto_update` is on and nobody's using it, or restart into the new build.
     fn on_update(&mut self, note: crate::os::update::Note) {
         match note {
             crate::os::update::Note::Served { build, quiet } => {
@@ -268,6 +278,8 @@ impl App {
         }
     }
 
+    /// A message from background work: hand it to the channel it's for (by id), switch
+    /// channel for a Deliver, quit, or handle an update note.
     pub fn on_msg(&mut self, msg: Msg) {
         let (id, data) = match msg {
             Msg::Quit => {
@@ -301,6 +313,7 @@ impl App {
         }
     }
 
+    /// A terminal event: keys (releases only to a running tape), mouse, pasted text.
     pub fn on_event(&mut self, event: Event) {
         if matches!(event, Event::Key(_) | Event::Mouse(_)) {
             self.last_input = Instant::now();
@@ -328,6 +341,7 @@ impl App {
         }
     }
 
+    /// Where a key goes, first match wins (docs/ARCHITECTURE.md lists the order).
     fn on_key(&mut self, key: KeyEvent) {
         // Inside a TERM shell or a running tape, the program gets every key but alt+1–9 and ctrl+].
         if let Focus::Inside(section) = self.focus
@@ -416,6 +430,7 @@ impl App {
         }
     }
 
+    /// A key while inside a section: the channel first, then h/j/k/l as arrows, then esc/?.
     fn key_inside(&mut self, section: usize, key: KeyEvent) {
         let active = self.active;
         if self.with_channel(active, |ch, ctx| ch.key(section, key, ctx)) == Outcome::Used {
@@ -433,6 +448,7 @@ impl App {
         }
     }
 
+    /// A key in nav mode: h/j/k/l move the light, i/a/enter go in, esc, ?; others to the channel.
     fn key_nav(&mut self, lit: Option<usize>, key: KeyEvent) {
         // Navigation's own keys always mean navigation: h j k l move, i / a / enter go in, esc,
         // ?. Every other key goes to the channel (AUDIO's space pauses, / searches…).
@@ -463,6 +479,7 @@ impl App {
         }
     }
 
+    /// A mouse event: tabs switch channel, a click goes inside a section, the rest to the channel.
     fn on_mouse(&mut self, mouse: MouseEvent) {
         let (x, y) = (mouse.column, mouse.row);
         let left = mouse.kind == MouseEventKind::Down(MouseButton::Left);
@@ -500,19 +517,23 @@ impl App {
 
     // ── channels and nav ─────────────────────────────────────────────────
 
+    /// Whose keys `?` would show now (the suite app on screen).
     fn help_id_now(&self) -> &'static str {
         self.channels[self.active].help_id()
     }
 
+    /// Was section `i` drawn with any size? (A hidden list has a zero rect.)
     fn visible(&self, i: usize) -> bool {
         self.sections.get(i).is_some_and(|r| r.width > 0 && r.height > 0)
     }
 
+    /// Nav mode with the first visible section lit.
     fn start_nav(&mut self) {
         let first = (0..self.sections.len()).find(|&i| self.visible(i));
         self.focus = Focus::Nav(first);
     }
 
+    /// Go to channel `index` (the same one again on a suite: its next app).
     fn switch(&mut self, index: usize) {
         if index == self.active && self.channels[index].cycle() {
             self.settle = true; // F1 / F7 / F8 again: the next app in the suite
@@ -523,6 +544,7 @@ impl App {
         self.settle = true;
     }
 
+    /// Open the `?` card.
     fn open_help(&mut self) {
         self.help = Some((self.help_id_now(), 0));
     }
@@ -539,6 +561,8 @@ impl App {
 
     // ── drawing ──────────────────────────────────────────────────────────
 
+    /// Draw everything: casing, tabs, the channel, status line, footer, toasts, and the help
+    /// card or tuner on top. A running tape gets everything under the casing.
     pub fn render(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let pal = self.pal;

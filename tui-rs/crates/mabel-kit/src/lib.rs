@@ -242,6 +242,8 @@ pub fn log(msg: &str) {
 
 // ---- inside a wasm tape: imports from TAPES ---------------------------------------------
 
+/// The wasm side: every function mirrors the public one of the same name above, by calling
+/// the TAPES import it names (`ffi`). Nothing to learn here that the public docs don't say.
 #[cfg(target_arch = "wasm32")]
 mod sys {
     use super::{Color, Sprite};
@@ -377,6 +379,8 @@ mod sys {
 // `cargo run --release` in a tape's folder: the same game, drawn by kit in whatever terminal
 // you're in, with sound, buttons and saves, no MABEL-OS needed.
 
+/// The native side: the same functions as the wasm side, done by kit itself (a framebuffer,
+/// sound, saves) for the standalone runner below.
 #[cfg(not(target_arch = "wasm32"))]
 mod sys {
     use super::{Color, Sprite};
