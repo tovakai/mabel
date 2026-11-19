@@ -160,7 +160,11 @@ pub fn dev_wasm(dir: &Path) -> PathBuf {
         .and_then(|t| t.parse::<toml::Table>().ok())
         .and_then(|t| t.get("package")?.get("name")?.as_str().map(str::to_string))
         .unwrap_or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-    dir.join("target/wasm32-unknown-unknown/release").join(format!("{}.wasm", name.replace('-', "_")))
+    // A binary keeps its package name as is ("first-light.wasm"); a library swaps - for _.
+    let out = dir.join("target/wasm32-unknown-unknown/release");
+    let plain = out.join(format!("{name}.wasm"));
+    let lib = out.join(format!("{}.wasm", name.replace('-', "_")));
+    if !plain.exists() && lib.exists() { lib } else { plain }
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {

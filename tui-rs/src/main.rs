@@ -15,6 +15,8 @@ mod browser;
 mod channel;
 mod comms;
 mod config;
+mod course;
+mod courses;
 mod dtape;
 mod help;
 mod housekeeping;

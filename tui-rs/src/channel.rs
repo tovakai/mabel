@@ -271,6 +271,10 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
                     app("inbox", "INBOX", "your chats via Beeper · WhatsApp, Signal, Telegram…"),
                     boxed(crate::inbox::Inbox::new()),
                 ),
+                (
+                    app("course", "COURSE", "courses from the vault · Mabel as your tutor"),
+                    boxed(crate::course::CourseApp::new(cfg)),
+                ),
             ],
         )),
         boxed(crate::life::Life::new()),
