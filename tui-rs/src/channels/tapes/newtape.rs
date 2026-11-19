@@ -17,6 +17,7 @@ use crate::tracker::{self, NOTE_OFF, Song, Step};
 pub const KIT_TAG: &str = "kit-v0.2";
 const KIT_GIT: &str = "https://github.com/tovakai/mabel";
 
+/// `mabel-os new-tape <name> [--kit <path>]`: make a starter tape and list it in TAPES.
 pub fn run(args: &[String]) -> Result<()> {
     let mut name = None;
     let mut kit_path = None;
@@ -73,6 +74,7 @@ pub fn run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Write the starter tape's files: tape.toml, Cargo.toml, src/main.rs, its art and music.
 fn create(dir: &Path, name: &str, kit: &str) -> Result<()> {
     std::fs::create_dir_all(dir.join("src"))?;
     std::fs::create_dir_all(dir.join(".cargo"))?;
@@ -220,9 +222,11 @@ fn hero() -> Hero {
     Hero(FRAMES)
 }
 
+/// The starter tape's hero: two 8×8 frames drawn as letters (one letter per colour).
 struct Hero([[&'static str; 8]; 2]);
 
 impl Hero {
+    /// Save as an .mpx picture with two frames.
     fn save_to(&self, path: &Path) -> Result<PathBuf> {
         let mut doc = pixel::Doc::new(8, 8, "db32");
         let colour = |c: char| -> pixel::Px {
@@ -261,6 +265,8 @@ fn blips() -> Song {
     song
 }
 
+/// What `register` did: added the tape to config.toml, found it already there, or left it
+/// to you (no config yet, or `tapes_dev` already lists others).
 enum Registered {
     Added(PathBuf),
     Already,

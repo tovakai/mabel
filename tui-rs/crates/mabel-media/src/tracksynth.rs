@@ -46,6 +46,7 @@ fn noise_table() -> Vec<f64> {
 
 // ── MIDI ─────────────────────────────────────────────────────────────────
 
+/// The MIDI devices plugged in (/dev/snd/midiC*D*).
 pub fn midi_ports() -> Vec<String> {
     let mut ports: Vec<String> = std::fs::read_dir("/dev/snd")
         .into_iter()
@@ -341,6 +342,7 @@ impl Engine {
         }
     }
 
+    /// Is anything playing?
     pub fn playing(&self) -> bool {
         self.mode.is_some()
     }
@@ -355,6 +357,7 @@ impl Engine {
         self.mutes.contains(&track) || self.solo.is_some_and(|s| s != track)
     }
 
+    /// How loud a track is now (for the meters).
     pub fn peak(&self, track: usize) -> f64 {
         self.voices[track].peak
     }
@@ -399,6 +402,7 @@ impl Engine {
         self.tracks[track].running = true;
     }
 
+    /// Stop: every track stops, every note is released, MIDI gets "all notes off".
     pub fn stop_all(&mut self) {
         self.mode = None;
         for t in &mut self.tracks {
@@ -513,6 +517,7 @@ impl Engine {
         }
     }
 
+    /// Apply a step's command (A, C, D… see `tracker::COMMANDS`) to a track.
     fn command(&mut self, track: usize, cmd: &str, val: i64) {
         let wave = (cmd == "W").then(|| wave_of(&self.song, val));
         let table = (cmd == "A").then(|| self.song.tables.get(&val).cloned()).flatten();
@@ -970,6 +975,8 @@ impl Drop for Output {
 
 // ── offline ──────────────────────────────────────────────────────────────
 
+/// Play the song once through without a sound card (until a track loops, or `max_seconds`),
+/// plus a second for release tails. With `events`, notes are logged for MIDI export.
 fn run_offline(song: &Song, sr: u32, max_seconds: f64, events: bool) -> (Engine, Vec<[f32; 2]>) {
     let mut e = Engine::new(song.clone(), sr, Midi::open(None));
     if events {
@@ -1027,6 +1034,7 @@ fn vlq(mut n: u64) -> Vec<u8> {
     out
 }
 
+/// One MIDI file track: events sorted by time, each with its delta time, then the end marker.
 fn chunk(mut evs: Vec<(u64, Vec<u8>)>) -> Vec<u8> {
     evs.sort_by_key(|(w, _)| *w);
     let mut body = vec![];

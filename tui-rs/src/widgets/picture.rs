@@ -10,6 +10,7 @@ use ratatui::style::Color;
 
 const MAX_KEPT: u32 = 320;
 
+/// An image to draw with half-block characters (two pixels per cell).
 pub struct Picture {
     source: DynamicImage,
     /// The copy scaled for (width, height) in cells.
@@ -17,6 +18,7 @@ pub struct Picture {
 }
 
 impl Picture {
+    /// Read an image (PNG, JPEG…); None if it isn't one.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         let source = image::load_from_memory(bytes).ok()?;
         // No screen shows more than ~320×200 half-block pixels: keep a copy that size, not the

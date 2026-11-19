@@ -117,6 +117,7 @@ pub struct Card {
     pub count: usize,
 }
 
+/// An item drawn on an area's grid.
 pub struct Block {
     pub item: Item,
     /// Its column, row, width and height on the grid (in cells).
@@ -129,6 +130,7 @@ pub struct Block {
     pub assumed: bool,
 }
 
+/// A layout inside a layout.
 pub struct Sub {
     /// A smaller layout sitting on the grid (a bin with its own spots) at column `c`, row `r`.
     pub layout: Layout,
@@ -137,6 +139,7 @@ pub struct Sub {
     pub route: String,
 }
 
+/// A level of a drawer unit or shelf.
 pub struct Level {
     /// One drawer or shelf: its route, name, what a place on it is called, what sits on it.
     pub route: String,

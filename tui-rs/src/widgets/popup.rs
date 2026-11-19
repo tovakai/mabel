@@ -31,6 +31,7 @@ pub fn frame_box(frame: &mut Frame, area: Rect, pal: &Palette, title: &str, foot
     inner
 }
 
+/// What a popup said after a key: still open, cancelled, or an answer.
 pub enum Answer<T> {
     /// Still open.
     Open,
@@ -46,6 +47,7 @@ pub struct Pick {
 }
 
 impl Pick {
+    /// A list of (id, label) to pick from, the first one selected.
     pub fn new(title: &str, options: Vec<(String, String)>) -> Self {
         Pick { title: title.into(), options, state: ListState::default().with_selected(Some(0)) }
     }
@@ -81,6 +83,7 @@ pub struct Ask {
 }
 
 impl Ask {
+    /// A question with one line to answer.
     pub fn new(title: &str, label: &str) -> Self {
         Ask { title: title.into(), input: Input::new(label) }
     }

@@ -5,6 +5,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// How many terminal cells text takes (wide characters count 2).
 pub fn width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
@@ -77,6 +78,7 @@ pub fn wrap_lines(lines: &[Line<'static>], max: usize) -> Vec<Line<'static>> {
     out
 }
 
+/// Split styled text into (word, the space after it, style).
 fn words(spans: &[Span<'static>]) -> Vec<(String, String, Style)> {
     let mut out = vec![];
     for span in spans {

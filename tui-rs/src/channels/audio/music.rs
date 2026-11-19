@@ -27,6 +27,7 @@ fn salt() -> String {
 }
 
 impl Music {
+    /// Navidrome directly if it's configured, else through Mabel.
     pub fn new(mabel: &Mabel, navidrome: Option<&NavidromeConfig>) -> Self {
         match navidrome {
             None => Music::Mabel(mabel.clone()),
@@ -43,6 +44,8 @@ impl Music {
         }
     }
 
+    /// Subsonic's login: user, a fresh salt, and md5(password + salt), so the password itself
+    /// never travels.
     fn auth(user: &str, password: &str) -> Vec<(String, String)> {
         let s = salt();
         let token = format!("{:x}", md5::compute(format!("{password}{s}")));
@@ -115,6 +118,7 @@ impl Music {
         }
     }
 
+    /// A cover image, `size` pixels.
     pub async fn cover(&self, cover_id: &str, size: u32) -> Option<Vec<u8>> {
         match self {
             Music::Mabel(api) => api.cover(cover_id, size).await,

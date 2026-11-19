@@ -69,6 +69,7 @@ impl Keymap {
         Keymap(map)
     }
 
+    /// The button a key is mapped to.
     pub fn button(&self, key: &str) -> Option<usize> {
         self.0.get(key).copied()
     }
@@ -124,6 +125,7 @@ impl Buttons {
         }
     }
 
+    /// Let go of button `b` (the terminal reports releases: buttons stop timing out).
     pub fn release(&mut self, b: usize) {
         self.releases = true;
         if b < COUNT {

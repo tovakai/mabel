@@ -35,15 +35,18 @@ pub struct Suggestion {
 }
 
 impl Suggestion {
+    /// Can MABEL-OS make this change itself (it comes with an edit)?
     pub fn applicable(&self) -> bool {
         self.edit.is_some()
     }
 }
 
+/// Where her housekeeping note lives in the vault.
 pub fn note_path(vault: &str) -> PathBuf {
     crate::os::config::expand(vault).join(NOTE)
 }
 
+/// Read the note's suggestions (its checkbox lines, under their sections).
 pub fn parse(text: &str) -> Vec<Suggestion> {
     let mut out = vec![];
     let mut section = String::new();
@@ -77,6 +80,7 @@ pub fn parse(text: &str) -> Vec<Suggestion> {
     out
 }
 
+/// Read the note from the vault (nothing if it isn't there).
 pub fn load(vault: &str) -> Vec<Suggestion> {
     std::fs::read_to_string(note_path(vault)).map(|t| parse(&t)).unwrap_or_default()
 }
@@ -87,6 +91,7 @@ pub fn tick(vault: &str, s: &Suggestion, done: bool) -> bool {
     tick_in(&path, s, done)
 }
 
+/// Tick (or untick) a suggestion's checkbox in the note. False if the note couldn't be changed.
 fn tick_in(path: &Path, s: &Suggestion, done: bool) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else { return false };
     let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();

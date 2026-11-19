@@ -57,6 +57,7 @@ impl Default for TapeInfo {
 }
 
 impl TapeInfo {
+    /// Read tape.toml's text (fps kept within 1-60).
     pub fn parse(text: &str) -> Result<TapeInfo, String> {
         let mut info: TapeInfo = toml::from_str(text).map_err(|e| format!("tape.toml: {e}"))?;
         info.fps = info.fps.clamp(1, 60);

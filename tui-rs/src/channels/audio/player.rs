@@ -31,7 +31,7 @@ pub struct State {
     /// Seconds into the song, and its length (0 until mpv knows).
     pub position: f64,
     pub duration: f64,
-    /// 0-100.
+    /// 0-130 (mpv goes a bit past 100).
     pub volume: i64,
     /// New plays start with the chosen song, the rest shuffled.
     pub shuffle: bool,
@@ -42,6 +42,7 @@ pub struct State {
 }
 
 impl State {
+    /// The song playing.
     pub fn current(&self) -> Option<&Value> {
         self.index.and_then(|i| self.queue.get(i))
     }
@@ -93,6 +94,7 @@ impl Player {
         Player { state: Arc::new(Mutex::new(state)), music, locate, mpv: Arc::new(Mutex::new(None)), app }
     }
 
+    /// Is mpv installed?
     pub fn available() -> bool {
         crate::channels::sys::sysinfo::have("mpv")
     }
@@ -109,6 +111,7 @@ impl Player {
         self.changed();
     }
 
+    /// Tell the app the player changed (it redraws).
     fn changed(&self) {
         let _ = self.app.send(Msg::For("player", Box::new(())));
     }
@@ -122,6 +125,7 @@ impl Player {
 
     // ── mpv ──────────────────────────────────────────────────────────────
 
+    /// Send mpv a command (dropped if mpv isn't running).
     fn cmd(&self, args: Value) {
         if let Some(tx) = self.mpv.lock().expect("mpv").as_ref() {
             let _ = tx.send(args);
@@ -326,6 +330,7 @@ impl Player {
         self.update(|s| s.queue.extend(songs));
     }
 
+    /// Put songs right after the one playing (or play them, if nothing is queued).
     pub fn play_next(&self, songs: Vec<Value>) {
         if self.with(|s| s.queue.is_empty()) {
             return self.play(songs, 0);
@@ -401,6 +406,7 @@ impl Player {
         self.cmd(json!(["seek", seconds, "relative"]));
     }
 
+    /// Volume up or down by `delta`.
     pub fn change_volume(&self, delta: i64) {
         let volume = self.with(|s| (s.volume + delta).clamp(0, 130));
         self.cmd(json!(["set_property", "volume", volume]));

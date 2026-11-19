@@ -104,6 +104,7 @@ impl Audio {
         cards
     }
 
+    /// The default sound card from ~/.asoundrc (0 if it doesn't say).
     fn alsa_default(&self) -> String {
         read(asoundrc())
             .lines()
@@ -111,6 +112,7 @@ impl Audio {
             .unwrap_or_else(|| "0".into())
     }
 
+    /// The card's volume control: the first of Master, PCM, Speaker, Headphone, HDMI it has.
     fn alsa_control(&self, card: &str) -> Option<String> {
         let out = sh(&["amixer", "-c", card, "scontrols"]).1;
         let names: Vec<String> = out.lines().filter_map(|l| l.split('\'').nth(1).map(String::from)).collect();

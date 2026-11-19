@@ -79,6 +79,7 @@ const GLYPHS: [[&str; 5]; 64] = [
 
 const BOX: [&str; 5] = ["###", "#.#", "#.#", "#.#", "###"];
 
+/// A character's 3×5 pattern (lowercase drawn as capitals, unknown ones as a box).
 fn glyph(c: char) -> &'static [&'static str; 5] {
     let c = match c {
         'a'..='z' => c.to_ascii_uppercase(),

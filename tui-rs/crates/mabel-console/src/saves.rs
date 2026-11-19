@@ -17,6 +17,7 @@ pub fn data_dir() -> PathBuf {
     base.join("mabel-os")
 }
 
+/// A tape's saves: key → value, kept in one JSON file per tape.
 pub struct Saves {
     path: PathBuf,
     data: BTreeMap<String, String>,
@@ -32,6 +33,7 @@ impl Saves {
         Saves { path, data }
     }
 
+    /// The value saved under `key`.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.data.get(key).map(String::as_str)
     }

@@ -227,6 +227,7 @@ impl World {
             .collect()
     }
 
+    /// The items inside `id` that share its address (things in a box, not things filed elsewhere).
     pub fn kids_of(&self, id: &str) -> Vec<Item> {
         let own = self.item(id).and_then(|i| i.address.clone());
         self.kids
@@ -269,6 +270,7 @@ impl World {
 
     // ── routes ───────────────────────────────────────────────────────────
 
+    /// The page that shows an address: a room, a drawer level, or an area ("" if none).
     pub fn place_route(&self, addr: Option<&str>) -> String {
         let Some(addr) = addr.filter(|a| !a.is_empty()) else { return String::new() };
         let Some(l) = self.layout(key(addr)) else { return String::new() };

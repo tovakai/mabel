@@ -48,6 +48,7 @@ struct Index {
     collections: BTreeMap<String, Collection>,
 }
 
+/// Where offline music is kept: ~/Music/mabel-os-offline (or $MABEL_OFFLINE_DIR).
 pub fn root() -> PathBuf {
     match std::env::var_os("MABEL_OFFLINE_DIR") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),

@@ -23,6 +23,7 @@ mabel-os tape install <name>     install from Mabel, or from a .dtape file
 mabel-os tape remove <name>      uninstall it from this device
 mabel-os tape unpublish <name>   take it off Mabel";
 
+/// A connection to Mabel from config.toml.
 fn api() -> Result<Mabel> {
     let cfg = crate::os::config::load(&crate::os::config::config_path())?;
     Mabel::new(&cfg.url, &cfg.token, &cfg.preset)
@@ -42,10 +43,12 @@ fn tape_dir(arg: Option<&String>) -> Result<(PathBuf, String, PathBuf)> {
     Ok((dir, name, wasm))
 }
 
+/// The fingerprint of the installed copy of a tape (to tell if Mabel has a different one).
 fn installed_sha(name: &str) -> Option<String> {
     std::fs::read_to_string(installed_dir().join(name).join(".dtape-sha")).ok().map(|s| s.trim().to_string())
 }
 
+/// `mabel-os tape …`: list, install, publish, unpublish.
 pub async fn run(args: &[String]) -> Result<()> {
     let arg = args.get(1);
     match args.first().map(String::as_str) {
