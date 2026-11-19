@@ -93,6 +93,8 @@ pub enum Request {
         to: &'static str,
         msg: Box<dyn Any + Send>,
     },
+    /// Open the colour tuner (SYS ▸ AUDIO's "colour tuner" line).
+    Tuner,
     /// Shut MABEL-OS down, or restart it (the same binary, so a new build takes over).
     Quit {
         restart: bool,
@@ -110,6 +112,8 @@ pub struct Ctx<'a> {
     pub player: &'a Player,
     /// Downloaded music (AUDIO's offline library).
     pub offline: &'a crate::offline::Shared,
+    /// The colours as they are now (the tuner changes them live).
+    pub pal: Palette,
     pub requests: Vec<Request>,
 }
 
@@ -121,8 +125,9 @@ impl<'a> Ctx<'a> {
         music: &'a Music,
         player: &'a Player,
         offline: &'a crate::offline::Shared,
+        pal: Palette,
     ) -> Self {
-        Ctx { api, cfg, tx, music, player, offline, requests: vec![] }
+        Ctx { api, cfg, tx, music, player, offline, pal, requests: vec![] }
     }
 
     /// Run a future in the background; its result comes back to `on_msg` of channel `id`.
@@ -331,13 +336,7 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
         )),
         boxed(crate::life::Life::new()),
         boxed(crate::audio::Audio::new()),
-        boxed(Placeholder::new(
-            "inventory",
-            "INVENTORY",
-            5,
-            &[("INVENTORY", "the Gremlin Index: rooms, places, items"), ("ITEM", "the open item's card")],
-            |a, narrow| if narrow { split_v(a, &[Fill(3), Fill(2)]) } else { split_h(a, &[Fill(3), Fill(2)]) },
-        )),
+        boxed(crate::inventory::Inventory::new(&cfg.index_url, &cfg.vault)),
         boxed(crate::vaultview::VaultView::new(&cfg.vault, &cfg.journal)),
         boxed(crate::term::Term::new()),
         boxed(Suite::new(

@@ -346,9 +346,7 @@ impl Page {
                 let label = format!("switching to {}", o.name);
                 self.run(&label, ctx, true, move || si::Audio::detect().set_default(&o));
             }
-            Action::Tuner => {
-                ctx.toast("COLOURS", "The colour tuner isn't ported yet. palette and [colors] in config.toml work.")
-            }
+            Action::Tuner => ctx.requests.push(Request::Tuner),
             Action::TimeZone => self.ask(Ask::TimeZone, "time zone (e.g. Stockholm, Tokyo, Europe/Berlin)", ""),
             Action::Ntp(on) => self.run("network time", ctx, true, move || si::set_ntp(on)),
             Action::Layout => self.ask(Ask::Layout, "keyboard layout (se, us, de…)", ""),

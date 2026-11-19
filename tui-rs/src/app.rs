@@ -43,6 +43,8 @@ pub struct App {
     narrow: bool,
     /// After a channel switch: pick the starting section once the new layout is known.
     settle: bool,
+    /// ctrl+t: the colour tuner, over everything.
+    tuner: Option<crate::tuner::Tuner>,
     /// The help card: whose keys, and how far it's scrolled.
     help: Option<(&'static str, u16)>,
     toasts: Vec<Toast>,
@@ -89,6 +91,7 @@ impl App {
             tab_row: Rect::default(),
             narrow: false,
             settle: true,
+            tuner: None,
             help: None,
             toasts: vec![],
             status: String::new(),
@@ -109,7 +112,7 @@ impl App {
 
     /// Call into channel `index` with a context, then carry out what it asked for.
     fn with_channel<R>(&mut self, index: usize, f: impl FnOnce(&mut dyn Channel, &mut Ctx) -> R) -> R {
-        let mut ctx = Ctx::new(&self.api, &self.cfg, &self.tx, &self.music, &self.player, &self.offline);
+        let mut ctx = Ctx::new(&self.api, &self.cfg, &self.tx, &self.music, &self.player, &self.offline, self.pal);
         let result = f(self.channels[index].as_mut(), &mut ctx);
         let requests = ctx.requests;
         for request in requests {
@@ -123,6 +126,7 @@ impl App {
                 Request::Deliver { to, msg } => {
                     let _ = self.tx.send(Msg::Deliver(to, msg));
                 }
+                Request::Tuner => self.tuner = Some(crate::tuner::Tuner::new()),
                 Request::Quit { restart } => {
                     self.quit = true;
                     self.restart = restart;
@@ -130,6 +134,21 @@ impl App {
             }
         }
         result
+    }
+
+    /// The tuner's s: the colours that differ from the preset, as [colors] in config.toml.
+    fn save_colours(&mut self) {
+        let path = crate::config::config_path();
+        let mut base = self.cfg.raw.clone();
+        base.remove("colors");
+        let preset = Palette::from_config(&base);
+        let result = std::fs::read_to_string(&path)
+            .map(|text| crate::tuner::save_colours(&self.pal, &text, &preset))
+            .and_then(|text| std::fs::write(&path, text));
+        match result {
+            Ok(()) => self.toast("COLOURS", &format!("✓ colours saved to {}", path.display()), false),
+            Err(e) => self.toast("COLOURS", &format!("couldn't save: {e}"), true),
+        }
     }
 
     fn host(&self) -> &str {
@@ -220,6 +239,18 @@ impl App {
             self.quit = true;
             return;
         }
+        if let Some(tuner) = &mut self.tuner {
+            match tuner.key(&key, &mut self.pal) {
+                crate::tuner::Outcome::Open => {}
+                crate::tuner::Outcome::Close => self.tuner = None,
+                crate::tuner::Outcome::Save => self.save_colours(),
+                crate::tuner::Outcome::Reset => {
+                    let raw = std::fs::read_to_string(crate::config::config_path()).ok().and_then(|t| t.parse().ok());
+                    self.pal = Palette::from_config(raw.as_ref().unwrap_or(&self.cfg.raw));
+                }
+            }
+            return;
+        }
         if let Some((_, scroll)) = &mut self.help {
             match (keys::ch(&key), key.code) {
                 (Some('?' | 'q'), _) | (_, KeyCode::Esc) => self.help = None,
@@ -259,11 +290,7 @@ impl App {
             return;
         }
         if keys::ctrl(&key, 't') {
-            self.toast(
-                "COLOURS",
-                "The colour tuner isn't ported yet. palette and [colors] in config.toml work.",
-                false,
-            );
+            self.tuner = Some(crate::tuner::Tuner::new());
             return;
         }
         match self.focus {
@@ -322,6 +349,12 @@ impl App {
     fn on_mouse(&mut self, mouse: MouseEvent) {
         let (x, y) = (mouse.column, mouse.row);
         let left = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        if let Some(tuner) = &mut self.tuner {
+            if left {
+                tuner.click(y);
+            }
+            return;
+        }
         if self.help.is_some() {
             if left {
                 self.help = None;
@@ -441,6 +474,9 @@ impl App {
         ui::toasts(frame, body, &pal, &self.toasts);
         if let Some((id, scroll)) = &mut self.help {
             ui::help_card(frame, area, &pal, id, scroll);
+        }
+        if let Some(tuner) = &mut self.tuner {
+            tuner.render(frame, area, &pal);
         }
     }
 }

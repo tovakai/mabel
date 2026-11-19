@@ -1,5 +1,6 @@
 //! Building blocks the channels share.
 
+pub mod form;
 pub mod input;
 pub mod markdown;
 pub mod picture;

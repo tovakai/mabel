@@ -421,7 +421,7 @@ impl VaultView {
         self.rendered = None;
         self.scroll = 0;
         self.jump_to = line;
-        let pal = Palette::from_config(&ctx.cfg.raw);
+        let pal = ctx.pal;
         self.build_side(&pal);
         if self.explorer == Explorer::Files || matches!(self.explorer, Explorer::Recent | Explorer::Tag(_)) {
             let at = self.entry_at;
@@ -450,7 +450,7 @@ impl VaultView {
             }
             Err(e) => ctx.error("VAULT", &format!("couldn't save: {e}")),
         }
-        let pal = Palette::from_config(&ctx.cfg.raw);
+        let pal = ctx.pal;
         self.build_side(&pal);
     }
 
@@ -464,7 +464,7 @@ impl VaultView {
     }
 
     fn follow_route(&mut self, route: Route, ctx: &mut Ctx) {
-        let pal = Palette::from_config(&ctx.cfg.raw);
+        let pal = ctx.pal;
         match route {
             Route::Dir(d) => {
                 self.explorer = Explorer::Files;
@@ -494,7 +494,7 @@ impl VaultView {
         } else if self.explorer != Explorer::Files || !self.folder.is_empty() {
             self.explorer = Explorer::Files;
             self.folder = self.folder.rsplit_once('/').map_or(String::new(), |(f, _)| f.to_string());
-            let pal = Palette::from_config(&ctx.cfg.raw);
+            let pal = ctx.pal;
             self.build_explorer(&pal);
         }
     }
@@ -573,7 +573,7 @@ impl VaultView {
                 Answer::Cancel => {}
                 Answer::Chosen(q) if !q.is_empty() => {
                     self.explorer = Explorer::Search(q);
-                    let pal = Palette::from_config(&ctx.cfg.raw);
+                    let pal = ctx.pal;
                     self.build_explorer(&pal);
                     ctx.focus(EXPLORER);
                 }
@@ -631,7 +631,7 @@ impl VaultView {
             self.save(ctx);
             return Outcome::Used;
         }
-        let pal = Palette::from_config(&ctx.cfg.raw);
+        let pal = ctx.pal;
         match (keys::ch(key), key.code) {
             (Some('o'), _) => self.picker("OPEN NOTE", PickFor::Open),
             (Some('/'), _) => {
@@ -1057,7 +1057,7 @@ impl Channel for VaultView {
                         self.folder.clear();
                         self.explorer = Explorer::Files;
                         self.history.clear();
-                        let pal = Palette::from_config(&ctx.cfg.raw);
+                        let pal = ctx.pal;
                         self.build_explorer(&pal);
                         if let Some((rel, line)) = then {
                             self.open_note(&rel, line, false, ctx);
