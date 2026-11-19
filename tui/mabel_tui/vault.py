@@ -46,7 +46,8 @@ def split_frontmatter(text: str) -> tuple[dict, str, int]:
         data = yaml.safe_load(head)
     except yaml.YAMLError:
         data = None
-    return (data if isinstance(data, dict) else {}), rest, head.count("\n") + 2
+    # The opening ---, the head's lines and the closing ---: the body starts after them.
+    return (data if isinstance(data, dict) else {}), rest, head.count("\n") + 3
 
 
 def scan_text(text: str) -> tuple[dict, list[str], set[str], list[tuple[int, str, int]]]:

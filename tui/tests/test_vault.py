@@ -76,3 +76,11 @@ def test_vim_keys_edit_like_vim():
             await pilot.press("i"); await pilot.press("X"); await pilot.press("escape")
             assert area.mode == "normal" and "X" in area.text
     asyncio.run(run())
+
+
+def test_heading_lines_count_the_frontmatter():
+    from mabel_tui.vault import scan_text
+    text = "---\ntags: [a]\ntitle: x\n---\n# Top\nbody\n## Sub"
+    _, _, _, heads = scan_text(text)
+    assert [(t, line) for _, t, line in heads] == [("Top", 4), ("Sub", 6)]
+    assert text.splitlines()[4] == "# Top" and text.splitlines()[6] == "## Sub"
