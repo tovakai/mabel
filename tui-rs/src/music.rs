@@ -43,14 +43,6 @@ impl Music {
         }
     }
 
-    /// "mabel" or "navidrome": shown in AUDIO's title; Mabel's proxy needs the token in mpv.
-    pub fn label(&self) -> &'static str {
-        match self {
-            Music::Mabel(_) => "mabel",
-            Music::Navidrome { .. } => "navidrome",
-        }
-    }
-
     fn auth(user: &str, password: &str) -> Vec<(String, String)> {
         let s = salt();
         let token = format!("{:x}", md5::compute(format!("{password}{s}")));

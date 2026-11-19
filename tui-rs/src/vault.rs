@@ -24,8 +24,6 @@ pub struct Note {
     /// The file stem (what [[links]] use).
     pub name: String,
     pub mtime: SystemTime,
-    /// key → value(s), in file order.
-    pub frontmatter: Vec<(String, Vec<String>)>,
     /// Raw link targets (names or paths), no .md.
     pub links: Vec<String>,
     pub tags: Vec<String>,
@@ -168,9 +166,9 @@ impl Vault {
         let rel = path.strip_prefix(&self.root).unwrap_or(path).to_string_lossy().into_owned();
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let mtime = std::fs::metadata(path).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-        let (frontmatter, links, tags, headings) = scan_text(&text);
+        let (_frontmatter, links, tags, headings) = scan_text(&text);
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        Note { path: path.to_path_buf(), rel, name, mtime, frontmatter, links, tags, headings }
+        Note { path: path.to_path_buf(), rel, name, mtime, links, tags, headings }
     }
 
     fn index(&mut self) {

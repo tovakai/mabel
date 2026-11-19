@@ -51,7 +51,6 @@ pub struct Module {
 
 #[derive(Clone, Debug)]
 pub struct Course {
-    pub id: String,
     pub dir: PathBuf,
     pub title: String,
     pub description: String,
@@ -134,7 +133,7 @@ fn read_lesson(module: &str, path: &Path) -> Option<Lesson> {
 fn read_course(dir: &Path) -> Option<Course> {
     let text = std::fs::read_to_string(dir.join("course.md")).ok()?;
     let (pairs, body, _) = split_frontmatter(&text);
-    let id = dir.file_name()?.to_string_lossy().into_owned();
+    let id = dir.file_name()?.to_string_lossy().into_owned(); // the folder name
     let workspace = one(&pairs, "workspace");
     let modules = numbered(dir, true)
         .iter()
@@ -166,7 +165,6 @@ fn read_course(dir: &Path) -> Option<Course> {
         },
         intro: body.trim().to_string(),
         modules,
-        id,
         dir: dir.to_path_buf(),
     })
 }
@@ -345,7 +343,6 @@ mod tests {
         write(&base.join("Courses/demo/01-m/01-l.files/a.txt"), "new");
         write(&base.join("Courses/demo/01-m/01-l.files/sub/b.txt"), "new");
         let course = Course {
-            id: "demo".into(),
             dir: base.join("Courses/demo"),
             title: "Demo".into(),
             description: String::new(),

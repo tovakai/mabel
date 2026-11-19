@@ -404,7 +404,24 @@ impl CourseApp {
         let width = inner.width.saturating_sub(2);
         let key = lesson.id.clone();
         if self.cache.as_ref().is_none_or(|(k, w, _)| *k != key || *w != width) {
-            let body = crate::widgets::markdown::render(&lesson.body, width, &pal, Style::new().fg(pal.amber));
+            // A module's first lesson starts with the module's introduction; the course's
+            // first lesson with the course card too.
+            let mut text = String::new();
+            let first_of_course = course.lessons().next().is_some_and(|l| l.id == lesson.id);
+            if first_of_course && !course.intro.is_empty() {
+                let by = if course.author.is_empty() { String::new() } else { format!("\n\n*by {}*", course.author) };
+                text.push_str(&format!(
+                    "> **{}**: {}{by}\n\n{}\n\n---\n\n",
+                    course.title, course.description, course.intro
+                ));
+            }
+            if let Some(m) = course.modules.iter().find(|m| m.lessons.first().is_some_and(|l| l.id == lesson.id))
+                && !m.intro.is_empty()
+            {
+                text.push_str(&format!("**Module: {}.** {}\n\n---\n\n", m.title, m.intro));
+            }
+            text.push_str(&lesson.body);
+            let body = crate::widgets::markdown::render(&text, width, &pal, Style::new().fg(pal.amber));
             self.cache = Some((key, width, body));
         }
         let check_lines: Vec<Line> = match (&self.check, self.checking) {

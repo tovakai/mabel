@@ -1,9 +1,6 @@
-//! MABEL-OS: Mabel in a terminal, the Rust port of tui/ (Python + Textual).
+//! MABEL-OS: Mabel in a terminal. Start reading at docs/ARCHITECTURE.md.
 //!
 //! Run: `cargo run --release` in tui-rs/ (reads the same ~/.config/mabel-tui/config.toml).
-
-// The API client and config are ahead of the channels that will use them (until phase 5).
-#![allow(dead_code)]
 
 use std::path::PathBuf;
 

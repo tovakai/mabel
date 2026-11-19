@@ -281,18 +281,6 @@ impl Mabel {
             Ok(Value::Array(bytes.iter().map(|b| Value::from(*b)).collect()))
         }
     }
-
-    // ── updates (no auth needed) ─────────────────────────────────────────
-
-    /// The build Mabel serves now (`/tui/version`), or None if she can't say.
-    pub async fn served_build(&self) -> Option<String> {
-        let resp = self.req(Method::GET, "/tui/version").timeout(Duration::from_secs(15)).send().await.ok()?;
-        if resp.status().as_u16() != 200 {
-            return None;
-        }
-        let v: Value = resp.json().await.ok()?;
-        v["build"].as_str().filter(|b| !b.is_empty()).map(String::from)
-    }
 }
 
 /// Stream a response body to `path` via a .part file, so a broken download never looks finished.
