@@ -19,11 +19,14 @@ use anyhow::Result;
 
 use crate::tracker::{self as tk, Instrument, Song, TableRow};
 
+/// The sequencer's clock: ticks per beat.
 pub const TICKS_PER_BEAT: f64 = 24.0;
+/// The mix's overall level before soft limiting (8 voices together stay below clipping).
 const MASTER: f64 = 0.32;
 /// Samples a gain change takes (~1.5 ms at 44.1 kHz): steps and note starts don't click.
 const RAMP: usize = 64;
 
+/// A MIDI note number (69 = A4) as a frequency in Hz (fractions for slides and bends).
 pub fn note_hz(n: f64) -> f64 {
     440.0 * 2f64.powf((n - 69.0) / 12.0)
 }
@@ -64,6 +67,7 @@ pub struct Midi {
 
 impl Midi {
     /// `port`: a device path, "" = the first one found, None = no MIDI at all.
+    /// Open MIDI output (see `port`); no device just means MIDI is silent.
     pub fn open(port: Option<&str>) -> Self {
         let port = match port {
             None => String::new(),
@@ -76,24 +80,29 @@ impl Midi {
         Midi { port, file, programs: HashMap::new() }
     }
 
+    /// Is a device open?
     pub fn connected(&self) -> bool {
         self.file.is_some()
     }
 
+    /// Write raw MIDI bytes (errors ignored: a device can vanish mid-song).
     fn send(&mut self, data: &[u8]) {
         if let Some(f) = &mut self.file {
             let _ = f.write_all(data);
         }
     }
 
+    /// Note on, on channel 1-16.
     fn note_on(&mut self, ch: i64, note: i64, vel: i64) {
         self.send(&[0x90 | ((ch - 1) & 15) as u8, (note & 127) as u8, vel.clamp(1, 127) as u8]);
     }
 
+    /// Note off.
     fn note_off(&mut self, ch: i64, note: i64) {
         self.send(&[0x80 | ((ch - 1) & 15) as u8, (note & 127) as u8, 0]);
     }
 
+    /// Program change (only sent when it actually changes).
     fn program(&mut self, ch: i64, prog: i64) {
         if self.programs.get(&ch) != Some(&prog) {
             self.programs.insert(ch, prog);
@@ -101,6 +110,7 @@ impl Midi {
         }
     }
 
+    /// "All notes off" on every channel (stop, and before closing).
     pub fn all_off(&mut self) {
         for ch in 0..16u8 {
             self.send(&[0xB0 | ch, 123, 0]);
@@ -116,6 +126,7 @@ impl Drop for Midi {
 
 // ── a voice per track ────────────────────────────────────────────────────
 
+/// Where a voice is in its volume envelope (attack, decay, sustain, release).
 #[derive(Clone, Copy, PartialEq)]
 enum Stage {
     Off,
@@ -125,44 +136,59 @@ enum Stage {
     Release,
 }
 
+/// One track's sound: the note playing, its envelope, and the state of every command on it.
 struct Voice {
     #[allow(dead_code)] // kept to mirror the Python engine; handy when debugging
     track: usize,
+    /// The instrument playing (a copy, so edits mid-note don't jump) and its number.
     inst: Option<Instrument>,
     inst_id: Option<i64>,
+    /// A note is held.
     on: bool,
+    /// The envelope: current level, stage, and the level release started from.
     level: f64,
     stage: Stage,
     rel_from: f64,
+    /// The pitch (a note number, fractional while sliding), and L's slide target and speed.
     note: f64,
     target: Option<f64>,
     slide: f64,
+    /// Where the oscillator is in its cycle.
     phase: f64,
+    /// E's volume, O's pan, W's pulse width, and the wave for "wave" instruments.
     vol: f64,
     pan: f64,
     width: f64,
     wave: Vec<f64>,
+    /// A's table (or the instrument's): its rows, the row it's on, and its volume/transpose now.
     table: Option<Vec<TableRow>>,
     table_row: usize,
     table_vol: f64,
     table_tr: i64,
+    /// C's chord (two intervals) and which note of it is sounding.
     chord: Option<(i64, i64)>,
     chord_i: usize,
+    /// P's bend so far, V's vibrato (speed, depth) and its phase.
     bend: f64,
     vib: (i64, i64),
     vib_phase: f64,
+    /// R: retrigger every n ticks (and the countdown); K: ticks until the note is killed.
     retrig: i64,
     retrig_n: i64,
     kill: i64,
+    /// D: ticks to wait, and the note waiting (note, instrument).
     delay: i64,
     pending: Option<(i64, Option<i64>)>,
+    /// The MIDI note sounding (channel, note), so it can be released.
     midi_note: Option<(i64, i64)>,
+    /// How loud it is now (TRACKER's level meters).
     pub peak: f64,
     /// The gain last rendered, ramped from on every change.
     amp: f64,
 }
 
 impl Voice {
+    /// A silent voice.
     fn new(track: usize) -> Self {
         Voice {
             track,
@@ -201,12 +227,14 @@ impl Voice {
     }
 }
 
+/// Wave `id` of the song as samples in -1..1 (a flat wave if it doesn't exist).
 fn wave_of(song: &Song, id: i64) -> Vec<f64> {
     song.waves.get(&id).cloned().unwrap_or(vec![8; 32]).iter().map(|v| *v as f64 / 7.5 - 1.0).collect()
 }
 
 // ── the sequencer ────────────────────────────────────────────────────────
 
+/// What's playing: the whole song, one chain looping, or one phrase looping.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     Song,
@@ -214,21 +242,28 @@ pub enum Mode {
     Phrase,
 }
 
+/// One track's place in the song: which row, chain step and phrase step, and the step's timing.
 struct Track {
     #[allow(dead_code)] // kept to mirror the Python engine; handy when debugging
     i: usize,
+    /// Song row, chain step, phrase step.
     row: usize,
     cstep: usize,
     pstep: usize,
+    /// Ticks until the next step, and which groove entry timed this one.
     ticks_left: i64,
     groove_i: usize,
+    /// The next step is the first (play it straight away).
     fresh: bool,
+    /// H: end the phrase after this step.
     hop: bool,
+    /// Came back round to its start (the song's end, or a phrase loop): exports stop here.
     looped: bool,
     running: bool,
 }
 
 impl Track {
+    /// A stopped track.
     fn new(i: usize) -> Self {
         Track {
             i,
@@ -244,6 +279,7 @@ impl Track {
         }
     }
 
+    /// Back to the start of a song row.
     fn reset(&mut self, row: usize) {
         (self.row, self.cstep, self.pstep, self.ticks_left, self.groove_i, self.fresh, self.hop, self.looped) =
             (row, 0, 0, 0, 0, true, false, false);
@@ -253,26 +289,37 @@ impl Track {
 /// A note event for MIDI export: (sample, on?, track, note, instrument).
 type NoteEvent = (u64, bool, usize, i64, Option<Instrument>);
 
+/// The engine: a song, eight tracks walking through it, eight voices sounding them, MIDI out.
 pub struct Engine {
     pub song: Song,
+    /// Sample rate.
     pub sr: u32,
     pub midi: Midi,
     voices: Vec<Voice>,
     tracks: Vec<Track>,
+    /// What's playing (None: stopped).
     pub mode: Option<Mode>,
     /// (track, chain or phrase id) for chain/phrase loops.
     pub focus: (usize, i64),
+    /// The tempo now (T changes it while playing).
     pub bpm: i64,
+    /// Samples until the next tick.
     tick_left: f64,
+    /// m mutes tracks; s solos one.
     pub mutes: BTreeSet<usize>,
     pub solo: Option<usize>,
+    /// Notes logged for MIDI export (None when not exporting).
     events: Option<Vec<NoteEvent>>,
+    /// Samples made so far.
     samples: u64,
+    /// Preview notes: ticks until each track's preview is released.
     preview_off: HashMap<usize, i64>,
+    /// The noise table (the same every run).
     noise: Vec<f64>,
 }
 
 impl Engine {
+    /// An engine for `song` at sample rate `sr`, stopped.
     pub fn new(song: Song, sr: u32, midi: Midi) -> Self {
         let bpm = song.bpm;
         Engine {
@@ -303,6 +350,7 @@ impl Engine {
         self.tracks.iter().any(|t| t.looped)
     }
 
+    /// Is this track silent (muted, or another one soloed)?
     pub fn muted(&self, track: usize) -> bool {
         self.mutes.contains(&track) || self.solo.is_some_and(|s| s != track)
     }
@@ -317,11 +365,13 @@ impl Engine {
         t.running.then_some((t.row, t.cstep, t.pstep))
     }
 
+    /// Stop everything and start playing in `mode`.
     fn start(&mut self, mode: Mode, focus: (usize, i64)) {
         self.stop_all();
         (self.mode, self.focus, self.bpm, self.tick_left) = (Some(mode), focus, self.song.bpm, 0.0);
     }
 
+    /// Play the song from `row` (each track from the start of the block its row is in).
     pub fn play_song(&mut self, row: usize) {
         self.start(Mode::Song, (0, 0));
         for i in 0..self.song.tracks {
@@ -335,12 +385,14 @@ impl Engine {
         }
     }
 
+    /// Loop one chain on one track.
     pub fn play_chain(&mut self, track: usize, chain: i64) {
         self.start(Mode::Chain, (track, chain));
         self.tracks[track].reset(0);
         self.tracks[track].running = true;
     }
 
+    /// Loop one phrase on one track (tapes' sound effects use this, stopping after one pass).
     pub fn play_phrase(&mut self, track: usize, phrase: i64) {
         self.start(Mode::Phrase, (track, phrase));
         self.tracks[track].reset(0);
@@ -368,6 +420,7 @@ impl Engine {
         self.preview_off.insert(track, (TICKS_PER_BEAT / 2.0) as i64);
     }
 
+    /// m: mute or unmute a track.
     pub fn toggle_mute(&mut self, track: usize) {
         if !self.mutes.remove(&track) {
             self.mutes.insert(track);
@@ -376,6 +429,7 @@ impl Engine {
 
     // ── voices ───────────────────────────────────────────────────────────
 
+    /// Note a note on/off for MIDI export (only while exporting).
     fn log(&mut self, on: bool, track: usize, note: i64, inst: Option<Instrument>) {
         let samples = self.samples;
         if let Some(e) = &mut self.events {
@@ -383,6 +437,8 @@ impl Engine {
         }
     }
 
+    /// Start a note on a track's voice with its instrument (keeping the voice's instrument if
+    /// none is given). With L's `slide` on the same instrument, glide to it instead.
     fn trigger(&mut self, track: usize, note: i64, inst_id: Option<i64>, slide: i64) {
         let inst_id = inst_id.or(self.voices[track].inst_id).unwrap_or(0);
         let inst = self.song.instruments.get(&inst_id).cloned().unwrap_or_default();
@@ -422,6 +478,7 @@ impl Engine {
         self.log(true, track, note, Some(inst));
     }
 
+    /// Send the note to MIDI too, if the instrument goes there (kind midi, or out = midi/both).
     fn midi_on(&mut self, track: usize, inst: &Instrument, note: i64) {
         self.midi_off(track);
         if inst.kind == "midi" || inst.out == "midi" || inst.out == "both" {
@@ -434,12 +491,14 @@ impl Engine {
         }
     }
 
+    /// Release the track's MIDI note.
     fn midi_off(&mut self, track: usize) {
         if let Some((ch, note)) = self.voices[track].midi_note.take() {
             self.midi.note_off(ch, note);
         }
     }
 
+    /// Let go of a track's note: its envelope goes to release, and MIDI gets a note off.
     fn release(&mut self, track: usize) {
         let v = &mut self.voices[track];
         let sounding = !matches!(v.stage, Stage::Off | Stage::Release) || v.midi_note.is_some();
@@ -479,6 +538,8 @@ impl Engine {
     }
 
     /// Once per tick: envelope, table, chord, slide, vibrato, retrigger, kill, delay.
+    /// Once a tick per voice: the envelope, table rows, chord steps, slide, bend, vibrato,
+    /// retrigger, kill and delayed notes.
     fn voice_tick(&mut self, track: usize) {
         {
             let v = &mut self.voices[track];
@@ -572,6 +633,8 @@ impl Engine {
         }
     }
 
+    /// Add a voice's samples (pulse, triangle, saw, wave or noise, panned) into `out`,
+    /// ramping volume changes so they don't click.
     fn voice_render(&mut self, track: usize, out: &mut [[f64; 2]]) {
         let muted = self.muted(track);
         let sr = self.sr as f64;
@@ -632,6 +695,7 @@ impl Engine {
 
     // ── song walking ─────────────────────────────────────────────────────
 
+    /// The chain track `t` plays now (the looped one in chain mode).
     fn cell(&self, t: usize) -> Option<i64> {
         if self.mode == Some(Mode::Chain) && t == self.focus.0 {
             return Some(self.focus.1);
@@ -639,6 +703,8 @@ impl Engine {
         self.song.rows.get(self.tracks[t].row).and_then(|r| r[t])
     }
 
+    /// The first row of the block of filled rows that `row` belongs to (or ends just before):
+    /// where a track loops back to when its block ends.
     fn block_start(&self, t: usize, row: usize) -> Option<usize> {
         let mut r = row.min(tk::ROWS - 1) as isize;
         while r >= 0 && self.song.rows[r as usize][t].is_none() {
@@ -653,6 +719,7 @@ impl Engine {
         Some(r as usize)
     }
 
+    /// The chain step track `t` is on (in phrase mode, the looped phrase).
     fn chain_step(&self, t: usize) -> Option<tk::ChainStep> {
         if self.mode == Some(Mode::Phrase) {
             return Some(tk::ChainStep { phrase: Some(self.focus.1), transpose: 0 });
@@ -660,6 +727,8 @@ impl Engine {
         self.song.chains.get(&self.cell(t)?).map(|c| c[self.tracks[t].cstep].clone())
     }
 
+    /// Move track `t` to its next step: next phrase step, next chain step, next song row,
+    /// looping where each runs out.
     fn advance(&mut self, t: usize) {
         let tr = &mut self.tracks[t];
         tr.pstep += 1;
@@ -694,6 +763,7 @@ impl Engine {
         }
     }
 
+    /// Play track `t`'s current step: its note (or note off) and its command.
     fn step(&mut self, t: usize) {
         let Some(cs) = self.chain_step(t) else { return };
         let Some(phrase) = cs.phrase.and_then(|p| self.song.phrases.get(&p)) else { return };
@@ -755,6 +825,7 @@ impl Engine {
     }
 
     /// `frames` stereo samples, soft-limited (a full mix rounds off, no hard clip).
+    /// The next `frames` stereo samples, running every tick that falls inside them.
     pub fn render(&mut self, frames: usize) -> Vec<[f32; 2]> {
         let mut out = vec![[0.0f64; 2]; frames];
         let mut pos = 0;
@@ -802,6 +873,8 @@ pub struct Output {
 }
 
 impl Output {
+    /// Start playing a source on a thread, through `aplay` (the deck) or `pw-cat` (PipeWire),
+    /// `block` samples at a time. Neither installed: silent, and `how` says "none".
     pub fn start<S: Source + 'static>(engine: Arc<Mutex<S>>, block: usize) -> Self {
         let sr = engine.lock().map(|e| e.sample_rate()).unwrap_or(44100);
         let players: [(&str, Vec<String>); 2] = [
@@ -943,6 +1016,7 @@ pub fn export_wav(song: &Song, path: &Path, sr: u32) -> Result<f64> {
     Ok(audio.len() as f64 / sr as f64)
 }
 
+/// A number in MIDI files' variable-length format (7 bits a byte).
 fn vlq(mut n: u64) -> Vec<u8> {
     let mut out = vec![(n & 0x7F) as u8];
     while n > 0x7F {
