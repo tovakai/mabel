@@ -7,6 +7,7 @@
 
 mod api;
 mod app;
+mod audio;
 mod avatar;
 mod channel;
 mod comms;
@@ -15,8 +16,12 @@ mod help;
 mod inbox;
 mod keys;
 mod life;
+mod mpris;
+mod music;
 mod nav;
+mod offline;
 mod palette;
+mod player;
 mod suite;
 mod sysinfo;
 mod sysview;
@@ -41,6 +46,12 @@ use app::App;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if let Ok(pid) = std::env::var(PAUSED_ENV) {
+        eprintln!(
+            "This shell belongs to a paused MABEL-OS (pid {pid}).\nType exit to go back to it, instead of starting a second one."
+        );
+        std::process::exit(1);
+    }
     let cfg = match config::load(&config::config_path()) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -54,6 +65,7 @@ async fn main() -> Result<()> {
 
     let mut terminal = enter();
     let result = run(&mut terminal, &mut app, rx).await;
+    app.player.stop();
     leave();
     if app.restart && result.is_ok() {
         // The same program from disk again: a freshly copied build takes over here.
@@ -131,10 +143,17 @@ async fn sleep_until(when: Option<tokio::time::Instant>) {
     }
 }
 
+/// Set in the ctrl+z shell: MABEL-OS started from there would be a second one inside the first
+/// (two players, two songs at once), so it says where to go instead.
+const PAUSED_ENV: &str = "MABEL_OS_PAUSED";
+
 /// ctrl+z: the whole screen becomes a plain shell; exit comes back to MABEL-OS.
 fn shell() {
     leave();
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
     println!("\x1b[33mMABEL-OS is paused — type exit to come back\x1b[0m");
-    let _ = std::process::Command::new(shell).current_dir(config::home()).status();
+    let _ = std::process::Command::new(shell)
+        .current_dir(config::home())
+        .env(PAUSED_ENV, std::process::id().to_string())
+        .status();
 }

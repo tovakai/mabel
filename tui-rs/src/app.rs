@@ -15,8 +15,10 @@ use crate::api::Mabel;
 use crate::channel::{self, Channel, Ctx, Msg, Outcome, Request, View};
 use crate::config::Config;
 use crate::keys;
+use crate::music::Music;
 use crate::nav::{self, Focus};
 use crate::palette::Palette;
+use crate::player::Player;
 use crate::ui::{self, Toast};
 
 /// Wide = the PC (as designed); narrow = the 7" cyberdeck (1024×600 ≈ 128×37): stacked panels.
@@ -27,6 +29,10 @@ pub struct App {
     pub cfg: Config,
     pub pal: Palette,
     pub api: Mabel,
+    pub music: Music,
+    pub player: Player,
+    pub offline: crate::offline::Shared,
+    mpris: crate::mpris::Mpris,
     tx: UnboundedSender<Msg>,
     channels: Vec<Box<dyn Channel>>,
     active: usize,
@@ -55,11 +61,26 @@ impl App {
     pub fn new(cfg: Config, tx: UnboundedSender<Msg>) -> anyhow::Result<Self> {
         let pal = Palette::from_config(&cfg.raw);
         let api = Mabel::new(&cfg.url, &cfg.token, &cfg.preset)?;
+        let music = Music::new(&api, cfg.navidrome.as_ref());
+        let offline = std::sync::Arc::new(std::sync::Mutex::new(crate::offline::Offline::load(crate::offline::root())));
+        // A downloaded song plays from disk; the rest streams.
+        let locate = {
+            let (music, offline) = (music.clone(), offline.clone());
+            std::sync::Arc::new(move |id: &str| {
+                offline.lock().expect("offline").local(id).unwrap_or_else(|| music.stream_url(id))
+            }) as crate::player::Locate
+        };
+        let player = Player::new(music.clone(), locate, cfg.volume, tx.clone());
+        let mpris = crate::mpris::Mpris::start(player.clone(), tx.clone());
         let channels = channel::all(&cfg);
         Ok(App {
             cfg,
             pal,
             api,
+            music,
+            player,
+            offline,
+            mpris,
             tx,
             channels,
             active: 0,
@@ -88,7 +109,7 @@ impl App {
 
     /// Call into channel `index` with a context, then carry out what it asked for.
     fn with_channel<R>(&mut self, index: usize, f: impl FnOnce(&mut dyn Channel, &mut Ctx) -> R) -> R {
-        let mut ctx = Ctx::new(&self.api, &self.cfg, &self.tx);
+        let mut ctx = Ctx::new(&self.api, &self.cfg, &self.tx, &self.music, &self.player, &self.offline);
         let result = f(self.channels[index].as_mut(), &mut ctx);
         let requests = ctx.requests;
         for request in requests {
@@ -136,7 +157,16 @@ impl App {
     }
 
     pub fn on_msg(&mut self, msg: Msg) {
-        let Msg::For(id, data) = msg;
+        let (id, data) = match msg {
+            Msg::Quit => {
+                self.quit = true;
+                return;
+            }
+            Msg::For(id, data) => (id, data),
+        };
+        if id == "player" {
+            self.mpris.changed(&self.player); // the desktop's widget follows the deck
+        }
         if let Some(i) = self.channels.iter().position(|c| c.accepts(id)) {
             self.with_channel(i, |ch, ctx| ch.on_msg(id, data, ctx));
         }
@@ -170,6 +200,19 @@ impl App {
             }
             return;
         }
+        // A popup in the channel (pick a playlist, name it…) takes the keys first.
+        if self.channels[self.active].captures_keys() {
+            let (active, section) = (
+                self.active,
+                match self.focus {
+                    Focus::Inside(i) | Focus::Nav(Some(i)) => i,
+                    Focus::Nav(None) => 0,
+                },
+            );
+            if self.with_channel(active, |ch, ctx| ch.key(section, key, ctx)) == Outcome::Used {
+                return;
+            }
+        }
         // The channel keys work everywhere: F1–F8, and alt+1–8 for keyboards without F-keys.
         let channel = keys::alt_digit(&key)
             .or(keys::fkey(&key).map(usize::from))
@@ -183,7 +226,7 @@ impl App {
             return;
         }
         if keys::ctrl(&key, 'p') {
-            self.toast("AUDIO", "Music comes with the AUDIO port (phase 3).", false);
+            self.player.toggle();
             return;
         }
         if keys::ctrl(&key, 't') {
@@ -218,6 +261,8 @@ impl App {
     }
 
     fn key_nav(&mut self, lit: Option<usize>, key: KeyEvent) {
+        // Navigation's own keys always mean navigation: h j k l move, i / a / enter go in, esc,
+        // ?. Every other key goes to the channel (AUDIO's space pauses, / searches…).
         match (keys::ch(&key), key.code) {
             (Some(k @ ('h' | 'j' | 'k' | 'l')), _) => match lit.filter(|&i| self.visible(i)) {
                 None => self.start_nav(),
@@ -335,7 +380,8 @@ impl App {
         ui::tabs(frame, tabs, &pal, &labels, self.active);
         self.tab_row = Rect { height: 1, ..tabs };
 
-        let view = View { pal: &pal, narrow: self.narrow, focus: self.focus, now: Instant::now() };
+        let view =
+            View { pal: &pal, narrow: self.narrow, focus: self.focus, now: Instant::now(), player: &self.player };
         self.sections = self.channels[self.active].render(frame, body, &view);
         // A resize can hide the section the keyboard was in (wide → narrow): back to nav mode.
         let current = match self.focus {
@@ -349,7 +395,13 @@ impl App {
             self.redraw = true;
         }
 
-        ui::statusline(frame, status, &pal, None, &self.status);
+        let playing = self.player.with(|st| {
+            st.current().map(|song| {
+                let title = song["title"].as_str().unwrap_or("");
+                (format!("{title} · {}", song["artist"].as_str().unwrap_or("")), st.paused)
+            })
+        });
+        ui::statusline(frame, status, &pal, playing.as_ref().map(|(t, p)| (t.as_str(), *p)), &self.status);
         let mut footer_keys = vec![("F1", "COMMS"), ("F2", "LIFE"), ("F3", "AUDIO"), ("F4", "INVENTORY")];
         if self.narrow {
             footer_keys = vec![("alt+1–8", "channels")];

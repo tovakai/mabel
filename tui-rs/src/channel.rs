@@ -18,8 +18,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::Mabel;
 use crate::config::Config;
+use crate::music::Music;
 use crate::nav::Focus;
 use crate::palette::Palette;
+use crate::player::Player;
 use crate::suite::{Suite, SuiteApp};
 use crate::ui;
 
@@ -30,6 +32,7 @@ pub struct View<'a> {
     pub narrow: bool,
     pub focus: Focus,
     pub now: Instant,
+    pub player: &'a Player,
 }
 
 impl View<'_> {
@@ -50,6 +53,8 @@ impl View<'_> {
 pub enum Msg {
     /// Data for one channel or app (by id), from a task it spawned; it downcasts in `on_msg`.
     For(&'static str, Box<dyn Any + Send>),
+    /// Quit MABEL-OS (the desktop's media widget asked, over MPRIS).
+    Quit,
 }
 
 /// What a channel asks of the app while handling something.
@@ -77,12 +82,32 @@ pub struct Ctx<'a> {
     pub api: &'a Mabel,
     pub cfg: &'a Config,
     pub tx: &'a UnboundedSender<Msg>,
+    /// Where AUDIO's music comes from (Mabel's proxy or Navidrome).
+    pub music: &'a Music,
+    pub player: &'a Player,
+    /// Downloaded music (AUDIO's offline library).
+    pub offline: &'a crate::offline::Shared,
     pub requests: Vec<Request>,
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(api: &'a Mabel, cfg: &'a Config, tx: &'a UnboundedSender<Msg>) -> Self {
-        Ctx { api, cfg, tx, requests: vec![] }
+    pub fn new(
+        api: &'a Mabel,
+        cfg: &'a Config,
+        tx: &'a UnboundedSender<Msg>,
+        music: &'a Music,
+        player: &'a Player,
+        offline: &'a crate::offline::Shared,
+    ) -> Self {
+        Ctx { api, cfg, tx, music, player, offline, requests: vec![] }
+    }
+
+    /// Run a future in the background; its result comes back to `on_msg` of channel `id`.
+    pub fn run<T: Send + 'static>(&self, id: &'static str, fut: impl std::future::Future<Output = T> + Send + 'static) {
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(Msg::For(id, Box::new(fut.await)));
+        });
     }
 
     pub fn toast(&mut self, title: &str, text: &str) {
@@ -165,6 +190,10 @@ pub trait Channel {
     /// When this channel next wants a redraw by itself (an animation frame, a spinner).
     fn next_wake(&self) -> Option<Instant> {
         None
+    }
+    /// A popup is open: every key comes here first (before channel keys and nav).
+    fn captures_keys(&self) -> bool {
+        false
     }
     /// Twice a second, for every channel: polling and timers. `visible` = on screen now.
     fn tick(&mut self, _now: Instant, _visible: bool, _ctx: &mut Ctx) {}
@@ -271,13 +300,7 @@ pub fn all(cfg: &Config) -> Vec<Box<dyn Channel>> {
             ],
         )),
         boxed(crate::life::Life::new()),
-        boxed(Placeholder::new(
-            "audio",
-            "AUDIO",
-            3,
-            &[("LIBRARY", "search, albums, artists, playlists, offline"), ("DECK", "cover, now playing, the queue")],
-            |a, narrow| if narrow { split_v(a, &[Fill(1), Length(13)]) } else { split_h(a, &[Fill(3), Fill(2)]) },
-        )),
+        boxed(crate::audio::Audio::new()),
         boxed(Placeholder::new(
             "inventory",
             "INVENTORY",

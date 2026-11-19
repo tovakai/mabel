@@ -173,6 +173,10 @@ impl Channel for Suite {
         self.apps[self.current].1.next_wake()
     }
 
+    fn captures_keys(&self) -> bool {
+        self.apps[self.current].1.captures_keys()
+    }
+
     fn tick(&mut self, now: Instant, visible: bool, ctx: &mut Ctx) {
         let current = self.current;
         for (i, (_, app)) in self.apps.iter_mut().enumerate() {

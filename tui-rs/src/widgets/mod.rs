@@ -3,4 +3,5 @@
 pub mod input;
 pub mod markdown;
 pub mod picture;
+pub mod popup;
 pub mod wrap;

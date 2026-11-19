@@ -207,6 +207,15 @@ impl Mabel {
         format!("{}/api/music/stream/{song_id}", self.url)
     }
 
+    /// Save a song to `path` (through Mabel's proxy, with the token). Returns the bytes saved.
+    pub async fn download(&self, song_id: &str, path: &std::path::Path, max_bitrate: i64) -> Result<u64> {
+        let mut req = self.http.get(self.stream_url(song_id));
+        if max_bitrate > 0 {
+            req = req.query(&[("maxBitRate", max_bitrate.to_string())]);
+        }
+        save_stream(req.send().await?, path).await
+    }
+
     // ── Beeper, relayed by Mabel ─────────────────────────────────────────
 
     pub async fn beeper_status(&self) -> Result<Value> {
@@ -258,6 +267,30 @@ impl Mabel {
         let v: Value = resp.json().await.ok()?;
         v["build"].as_str().filter(|b| !b.is_empty()).map(String::from)
     }
+}
+
+/// Stream a response body to `path` via a .part file, so a broken download never looks finished.
+pub async fn save_stream(resp: Response, path: &std::path::Path) -> Result<u64> {
+    use tokio::io::AsyncWriteExt;
+    if resp.status().as_u16() >= 300 {
+        return Err(anyhow!("download failed: {}", resp.status().as_u16()));
+    }
+    if let Some(dir) = path.parent() {
+        tokio::fs::create_dir_all(dir).await?;
+    }
+    let part = path.with_extension(format!("{}.part", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+    let mut file = tokio::fs::File::create(&part).await?;
+    let mut size = 0u64;
+    let mut body = resp.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        size += chunk.len() as u64;
+    }
+    file.flush().await?;
+    drop(file);
+    tokio::fs::rename(&part, path).await?;
+    Ok(size)
 }
 
 fn clip(text: &str, max: usize) -> String {

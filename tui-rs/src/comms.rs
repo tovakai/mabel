@@ -260,8 +260,11 @@ impl Comms {
                     }
                 }
                 "ui_control" => {
-                    if body.get("data").and_then(|d| d.get("music_command")).is_some_and(|c| c.is_object()) {
-                        ctx.toast("♪", "Mabel put something on (AUDIO isn't ported to this build yet)");
+                    if let Some(command) =
+                        body.get("data").and_then(|d| d.get("music_command")).filter(|c| c.is_object())
+                    {
+                        ctx.player.apply(command);
+                        ctx.toast("♪", "Mabel put something on");
                     }
                 }
                 "error" => {
