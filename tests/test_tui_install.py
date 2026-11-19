@@ -41,6 +41,39 @@ def test_install_script_points_at_this_server():
     assert 'BUILD="abc123"' in script
     assert ti.index_url("https://box.tail1.ts.net") == "https://box.tail1.ts.net:8765"
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode == 0
+    assert 'RS_BUILDS=""' in script, "no Rust builds yet: the installer skips them"
+    with_rs = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
+    assert 'RS_BUILDS="x86_64:x1 aarch64:a1"' in with_rs
+
+
+def test_the_installer_picks_the_rust_build_for_this_arch(tmp_path):
+    """install_rust alone, against a fake fetch: the right binary, linked, its build recorded."""
+    script = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
+    body = script.split("main() {")[0]                     # the functions, without running main
+    home = tmp_path / "home"
+    harness = body + """
+fetch() { printf 'binary from %s' "$1" > "$2"; }
+uname() { echo aarch64; }
+mkdir -p "$APP" "$BIN"; t=$(mktemp -d); install_rust "$t"
+"""
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "XDG_DATA_HOME": str(home / "data")}
+    done = subprocess.run(["sh", "-c", harness], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    app = home / "data" / "mabel-tui"
+    assert (app / "mabel-os").read_text() == "binary from https://b/tui/rs/mabel-os-aarch64"
+    assert (app / "build-rs").read_text().strip() == "a1"
+    assert (home / ".local" / "bin" / "mabel-os").resolve() == app / "mabel-os"
+
+
+def test_rust_builds_are_listed_by_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(ti, "RS_DIST", tmp_path)
+    monkeypatch.setattr(ti, "_rs_cache", {})
+    assert ti.rs_builds() == {}
+    (tmp_path / "mabel-os-aarch64").write_bytes(b"elf one")
+    first = ti.rs_builds()
+    assert list(first) == ["aarch64"]
+    (tmp_path / "mabel-os-aarch64").write_bytes(b"elf two")
+    assert ti.rs_builds()["aarch64"] != first["aarch64"]
 
 
 def test_the_wheel_is_built_once_and_carries_the_assets(tmp_path, monkeypatch):

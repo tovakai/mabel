@@ -57,6 +57,11 @@ pub struct App {
     pub restart: bool,
     /// ctrl+z: the main loop hands the terminal to a plain shell.
     pub shell: bool,
+    /// F12: the build Mabel serves when it's newer than this one (update.rs), and an install running.
+    update_ready: Option<String>,
+    updating: bool,
+    next_update_check: Instant,
+    last_input: Instant,
 }
 
 impl App {
@@ -100,6 +105,10 @@ impl App {
             quit: false,
             restart: false,
             shell: false,
+            update_ready: None,
+            updating: false,
+            next_update_check: Instant::now() + crate::update::FIRST_CHECK,
+            last_input: Instant::now(),
         })
     }
 
@@ -166,6 +175,10 @@ impl App {
 
     pub fn tick(&mut self) {
         let now = Instant::now();
+        if now >= self.next_update_check {
+            self.next_update_check = now + crate::update::CHECK_EVERY;
+            self.check_update(true);
+        }
         self.toasts.retain(|t| t.until > now);
         for i in 0..self.channels.len() {
             let visible = i == self.active;
@@ -176,6 +189,76 @@ impl App {
     /// When the screen next needs drawing without any input (an animation frame, a spinner).
     pub fn next_wake(&self) -> Option<Instant> {
         self.channels[self.active].next_wake()
+    }
+
+    // ── updates pushed from the PC (update.rs) ───────────────────────────
+
+    fn check_update(&mut self, quiet: bool) {
+        if quiet && crate::update::installed().is_none() {
+            return; // run from the source tree: always current
+        }
+        let (tx, url) = (self.tx.clone(), self.cfg.url.clone());
+        tokio::spawn(async move {
+            let build = crate::update::served(url).await;
+            let _ = tx.send(Msg::For("update", Box::new(crate::update::Note::Served { build, quiet })));
+        });
+    }
+
+    fn update_key(&mut self) {
+        if self.updating {
+            return;
+        }
+        if crate::update::installed().is_none() {
+            self.toast("UPDATE", "This copy runs from the source tree, so it's always current.", false);
+        } else if self.update_ready.is_none() {
+            self.check_update(false);
+        } else {
+            self.install_update();
+        }
+    }
+
+    fn install_update(&mut self) {
+        self.updating = true;
+        let (tx, url) = (self.tx.clone(), self.cfg.url.clone());
+        tokio::spawn(async move {
+            let (ok, tail) = crate::update::apply(url).await;
+            let _ = tx.send(Msg::For("update", Box::new(crate::update::Note::Installed { ok, tail })));
+        });
+    }
+
+    fn on_update(&mut self, note: crate::update::Note) {
+        match note {
+            crate::update::Note::Served { build, quiet } => {
+                if crate::update::newer(crate::update::installed().as_deref(), build.as_deref()) {
+                    if self.update_ready != build {
+                        self.update_ready = build;
+                        self.toast("UPDATE", "A new MABEL-OS is ready. F12 installs it and restarts.", false);
+                    }
+                    let idle = self.last_input.elapsed() >= crate::update::IDLE_BEFORE_AUTO;
+                    let playing = self.player.with(|s| s.current().is_some() && !s.paused);
+                    if self.cfg.auto_update && idle && !playing && !self.updating {
+                        self.install_update();
+                    }
+                } else if !quiet {
+                    let text = if build.is_some() {
+                        "Already the newest build."
+                    } else {
+                        "Couldn't ask Mabel for the newest build."
+                    };
+                    self.toast("UPDATE", text, false);
+                }
+            }
+            crate::update::Note::Installed { ok, tail } => {
+                self.updating = false;
+                if ok {
+                    self.restart = true; // main() starts the new build in this terminal
+                    self.quit = true;
+                } else {
+                    let text = if tail.is_empty() { "the installer failed".to_string() } else { tail };
+                    self.toast("UPDATE FAILED", &text, true);
+                }
+            }
+        }
     }
 
     pub fn on_msg(&mut self, msg: Msg) {
@@ -195,6 +278,12 @@ impl App {
                 }
                 return;
             }
+            Msg::For("update", data) => {
+                if let Ok(note) = data.downcast::<crate::update::Note>() {
+                    self.on_update(*note);
+                }
+                return;
+            }
             Msg::For(id, data) => (id, data),
         };
         if id == "player" {
@@ -206,6 +295,9 @@ impl App {
     }
 
     pub fn on_event(&mut self, event: Event) {
+        if matches!(event, Event::Key(_) | Event::Mouse(_)) {
+            self.last_input = Instant::now();
+        }
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
             Event::Mouse(mouse) => self.on_mouse(mouse),
@@ -272,6 +364,10 @@ impl App {
             if self.with_channel(active, |ch, ctx| ch.key(section, key, ctx)) == Outcome::Used {
                 return;
             }
+        }
+        if keys::fkey(&key) == Some(12) {
+            self.update_key();
+            return;
         }
         // The channel keys work everywhere: F1–F8, and alt+1–8 for keyboards without F-keys.
         let channel = keys::alt_digit(&key)
@@ -437,7 +533,14 @@ impl App {
         .areas(area);
 
         let clock = chrono::Local::now().format("%a %d %b %Y  %H:%M:%S").to_string().to_uppercase();
-        ui::casing(frame, casing, &pal, self.host(), self.link, &clock);
+        let badge = if self.updating {
+            Some("▲ UPDATING…")
+        } else if self.update_ready.is_some() {
+            Some("▲ UPDATE F12")
+        } else {
+            None
+        };
+        ui::casing(frame, casing, &pal, self.host(), self.link, badge, &clock);
         let labels: Vec<&str> = self.channels.iter().map(|c| c.tab()).collect();
         ui::tabs(frame, tabs, &pal, &labels, self.active);
         self.tab_row = Rect { height: 1, ..tabs };

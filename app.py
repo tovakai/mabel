@@ -299,6 +299,7 @@ if AUTH_ENABLED:
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
         _re.compile(r"^/tui/mabel_tui-[\w.]+-py3-none-any\.whl$"),
+        _re.compile(r"^/tui/rs/mabel-os-(x86_64|aarch64)$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:

@@ -5,6 +5,8 @@
 // The API client and config are ahead of the channels that will use them (until phase 5).
 #![allow(dead_code)]
 
+use std::path::PathBuf;
+
 mod api;
 mod app;
 mod audio;
@@ -38,6 +40,7 @@ mod trackerview;
 mod tracksynth;
 mod tuner;
 mod ui;
+mod update;
 mod vault;
 mod vaultview;
 mod widgets;
@@ -87,7 +90,10 @@ async fn main() -> Result<()> {
     if app.restart && result.is_ok() {
         // The same program from disk again: a freshly copied build takes over here.
         use std::os::unix::process::CommandExt;
+        // After an update the old file was renamed over: Linux then reports "<path> (deleted)",
+        // and the path itself holds the new build.
         let exe = std::env::current_exe()?;
+        let exe = exe.to_str().and_then(|p| p.strip_suffix(" (deleted)")).map_or(exe.clone(), PathBuf::from);
         let err = std::process::Command::new(exe).args(std::env::args_os().skip(1)).exec();
         return Err(err.into());
     }

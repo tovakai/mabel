@@ -42,7 +42,15 @@ pub fn panel<'a>(pal: &Palette, title: &str, state: PanelState) -> Block<'a> {
 }
 
 /// The casing's label strip: logo, link, clock.
-pub fn casing(frame: &mut Frame, area: Rect, pal: &Palette, host: &str, link_ok: Option<bool>, clock: &str) {
+pub fn casing(
+    frame: &mut Frame,
+    area: Rect,
+    pal: &Palette,
+    host: &str,
+    link_ok: Option<bool>,
+    badge: Option<&str>,
+    clock: &str,
+) {
     let strip = Style::new().bg(pal.beige).fg(pal.casing_text);
     let mut left = vec![
         Span::styled(LOGO, bold(pal.casing_text)),
@@ -53,6 +61,9 @@ pub fn casing(frame: &mut Frame, area: Rect, pal: &Palette, host: &str, link_ok:
         Some(false) => left.push(Span::styled("  ✖ NO LINK", bold(pal.rust))),
         None => left.push(Span::raw("  …")),
         Some(true) => {}
+    }
+    if let Some(badge) = badge {
+        left.push(Span::styled(format!("  {badge}"), bold(pal.rust)));
     }
     let inner = Rect { x: area.x + 1, width: area.width.saturating_sub(2), ..area };
     frame.render_widget(Block::new().style(strip), area);

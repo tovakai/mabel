@@ -12,6 +12,7 @@ pub const EVERYWHERE: Keys = &[
     ("ctrl+z", "drop to a plain shell (exit comes back)"),
     ("ctrl+p", "play / pause music"),
     ("ctrl+t", "colour tuner (for screens that show colours their own way)"),
+    ("F12", "install the update when the header says UPDATE (pushed from the PC)"),
     ("?", "this list"),
     ("ctrl+q", "power off"),
 ];

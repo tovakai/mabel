@@ -3,7 +3,8 @@
 #
 #   curl -fsSL @@BASE@@/tui/install.sh | sh
 #
-# Installs the TUI into ~/.local/share/mabel-tui, links `mabel` into ~/.local/bin and, if
+# Installs the TUI into ~/.local/share/mabel-tui, links `mabel` into ~/.local/bin (and the Rust
+# build as `mabel-os`, when Mabel has one for this machine's architecture) and, if
 # this device has no working config yet, pairs it with Mabel through its Tailscale login.
 # Run it again to update (or press F12 in MABEL-OS when it says UPDATE); a working config is kept.
 set -eu
@@ -11,6 +12,7 @@ set -eu
 BASE="@@BASE@@"
 WHEEL="@@WHEEL@@"
 BUILD="@@BUILD@@"
+RS_BUILDS="@@RS_BUILDS@@"                                 # arch:build pairs (scripts/tui_rs_dist.sh)
 APP="${XDG_DATA_HOME:-$HOME/.local/share}/mabel-tui"
 BIN="$HOME/.local/bin"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/mabel-tui/config.toml"
@@ -59,6 +61,30 @@ install_app() {
     fi
     ln -sf "$APP/venv/bin/mabel" "$BIN/mabel"
     printf '%s\n' "$BUILD" > "$APP/build"                 # what the TUI compares with /tui/version (F12)
+}
+
+install_rust() {
+    tmp=$1
+    case "$(uname -m)" in
+        x86_64|amd64) arch=x86_64 ;;
+        aarch64|arm64) arch=aarch64 ;;
+        *) return 0 ;;
+    esac
+    rs=
+    for pair in $RS_BUILDS; do
+        [ "${pair%%:*}" = "$arch" ] && rs=${pair#*:}
+    done
+    [ -n "$rs" ] || return 0
+    say "fetching MABEL-OS in Rust ${D}($arch, $rs)${R}"
+    if ! fetch "$BASE/tui/rs/mabel-os-$arch" "$tmp/mabel-os"; then
+        say "${D}couldn't download the Rust build; mabel works without it${R}"
+        return 0
+    fi
+    chmod 755 "$tmp/mabel-os"
+    cp "$tmp/mabel-os" "$APP/mabel-os.new"
+    mv -f "$APP/mabel-os.new" "$APP/mabel-os"             # a rename: a running copy keeps going
+    ln -sf "$APP/mabel-os" "$BIN/mabel-os"
+    printf '%s\n' "$rs" > "$APP/build-rs"                 # what mabel-os compares with /tui/version (F12)
 }
 
 config_works() {
@@ -122,6 +148,7 @@ main() {
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     install_app "$tmp"
+    install_rust "$tmp"
     if config_works; then
         say "kept your config ${D}($CONF)${R}"
     else
@@ -130,7 +157,11 @@ main() {
     fi
     command -v mpv >/dev/null 2>&1 || say "${D}AUDIO plays through mpv, which isn't installed here${R}"
     case ":$PATH:" in *":$BIN:"*) ;; *) say "${D}$BIN isn't on your PATH; add it, or run $BIN/mabel${R}" ;; esac
-    say "done. Run ${A}mabel${R}"
+    if [ -x "$APP/mabel-os" ]; then
+        say "done. Run ${A}mabel-os${R} ${D}(Rust) or mabel (Python)${R}"
+    else
+        say "done. Run ${A}mabel${R}"
+    fi
 }
 
 main "$@"

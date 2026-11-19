@@ -4,9 +4,13 @@
 
 GET  /tui/install.sh                       the installer, with this server's address filled in
 GET  /tui/mabel_tui-<ver>-py3-none-any.whl  the TUI as a wheel, built from tui/ (cached until a file changes)
-GET  /tui/version                           the current build id, for the TUI's update check (F12)
+GET  /tui/rs/mabel-os-<arch>                 the Rust build (tui-rs/) for x86_64 or aarch64, if one is made
+GET  /tui/version                           the current build ids, for the TUI's update check (F12)
 GET  /api/tui/whoami                        which tailnet login Tailscale Serve says the caller is
 POST /api/tui/pair                          a "tui" profile API token for a device of an allowed login
+
+The Rust builds are made on the PC by scripts/tui_rs_dist.sh (into tui-rs/dist/); compiling
+is too heavy to do inside a request. Until one exists, the installer installs only the Python TUI.
 
 None of these take a session or token (they're in app.py's AUTH_EXEMPT_EXACT). The script and
 wheel hold no secrets. Pairing trusts Tailscale Serve's identity headers: the app is reached on
@@ -42,6 +46,8 @@ TOKEN_PROFILE = "tui"
 PAIRS_PER_HOUR = 10
 
 _TAILNET_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+RS_DIST = _REPO / "tui-rs" / "dist"
+RS_ARCHES = ("x86_64", "aarch64")
 _build_lock = threading.Lock()
 _pairs: list[float] = []
 
@@ -107,6 +113,34 @@ def build_wheel() -> Path:
                 shutil.rmtree(old, ignore_errors=True)
         tmp.rename(out)
         return out / built[-1].name
+
+
+# --- the Rust builds (made by scripts/tui_rs_dist.sh) ---------------------------------------------
+
+_rs_cache: dict[str, tuple[tuple, str]] = {}
+
+
+def rs_binary(arch: str) -> Path:
+    return RS_DIST / f"mabel-os-{arch}"
+
+
+def rs_builds() -> dict[str, str]:
+    """{arch: build id} for the Rust binaries there are: a hash of each file, recomputed only when
+    its size or mtime moved."""
+    builds = {}
+    for arch in RS_ARCHES:
+        path = rs_binary(arch)
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        stamp = (st.st_size, st.st_mtime_ns)
+        cached = _rs_cache.get(arch)
+        if not cached or cached[0] != stamp:
+            cached = (stamp, hashlib.sha256(path.read_bytes()).hexdigest()[:16])
+            _rs_cache[arch] = cached
+        builds[arch] = cached[1]
+    return builds
 
 
 # --- addresses and identity ----------------------------------------------------------------------
@@ -175,9 +209,11 @@ def mint_token(owner: str, device: str) -> dict:
 
 # --- the installer ---------------------------------------------------------------------------------
 
-def install_script(base: str, wheel_name: str, build: str) -> str:
+def install_script(base: str, wheel_name: str, build: str, rs: dict[str, str] | None = None) -> str:
+    rs_line = " ".join(f"{arch}:{build_id}" for arch, build_id in (rs or {}).items())
     return (_REPO / "scripts" / "tui_install.sh").read_text(encoding="utf-8") \
-        .replace("@@BASE@@", base).replace("@@WHEEL@@", wheel_name).replace("@@BUILD@@", build)
+        .replace("@@BASE@@", base).replace("@@WHEEL@@", wheel_name).replace("@@BUILD@@", build) \
+        .replace("@@RS_BUILDS@@", rs_line)
 
 
 def setup_tui_install_routes() -> APIRouter:
@@ -190,12 +226,20 @@ def setup_tui_install_routes() -> APIRouter:
         except Exception as exc:
             logger.warning("[tui-install] wheel build failed: %s", exc)
             raise HTTPException(503, "Couldn't build the TUI package on the server")
-        return PlainTextResponse(install_script(base_url(request), wheel.name, wheel.parent.name),
+        return PlainTextResponse(install_script(base_url(request), wheel.name, wheel.parent.name, rs_builds()),
                                  media_type="text/x-shellscript")
 
     @router.get("/tui/version")
     def version():
-        return {"build": _fingerprint()}
+        return {"build": _fingerprint(), "rs": rs_builds()}
+
+    @router.get("/tui/rs/{filename}")
+    def rust_binary(filename: str):
+        match = re.fullmatch(r"mabel-os-(x86_64|aarch64)", filename)
+        path = rs_binary(match.group(1)) if match else None
+        if path is None or not path.is_file():
+            raise HTTPException(404)
+        return FileResponse(path, filename=filename, media_type="application/octet-stream")
 
     @router.get("/tui/{filename}")
     def wheel_file(filename: str):
