@@ -15,10 +15,14 @@ use zbus::{ObjectPath, OwnedVariant as OwnedValue, Variant as Value};
 use crate::channels::audio::player::Player;
 use crate::os::channel::Msg;
 
+/// The name the desktop finds the deck by (a second MABEL-OS adds `.instance<pid>`).
 const BUS_NAME: &str = "org.mpris.MediaPlayer2.mabel_os";
+/// Where MPRIS objects live (fixed by the standard).
 const PATH: &str = "/org/mpris/MediaPlayer2";
+/// The standard's "no track" id.
 const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
 
+/// A value in the form D-Bus metadata maps hold.
 fn owned<'a>(v: impl Into<Value<'a>>) -> OwnedValue {
     v.into().try_to_owned().expect("plain values convert")
 }
@@ -37,10 +41,13 @@ fn cover_file(cover_id: &str) -> Option<PathBuf> {
     [cached, offline].into_iter().find(|p| p.exists())
 }
 
+/// The standard's root object: who this player is, and "quit" (it asks the app to quit).
 struct Root {
     app: UnboundedSender<Msg>,
 }
 
+// The methods and properties below are the MPRIS standard's (org.mpris.MediaPlayer2):
+// their names are fixed, and zbus turns `can_quit` into the standard's `CanQuit`.
 #[interface(name = "org.mpris.MediaPlayer2")]
 impl Root {
     fn raise(&self) {}
@@ -85,11 +92,13 @@ impl Root {
     }
 }
 
+/// The standard's player object: what's playing, and the controls, all passed to `Player`.
 struct PlayerIface {
     player: Player,
 }
 
 impl PlayerIface {
+    /// Stopped, Paused or Playing, in the standard's words.
     fn status(&self) -> &'static str {
         self.player.with(|st| match (st.current(), st.paused) {
             (None, _) => "Stopped",
@@ -99,6 +108,8 @@ impl PlayerIface {
     }
 }
 
+// The standard's player properties and methods (org.mpris.MediaPlayer2.Player): playback
+// status, metadata (title, artist, album, length, cover), position, volume, and the controls.
 #[interface(name = "org.mpris.MediaPlayer2.Player")]
 impl PlayerIface {
     #[zbus(property)]
@@ -233,6 +244,7 @@ impl PlayerIface {
 /// What listeners last heard: only a real change is sent.
 type Seen = (String, &'static str, bool, i64, i64, usize, Option<usize>);
 
+/// MABEL-OS's MPRIS connection; the app calls `changed` after the player changes.
 #[derive(Clone, Default)]
 pub struct Mpris {
     conn: Arc<Mutex<Option<zbus::Connection>>>,
