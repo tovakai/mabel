@@ -15,6 +15,7 @@ mod browser;
 mod channel;
 mod comms;
 mod config;
+mod dtape;
 mod help;
 mod housekeeping;
 mod inbox;
@@ -34,6 +35,7 @@ mod printserver;
 mod suite;
 mod sysinfo;
 mod sysview;
+mod tapecli;
 mod tapes;
 mod term;
 mod timefmt;
@@ -66,6 +68,11 @@ async fn main() -> Result<()> {
     // `mabel-os print-server`: the deck's print server (mabel-print.service), not the TUI.
     if std::env::args().nth(1).as_deref() == Some("print-server") {
         return tokio::task::spawn_blocking(printserver::run).await?;
+    }
+    // `mabel-os tape publish|pack|list|install|remove|unpublish`: the DreamTape repo.
+    if std::env::args().nth(1).as_deref() == Some("tape") {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        return tapecli::run(&args).await;
     }
     // `mabel-os new-tape snake`: a new DreamTape project in the current folder.
     if std::env::args().nth(1).as_deref() == Some("new-tape") {

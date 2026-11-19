@@ -1,12 +1,15 @@
 //! CH-09 TAPES: DreamTapes, my own games, run inside MABEL-OS.
 //!
-//! LIBRARY lists the tapes: installed ones in `~/.local/share/mabel-os/tapes/<name>/`
-//! (`tape.toml`, `tape.wasm`, `art/`, `music/`) and the ones I'm making, listed in the
-//! config as `tapes_dev = ["~/code/tapes/snake"]` (their wasm is cargo's release build).
+//! LIBRARY lists three kinds of tape:
+//! - DEV: the ones I'm making, listed in config.toml as `tapes_dev = ["~/code/tapes/snake"]`
+//!   (their wasm is cargo's release build; a rebuild restarts a running one);
+//! - installed: `~/.local/share/mabel-os/tapes/<name>/` (`tape.toml`, `tape.wasm`, `art/`, `music/`);
+//! - ON MABEL: in my tape repo (`mabel-os tape publish` on the PC) and not installed here yet:
+//!   enter installs it. An installed tape with a newer copy on Mabel says so; `u` updates it.
 //!
-//! A running tape gets the whole screen below the casing bar and every key except
-//! ctrl+] (the pause menu) and alt+1–9 (switching channel pauses it). A dev tape
-//! restarts by itself when it's rebuilt. A crash or an endless loop shows an error card.
+//! A running tape gets the whole screen below the casing bar and every key except ctrl+]
+//! (the pause menu: resume, reset, screenshot, console, quit) and alt+1–9 (switching channel
+//! pauses it). A crash or an endless loop shows an error card.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -14,14 +17,15 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use mabel_console::host::{Options, Tape};
-use mabel_console::input::Keymap;
-use mabel_console::tapefile::{FIXED, Screen, TapeInfo};
+use mabel_console::input::{Keymap, key_name};
+use mabel_console::tapefile::{Screen, TapeInfo};
 use mabel_console::{Frame as Pixels, Sprite};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use serde_json::Value;
 
 use crate::channel::{Channel, Ctx, Outcome, View};
 use crate::keys;
@@ -30,17 +34,15 @@ use crate::ui::{self, bold};
 
 const LIST: usize = 0;
 const CARD: usize = 1;
-const MENU: [&str; 3] = ["resume", "reset", "quit to the library"];
+const MENU: [&str; 5] = ["resume", "reset", "screenshot", "console", "quit to the library"];
 /// The longest frame time a tape is told about (after a pause or a stall).
 const MAX_DT: f32 = 0.25;
+/// Screenshots are saved this many times bigger than the tape's pixels.
+const SHOT_SCALE: u32 = 4;
 
 /// `~/.local/share/mabel-os`.
 pub fn data_dir() -> PathBuf {
-    let base = match std::env::var_os("XDG_DATA_HOME") {
-        Some(d) if !d.is_empty() => PathBuf::from(d),
-        _ => crate::config::home().join(".local/share"),
-    };
-    base.join("mabel-os")
+    mabel_console::saves::data_dir()
 }
 
 pub fn installed_dir() -> PathBuf {
@@ -51,22 +53,83 @@ fn played_file() -> PathBuf {
     data_dir().join("tapes-played.json")
 }
 
+/// Which version of a tape is installed (the .dtape's sha16), written by `install`.
+const SHA_FILE: &str = ".dtape-sha";
+
+/// Install a .dtape as `~/.local/share/mabel-os/tapes/<name>`.
+pub fn install(name: &str, bytes: &[u8]) -> anyhow::Result<PathBuf> {
+    let dest = installed_dir().join(name);
+    crate::dtape::unpack(bytes, &dest)?;
+    std::fs::write(dest.join(SHA_FILE), crate::dtape::sha16(bytes))?;
+    Ok(dest)
+}
+
+/// A tape in my repo on Mabel, as `/api/tapes` lists it.
+#[derive(Clone, Debug)]
+pub struct Remote {
+    pub name: String,
+    pub sha: String,
+    pub info: TapeInfo,
+}
+
+impl Remote {
+    pub fn from_json(v: &Value) -> Option<Remote> {
+        let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+        let name = s("name");
+        if name.is_empty() {
+            return None;
+        }
+        let info = TapeInfo {
+            title: if s("title").is_empty() { name.clone() } else { s("title") },
+            author: s("author"),
+            description: s("description"),
+            screen: if s("screen") == "128x72" { Screen::Fixed } else { Screen::Fill },
+            fps: v["fps"].as_u64().unwrap_or(30) as u32,
+            ..TapeInfo::default()
+        };
+        Some(Remote { name, sha: s("sha"), info })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Kind {
+    Dev,
+    Installed,
+    /// On Mabel, not installed here.
+    Remote,
+}
+
 /// One tape in the LIBRARY.
 struct Entry {
+    kind: Kind,
+    /// Its folder (for a Remote one: where it would be installed).
     dir: PathBuf,
     info: Result<TapeInfo, String>,
     /// Where its wasm is (it may not be built yet).
     wasm: PathBuf,
-    dev: bool,
     cover: Option<Sprite>,
+    /// Installed, and Mabel has a different version of it.
+    update: bool,
 }
 
 impl Entry {
-    fn read(dir: &Path, dev: bool) -> Entry {
+    fn read(dir: &Path, kind: Kind) -> Entry {
         let info = TapeInfo::read(dir);
-        let wasm = if dev { dev_wasm(dir) } else { dir.join("tape.wasm") };
+        let wasm = if kind == Kind::Dev { dev_wasm(dir) } else { dir.join("tape.wasm") };
         let cover = info.as_ref().ok().and_then(|i| i.cover.as_ref()).and_then(|c| Sprite::load(&dir.join(c)).ok());
-        Entry { dir: dir.to_path_buf(), info, wasm, dev, cover }
+        Entry { kind, dir: dir.to_path_buf(), info, wasm, cover, update: false }
+    }
+
+    fn remote(r: &Remote) -> Entry {
+        let dir = installed_dir().join(&r.name);
+        Entry {
+            kind: Kind::Remote,
+            wasm: dir.join("tape.wasm"),
+            dir,
+            info: Ok(r.info.clone()),
+            cover: None,
+            update: false,
+        }
     }
 
     fn key(&self) -> String {
@@ -91,7 +154,7 @@ fn dev_dirs(table: &toml::Table) -> Vec<PathBuf> {
 }
 
 /// A dev tape's wasm: cargo's release build, named after the package.
-fn dev_wasm(dir: &Path) -> PathBuf {
+pub fn dev_wasm(dir: &Path) -> PathBuf {
     let name = std::fs::read_to_string(dir.join("Cargo.toml"))
         .ok()
         .and_then(|t| t.parse::<toml::Table>().ok())
@@ -104,21 +167,30 @@ fn mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// A terminal key as the name `tape.toml` and the keymap use: "left", "z", "space", "enter".
-pub fn key_name(key: &KeyEvent) -> Option<String> {
-    Some(match key.code {
-        KeyCode::Left => "left".into(),
-        KeyCode::Right => "right".into(),
-        KeyCode::Up => "up".into(),
-        KeyCode::Down => "down".into(),
-        KeyCode::Enter => "enter".into(),
-        KeyCode::Backspace => "backspace".into(),
-        KeyCode::Tab => "tab".into(),
-        KeyCode::Esc => "esc".into(),
-        KeyCode::Char(' ') => "space".into(),
-        KeyCode::Char(c) => c.to_lowercase().to_string(),
-        _ => return None,
-    })
+/// Where screenshots go: ~/Pictures/mabel-os if there's a Pictures folder, else next to the tapes.
+fn screenshot_dir() -> PathBuf {
+    let pictures = crate::config::home().join("Pictures");
+    if pictures.is_dir() { pictures.join("mabel-os") } else { data_dir().join("screenshots") }
+}
+
+/// The tape's screen as a PNG, `SHOT_SCALE` times bigger.
+fn screenshot(px: &Pixels, name: &str) -> anyhow::Result<PathBuf> {
+    let (w, h) = (px.w as u32, px.h as u32);
+    let img = image::RgbImage::from_fn(w * SHOT_SCALE, h * SHOT_SCALE, |x, y| {
+        let c = px.px[(y / SHOT_SCALE * w + x / SHOT_SCALE) as usize];
+        image::Rgb([(c >> 16) as u8, (c >> 8) as u8, c as u8])
+    });
+    let dir = screenshot_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{name}-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+    img.save(&path)?;
+    Ok(path)
+}
+
+/// Messages from background work (ctx.run → on_msg).
+enum Note {
+    Remote(Result<Vec<Remote>, String>),
+    Installed { name: String, result: Result<Vec<u8>, String>, play: bool },
 }
 
 struct Running {
@@ -133,6 +205,8 @@ struct Running {
     built: Option<SystemTime>,
     /// The pause menu, with the selected line.
     menu: Option<usize>,
+    /// The console over the paused game (from the pause menu).
+    console: bool,
     crashed: Option<String>,
 }
 
@@ -142,14 +216,19 @@ pub struct Tapes {
     scanned: bool,
     run: Option<Running>,
     played: BTreeMap<String, i64>,
-    /// The last run's console: its `log` lines, and how it ended.
+    /// The current or last run's console: its `log` lines, and how it ended.
     console: Vec<String>,
     /// The tape the console belongs to.
     last_run: Option<PathBuf>,
     dev_dirs: Vec<PathBuf>,
+    /// What Mabel's tape repo had at the last look (None: not asked yet, or unreachable).
+    remote: Option<Vec<Remote>>,
+    remote_error: Option<String>,
+    /// A download running (its tape name).
+    installing: Option<String>,
     rate: u32,
     /// The body's size in cells, from the last draw.
-    area: (u16, u16),
+    area: Rect,
 }
 
 impl Tapes {
@@ -166,9 +245,32 @@ impl Tapes {
             console: vec![],
             last_run: None,
             dev_dirs,
+            remote: None,
+            remote_error: None,
+            installing: None,
             rate: cfg.tracker_rate.clamp(8000, 96000) as u32,
-            area: (128, 36),
+            area: Rect::new(0, 0, 128, 36),
         }
+    }
+
+    /// Ask Mabel what's in the tape repo (the answer arrives in on_msg).
+    fn fetch_remote(&self, ctx: &mut Ctx) {
+        ctx.spawn("tapes", |api| async move {
+            let result = api.tapes().await.map(|list| list.iter().filter_map(Remote::from_json).collect());
+            Note::Remote(result.map_err(|e| format!("{e:#}")))
+        });
+    }
+
+    fn download(&mut self, ctx: &mut Ctx, name: String, play: bool) {
+        if self.installing.is_some() {
+            return;
+        }
+        self.installing = Some(name.clone());
+        ctx.status(&format!("installing {name}…"));
+        ctx.spawn("tapes", move |api| async move {
+            let result = api.tape_download(&name).await.map_err(|e| format!("{e:#}"));
+            Note::Installed { name, result, play }
+        });
     }
 
     fn scan(&mut self) {
@@ -180,19 +282,49 @@ impl Tapes {
         }
         let keep = self.entries.get(self.sel).map(|e| e.dir.clone());
         let mut entries: Vec<Entry> =
-            self.dev_dirs.iter().filter(|d| d.is_dir()).map(|d| Entry::read(d, true)).collect();
+            self.dev_dirs.iter().filter(|d| d.is_dir()).map(|d| Entry::read(d, Kind::Dev)).collect();
         let mut installed: Vec<PathBuf> = std::fs::read_dir(installed_dir())
-            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+                    .collect()
+            })
             .unwrap_or_default();
         installed.sort();
-        entries.extend(installed.iter().map(|d| Entry::read(d, false)));
+        for dir in &installed {
+            let mut e = Entry::read(dir, Kind::Installed);
+            let have = std::fs::read_to_string(dir.join(SHA_FILE)).unwrap_or_default();
+            e.update = self
+                .remote
+                .iter()
+                .flatten()
+                .any(|r| r.name == e.key() && !have.trim().is_empty() && r.sha != have.trim());
+            entries.push(e);
+        }
+        for r in self.remote.iter().flatten() {
+            if !installed.iter().any(|d| d.file_name().is_some_and(|n| n.to_string_lossy() == r.name)) {
+                entries.push(Entry::remote(r));
+            }
+        }
         self.entries = entries;
         self.sel = keep.and_then(|k| self.entries.iter().position(|e| e.dir == k)).unwrap_or(0);
         self.scanned = true;
     }
 
-    fn start(&mut self, ctx: &mut Ctx, area_cells: (u16, u16)) {
+    fn rescan(&mut self, ctx: &mut Ctx) {
+        self.scan();
+        self.fetch_remote(ctx);
+        ctx.status(&format!("{} tapes · asking Mabel for hers", self.entries.len()));
+    }
+
+    fn start(&mut self, ctx: &mut Ctx) {
         let Some(entry) = self.entries.get(self.sel) else { return };
+        if entry.kind == Kind::Remote {
+            let name = entry.key();
+            self.download(ctx, name, true);
+            return;
+        }
         let info = match &entry.info {
             Ok(i) => i.clone(),
             Err(e) => {
@@ -202,8 +334,8 @@ impl Tapes {
         };
         let wasm = match std::fs::read(&entry.wasm) {
             Ok(w) => w,
-            Err(_) if entry.dev => {
-                ctx.error("TAPES", "Not built yet: cargo build --release --target wasm32-unknown-unknown");
+            Err(_) if entry.kind == Kind::Dev => {
+                ctx.error("TAPES", "Not built yet: cargo tape (in the tape's folder)");
                 return;
             }
             Err(e) => {
@@ -212,8 +344,8 @@ impl Tapes {
             }
         };
         self.last_run = Some(entry.dir.clone());
-        let (w, h) = pixel_size(info.screen, area_cells);
-        let opts = Options { w, h, root: entry.dir.clone(), rate: self.rate };
+        let place = mabel_console::place(info.screen, self.area);
+        let opts = Options { w: place.w, h: place.h, root: entry.dir.clone(), rate: self.rate, save_key: entry.key() };
         self.console.clear();
         match Tape::load(&wasm, opts) {
             Ok(mut tape) => {
@@ -235,6 +367,7 @@ impl Tapes {
                     last_frame: now,
                     built: mtime(&entry.wasm),
                     menu: None,
+                    console: false,
                     crashed: None,
                 });
                 ctx.focus(LIST);
@@ -267,6 +400,7 @@ impl Tapes {
 
     fn resume(run: &mut Running) {
         run.menu = None;
+        run.console = false;
         run.tape.pause(false);
         let now = Instant::now();
         (run.next_frame, run.last_frame) = (now, now); // no catch-up jump after the pause
@@ -294,30 +428,60 @@ impl Tapes {
         self.console.drain(..excess);
     }
 
+    fn menu_choice(&mut self, choice: usize, ctx: &mut Ctx) {
+        let Some(run) = &mut self.run else { return };
+        match MENU[choice] {
+            "resume" => Self::resume(run),
+            "reset" => {
+                let entry = run.entry;
+                self.stop();
+                self.sel = entry;
+                self.start(ctx);
+            }
+            "screenshot" => {
+                let name = self.entries.get(run.entry).map(Entry::key).unwrap_or_else(|| "tape".into());
+                match screenshot(run.tape.frame(), &name) {
+                    Ok(path) => ctx.toast("SCREENSHOT", &format!("saved {}", path.display())),
+                    Err(e) => ctx.error("SCREENSHOT", &format!("{e:#}")),
+                }
+            }
+            "console" => run.console = true,
+            _ => self.stop(),
+        }
+    }
+
     // ── drawing ──────────────────────────────────────────────────────────
 
     fn render_run(&mut self, frame: &mut Frame, area: Rect, pal: &Palette) {
         self.advance(Instant::now());
         let Some(run) = &mut self.run else { return };
         frame.render_widget(Block::new().style(Style::new().bg(pal.bg)), area);
-        let (w, h) = pixel_size(run.screen, (area.width, area.height));
+        let place = mabel_console::place(run.screen, area);
         if run.screen == Screen::Fill {
-            run.tape.resize(w, h);
+            run.tape.resize(place.w, place.h);
         }
-        let scale = match run.screen {
-            Screen::Fill => 1,
-            Screen::Fixed => (area.width as usize / FIXED.0).min(area.height as usize * 2 / FIXED.1).max(1),
-        };
-        let (cols, rows) = ((w * scale) as u16, (h * scale).div_ceil(2) as u16);
-        let place = Rect {
-            x: area.x + area.width.saturating_sub(cols) / 2,
-            y: area.y + area.height.saturating_sub(rows) / 2,
-            width: cols.min(area.width),
-            height: rows.min(area.height),
-        };
-        mabel_console::render(run.tape.frame(), run.tape.texts(), frame.buffer_mut(), place, scale);
+        mabel_console::render(run.tape.frame(), run.tape.texts(), frame.buffer_mut(), place.cells, place.scale);
 
-        if let Some(sel) = run.menu {
+        if run.console {
+            let room = area.height.saturating_sub(6) as usize;
+            let mut lines: Vec<Line> = if self.console.is_empty() {
+                vec![Line::styled(
+                    " (nothing logged yet: log(\"…\") in the tape writes here)",
+                    Style::new().fg(pal.amber_dim),
+                )]
+            } else {
+                self.console
+                    .iter()
+                    .rev()
+                    .take(room)
+                    .rev()
+                    .map(|l| Line::styled(format!(" {l}"), Style::new().fg(pal.amber)))
+                    .collect()
+            };
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(" esc: back to the menu", Style::new().fg(pal.amber_dim)));
+            card(frame, area, pal, "CONSOLE", lines, false, 90);
+        } else if let Some(sel) = run.menu {
             let title = self.entries.get(run.entry).map(Entry::title).unwrap_or_default();
             let mut lines = vec![Line::styled(format!(" {title}"), bold(pal.beige)), Line::raw("")];
             for (i, item) in MENU.iter().enumerate() {
@@ -326,7 +490,7 @@ impl Tapes {
             }
             lines.push(Line::raw(""));
             lines.push(Line::styled(" ctrl+] or esc: resume", Style::new().fg(pal.amber_dim)));
-            card(frame, area, pal, "▌▌ PAUSED", lines, false);
+            card(frame, area, pal, "▌▌ PAUSED", lines, false, 46);
         } else if let Some(e) = &run.crashed {
             let lines = vec![
                 Line::styled(" The tape stopped:", bold(pal.beige)),
@@ -338,7 +502,7 @@ impl Tapes {
                     Style::new().fg(pal.amber_dim),
                 ),
             ];
-            card(frame, area, pal, "TAPE CRASHED", lines, true);
+            card(frame, area, pal, "TAPE CRASHED", lines, true, 46);
         }
     }
 
@@ -361,8 +525,8 @@ impl Tapes {
             lines.push(Line::raw(""));
             lines.push(Line::styled(" Make one:  mabel-os new-tape snake", Style::new().fg(pal.amber)));
             lines.push(Line::styled(" (on the PC or laptop; then r here)", Style::new().fg(pal.amber_dim)));
-            lines.push(Line::styled(" Installed tapes live in", Style::new().fg(pal.amber_dim)));
-            lines.push(Line::styled(format!(" {}", installed_dir().display()), Style::new().fg(pal.amber_dim)));
+            lines.push(Line::styled(" Share one: mabel-os tape publish", Style::new().fg(pal.amber)));
+            lines.push(Line::styled(" (then it shows up here on every device)", Style::new().fg(pal.amber_dim)));
         }
         let rows = inner.height as usize;
         let top = self.sel.saturating_sub(rows.saturating_sub(1));
@@ -372,19 +536,32 @@ impl Tapes {
                 bold(pal.bg).bg(pal.amber)
             } else if on {
                 bold(pal.amber_hi)
+            } else if e.kind == Kind::Remote {
+                Style::new().fg(pal.amber_dim)
             } else {
                 Style::new().fg(pal.amber)
             };
-            let mut spans = vec![Span::styled(format!(" ◘ {} ", e.title()), style)];
-            if e.dev {
-                spans.push(Span::styled(" DEV", Style::new().fg(pal.teal)));
+            let mark = if e.kind == Kind::Remote { "○" } else { "◘" };
+            let mut spans = vec![Span::styled(format!(" {mark} {} ", e.title()), style)];
+            match e.kind {
+                Kind::Dev => spans.push(Span::styled(" DEV", Style::new().fg(pal.teal))),
+                Kind::Remote => spans.push(Span::styled(" ON MABEL", Style::new().fg(pal.sand))),
+                Kind::Installed if e.update => spans.push(Span::styled(" ▲ NEWER ON MABEL", Style::new().fg(pal.sand))),
+                Kind::Installed => {}
+            }
+            if self.installing.as_deref() == Some(e.key().as_str()) {
+                spans.push(Span::styled(" ↓ installing…", Style::new().fg(pal.mint)));
             }
             if e.info.is_err() {
                 spans.push(Span::styled(" !", Style::new().fg(pal.red)));
             }
             lines.push(Line::from(spans));
         }
-        frame.render_widget(Paragraph::new(lines), inner);
+        if let Some(err) = &self.remote_error {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(format!(" Mabel's tapes: {err}"), Style::new().fg(pal.amber_dim)));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 
         let block = ui::panel(pal, "TAPE", view.panel_state(CARD));
         let inner = block.inner(detail);
@@ -398,22 +575,23 @@ impl Tapes {
     fn render_card(&self, frame: &mut Frame, area: Rect, pal: &Palette, e: &Entry) {
         let mut y = area.y;
         if let Some(cover) = &e.cover {
-            let max_rows = (area.height / 2).max(4) as usize;
+            let max_rows = (area.height / 3).max(4) as usize;
             let scale = (area.width as usize / cover.w.max(1)).min(max_rows * 2 / cover.h.max(1)).clamp(1, 4);
             let mut px = Pixels::new(cover.w, cover.h);
-            px.cls(rgb(pal.bg));
+            px.cls(rgb(pal.panel));
             cover.draw(&mut px, 0, 0, 0, false, false);
             let rows = (cover.h * scale).div_ceil(2) as u16;
             let place = Rect { x: area.x + 1, y, width: area.width.saturating_sub(1), height: rows.min(area.height) };
             mabel_console::render(&px, &[], frame.buffer_mut(), place, scale);
             y += rows + 1;
         }
+        let dim = Style::new().fg(pal.amber_dim);
         let mut lines = vec![];
         match &e.info {
             Ok(info) => {
                 lines.push(Line::styled(format!(" {}", info.title), bold(pal.beige)));
                 if !info.author.is_empty() {
-                    lines.push(Line::styled(format!(" by {}", info.author), Style::new().fg(pal.amber_dim)));
+                    lines.push(Line::styled(format!(" by {}", info.author), dim));
                 }
                 if !info.description.is_empty() {
                     lines.push(Line::raw(""));
@@ -424,23 +602,35 @@ impl Tapes {
                 let when = played
                     .map(|t| t.with_timezone(&chrono::Local).format("%d %b %Y %H:%M").to_string())
                     .unwrap_or_else(|| "never".into());
-                lines.push(Line::styled(format!(" last played: {when}"), Style::new().fg(pal.amber_dim)));
+                lines.push(Line::styled(format!(" last played: {when}"), dim));
                 let screen = match info.screen {
                     Screen::Fill => "fills the screen",
                     Screen::Fixed => "128×72",
                 };
-                lines.push(Line::styled(format!(" {screen} · {} fps", info.fps), Style::new().fg(pal.amber_dim)));
-                if e.dev {
-                    let built = if e.wasm.exists() { "built" } else { "not built yet" };
-                    lines
-                        .push(Line::styled(format!(" DEV · {} · {built}", e.dir.display()), Style::new().fg(pal.teal)));
+                lines.push(Line::styled(format!(" {screen} · {} fps", info.fps), dim));
+                match e.kind {
+                    Kind::Dev => {
+                        let built = if e.wasm.exists() { "built" } else { "not built yet: cargo tape" };
+                        lines.push(Line::styled(
+                            format!(" DEV · {} · {built}", e.dir.display()),
+                            Style::new().fg(pal.teal),
+                        ));
+                    }
+                    Kind::Remote => {
+                        lines.push(Line::styled(" ON MABEL: not on this device yet", Style::new().fg(pal.sand)));
+                    }
+                    Kind::Installed if e.update => {
+                        lines.push(Line::styled(" ▲ Mabel has a newer version: u updates", Style::new().fg(pal.sand)));
+                    }
+                    Kind::Installed => {}
                 }
                 lines.push(Line::raw(""));
-                lines.push(Line::styled(" enter: play", Style::new().fg(pal.amber)));
+                let action = if e.kind == Kind::Remote { " enter: install and play" } else { " enter: play" };
+                lines.push(Line::styled(action, Style::new().fg(pal.amber)));
             }
             Err(err) => lines.push(Line::styled(format!(" {err}"), Style::new().fg(pal.red))),
         }
-        let is_last = self.run.is_none() && !self.console.is_empty() && e.dir == self.last_dir();
+        let is_last = self.run.is_none() && !self.console.is_empty() && Some(&e.dir) == self.last_run.as_ref();
         if is_last {
             lines.push(Line::raw(""));
             lines.push(Line::styled(" CONSOLE (last run)", bold(pal.beige)));
@@ -453,10 +643,6 @@ impl Tapes {
         let rest = Rect { y, height: area.height.saturating_sub(y - area.y), ..area };
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rest);
     }
-
-    fn last_dir(&self) -> PathBuf {
-        self.last_run.clone().unwrap_or_default()
-    }
 }
 
 fn rgb(c: ratatui::style::Color) -> u32 {
@@ -466,17 +652,9 @@ fn rgb(c: ratatui::style::Color) -> u32 {
     }
 }
 
-/// The tape's screen in pixels for a body of `cells`.
-fn pixel_size(screen: Screen, cells: (u16, u16)) -> (usize, usize) {
-    match screen {
-        Screen::Fill => (cells.0.max(1) as usize, cells.1.max(1) as usize * 2),
-        Screen::Fixed => FIXED,
-    }
-}
-
-/// A small centred card over the game (the pause menu, the crash).
-fn card(frame: &mut Frame, area: Rect, pal: &Palette, title: &str, lines: Vec<Line>, error: bool) {
-    let w = 46.min(area.width);
+/// A centred card over the game (the pause menu, the console, the crash), `width` wide at most.
+fn card(frame: &mut Frame, area: Rect, pal: &Palette, title: &str, lines: Vec<Line>, error: bool, width: u16) {
+    let w = width.min(area.width);
     let h = (lines.len() as u16 + 2).min(area.height);
     let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h };
     frame.render_widget(Clear, r);
@@ -497,11 +675,15 @@ impl Channel for Tapes {
         "TAPES"
     }
 
+    fn start(&mut self, ctx: &mut Ctx) {
+        self.fetch_remote(ctx);
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, view: &View) -> Vec<Rect> {
         if !self.scanned {
             self.scan();
         }
-        self.area = (area.width, area.height);
+        self.area = area;
         if self.run.is_some() {
             self.render_run(frame, area, view.pal);
             return vec![area];
@@ -509,8 +691,49 @@ impl Channel for Tapes {
         self.render_library(frame, area, view)
     }
 
+    fn on_msg(&mut self, _id: &str, msg: Box<dyn std::any::Any + Send>, ctx: &mut Ctx) {
+        let Ok(note) = msg.downcast::<Note>() else { return };
+        match *note {
+            Note::Remote(Ok(list)) => {
+                self.remote = Some(list);
+                self.remote_error = None;
+                self.scan();
+            }
+            Note::Remote(Err(e)) => {
+                self.remote_error = Some(if e.contains("403") {
+                    "this device's token has no tapes scope".into()
+                } else {
+                    "Mabel isn't answering".into()
+                });
+            }
+            Note::Installed { name, result, play } => {
+                self.installing = None;
+                match result.map_err(anyhow::Error::msg).and_then(|bytes| install(&name, &bytes)) {
+                    Ok(dir) => {
+                        ctx.toast("TAPES", &format!("◘ {name} installed"));
+                        ctx.status("");
+                        self.scan();
+                        if let Some(i) = self.entries.iter().position(|e| e.dir == dir) {
+                            self.sel = i;
+                            if play && self.run.is_none() {
+                                self.start(ctx);
+                            }
+                        }
+                    }
+                    Err(e) => ctx.error("TAPES", &format!("couldn't install {name}: {e:#}")),
+                }
+            }
+        }
+    }
+
     fn key(&mut self, section: usize, key: KeyEvent, ctx: &mut Ctx) -> Outcome {
         if let Some(run) = &mut self.run {
+            if run.console {
+                if key.kind != KeyEventKind::Release && matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
+                    run.console = false;
+                }
+                return Outcome::Used;
+            }
             if let Some(sel) = &mut run.menu {
                 if key.kind == KeyEventKind::Release {
                     return Outcome::Used;
@@ -519,16 +742,10 @@ impl Channel for Tapes {
                     (Some('j'), _) | (_, KeyCode::Down) => *sel = (*sel + 1) % MENU.len(),
                     (Some('k'), _) | (_, KeyCode::Up) => *sel = (*sel + MENU.len() - 1) % MENU.len(),
                     (_, KeyCode::Esc) => Self::resume(run),
-                    (_, KeyCode::Enter) => match *sel {
-                        0 => Self::resume(run),
-                        1 => {
-                            let entry = run.entry;
-                            self.stop();
-                            self.sel = entry;
-                            self.start(ctx, self.area);
-                        }
-                        _ => self.stop(),
-                    },
+                    (_, KeyCode::Enter) => {
+                        let choice = *sel;
+                        self.menu_choice(choice, ctx);
+                    }
                     _ => {}
                 }
                 return Outcome::Used;
@@ -555,11 +772,15 @@ impl Channel for Tapes {
             // h / l hop between LIBRARY and the TAPE card.
             (Some('l'), _) | (_, KeyCode::Right) if section == LIST => ctx.focus(CARD),
             (Some('h'), _) | (_, KeyCode::Left) if section == CARD => ctx.focus(LIST),
-            (_, KeyCode::Enter) => self.start(ctx, self.area),
-            (Some('r'), _) => {
-                self.scan();
-                ctx.status(&format!("{} tapes", self.entries.len()));
-            }
+            (_, KeyCode::Enter) => self.start(ctx),
+            (Some('u'), _) => match self.entries.get(self.sel) {
+                Some(e) if e.update => {
+                    let name = e.key();
+                    self.download(ctx, name, false);
+                }
+                _ => ctx.status("nothing to update: Mabel has the same version"),
+            },
+            (Some('r'), _) => self.rescan(ctx),
             _ => return Outcome::Ignored,
         }
         Outcome::Used
@@ -567,8 +788,7 @@ impl Channel for Tapes {
 
     fn nav_key(&mut self, key: KeyEvent, ctx: &mut Ctx) -> Outcome {
         if keys::is(&key, 'r') && self.run.is_none() {
-            self.scan();
-            ctx.status(&format!("{} tapes", self.entries.len()));
+            self.rescan(ctx);
             return Outcome::Used;
         }
         Outcome::Ignored
@@ -617,7 +837,7 @@ impl Channel for Tapes {
         // A dev tape that was rebuilt starts again with the new code.
         let rebuilt = self.run.as_ref().and_then(|run| {
             let e = self.entries.get(run.entry)?;
-            (e.dev && mtime(&e.wasm).is_some_and(|t| Some(t) != run.built)).then_some(run.entry)
+            (e.kind == Kind::Dev && mtime(&e.wasm).is_some_and(|t| Some(t) != run.built)).then_some(run.entry)
         });
         if let Some(entry) = rebuilt {
             // Wait until cargo has finished writing it (the size stops changing).
@@ -628,9 +848,9 @@ impl Channel for Tapes {
                 return;
             }
             self.stop();
-            self.entries[entry] = Entry::read(&self.entries[entry].dir.clone(), true);
+            self.entries[entry] = Entry::read(&self.entries[entry].dir.clone(), Kind::Dev);
             self.sel = entry;
-            self.start(ctx, self.area);
+            self.start(ctx);
             ctx.toast("TAPES", "↻ rebuilt: the tape started again with the new code");
         }
     }

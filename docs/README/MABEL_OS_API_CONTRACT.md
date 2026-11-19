@@ -45,6 +45,7 @@ Every `/api/*` call sends `Authorization: Bearer <token>`. Profile `tui` grants 
 | `music` | `/api/music/*` |
 | `life:read` | `/api/tui/life`, `/api/tui/dream-image` |
 | `messages` | `/api/beeper/*` |
+| `tapes` | `/api/tapes`, `/api/tapes/*` |
 
 Defined in `routes/api_token_routes.py` (`TOKEN_PROFILES["tui"]`).
 
@@ -100,6 +101,21 @@ With `[navidrome]` in the config, the client talks Subsonic to Navidrome directl
 - 503 means Beeper has no token yet.
 - Errors carry `detail` or `message`.
 - The client uses `v1/chats`, `v1/chats/search`, `v1/chats/{id}/messages` (GET and POST), `v1/chats/{id}/messages/{mid}` (PUT), `…/reactions` (POST), `v1/chats/{id}/read|unread` (POST), and `v1/assets/serve`.
+
+## TAPES (`tapes`), the DreamTape repo
+
+Server: `routes/tape_routes.py`. Client: `tui-rs/src/api.rs` (`tapes`, `tape_download`, `tape_publish`, `tape_unpublish`), used by `src/tapes.rs` (LIBRARY) and `src/tapecli.rs` (`mabel-os tape …`).
+
+| Method | Path | Body / answer |
+|---|---|---|
+| GET | `/api/tapes` | `{"tapes": [{name, title, author, description, screen, fps, size, sha, published}]}` (`sha` = first 16 hex of the .dtape's SHA-256; `published` = unix seconds) |
+| GET | `/api/tapes/{name}.dtape` | the .dtape bytes (`application/x-tar`); 404 if none |
+| PUT | `/api/tapes/{name}` | body = .dtape bytes; answers the tape's listing entry; 400 if it isn't a valid tape |
+| DELETE | `/api/tapes/{name}` | `{"removed": name}`; 404 if none |
+
+- `name`: 1-64 of `A-Z a-z 0-9 - _` (the tape's folder name).
+- A .dtape is an uncompressed tar holding only `tape.toml`, `tape.wasm`, `art/<file>.mpx|png`, `music/<file>.mtk` (plus the `art`/`music` folders); at most 32 MB. Both sides check this.
+- Installed copies get `.dtape-sha` (the installed version's sha), which is how LIBRARY spots "▲ NEWER ON MABEL".
 
 ## Updates and install (no auth)
 

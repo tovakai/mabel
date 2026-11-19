@@ -25,8 +25,8 @@
 //! ```
 //!
 //! Built for `wasm32-unknown-unknown`, every function here is an import that the
-//! TAPES channel (MABEL-OS) provides. Built natively, the same functions work on
-//! kit's own screen, which is how a game will run outside MABEL-OS (milestone 2).
+//! TAPES channel (MABEL-OS) provides. Built natively (`cargo run --release`), kit draws
+//! the same game in any terminal by itself: the standalone build.
 //!
 //! **Coordinates:** pixels, (0, 0) top-left. A terminal cell is 1 pixel wide and
 //! 2 pixels high, so `print` uses cells: column = x, row = y / 2.
@@ -139,6 +139,32 @@ pub fn print(col: i32, row: i32, text: &str, c: Color) {
     sys::print(col, row, text, c)
 }
 
+/// Text in the little pixel font (3×5 letters, 4 pixels apart, lines 6 apart), with its
+/// top-left corner at any pixel. `\n` starts a new line. Lowercase draws as small capitals.
+pub fn pprint(x: i32, y: i32, text: &str, c: Color) {
+    sys::pprint(x, y, text, c)
+}
+
+/// How wide `pprint` draws `text`, in pixels (for centring: `(width() - text_width(s)) / 2`).
+pub fn text_width(text: &str) -> i32 {
+    text.lines().map(|l| l.chars().count() as i32 * 4 - 1).max().unwrap_or(0).max(0)
+}
+
+// ---- saves ----------------------------------------------------------------------------
+
+/// Remember `value` under `key`, even after the tape stops: high scores, levels, settings.
+/// Numbers too: `save("best", &score.to_string())`. All of a tape's saves together are at
+/// most 64 KB.
+pub fn save(key: &str, value: &str) {
+    sys::save(key, value)
+}
+
+/// What was saved under `key`, if anything. For a number:
+/// `let best: u32 = load("best").and_then(|s| s.parse().ok()).unwrap_or(0);`
+pub fn load(key: &str) -> Option<String> {
+    sys::load(key)
+}
+
 // ---- sprites --------------------------------------------------------------------------
 
 /// Load `art/<name>.mpx` (or `.png`). Do this once, in `init`, and keep the Sprite.
@@ -233,6 +259,9 @@ mod sys {
             pub fn circfill(x: i32, y: i32, r: i32, c: u32);
             pub fn blit(x: i32, y: i32, w: u32, h: u32, ptr: u32);
             pub fn print(col: i32, row: i32, ptr: u32, len: u32, c: u32);
+            pub fn pprint(x: i32, y: i32, ptr: u32, len: u32, c: u32);
+            pub fn save(kp: u32, kl: u32, vp: u32, vl: u32) -> i32;
+            pub fn load(kp: u32, kl: u32, out: u32, cap: u32) -> i32;
             pub fn sprite(ptr: u32, len: u32) -> i32;
             pub fn sprite_w(id: i32) -> i32;
             pub fn sprite_h(id: i32) -> i32;
@@ -282,6 +311,27 @@ mod sys {
     pub fn print(col: i32, row: i32, text: &str, c: Color) {
         unsafe { ffi::print(col, row, text.as_ptr() as u32, text.len() as u32, c) }
     }
+    pub fn pprint(x: i32, y: i32, text: &str, c: Color) {
+        unsafe { ffi::pprint(x, y, text.as_ptr() as u32, text.len() as u32, c) }
+    }
+    pub fn save(key: &str, value: &str) {
+        unsafe { ffi::save(key.as_ptr() as u32, key.len() as u32, value.as_ptr() as u32, value.len() as u32) };
+    }
+    pub fn load(key: &str) -> Option<String> {
+        let mut buf = vec![0u8; 256];
+        loop {
+            let n =
+                unsafe { ffi::load(key.as_ptr() as u32, key.len() as u32, buf.as_mut_ptr() as u32, buf.len() as u32) };
+            if n < 0 {
+                return None;
+            }
+            if n as usize <= buf.len() {
+                buf.truncate(n as usize);
+                return Some(String::from_utf8_lossy(&buf).into_owned());
+            }
+            buf = vec![0u8; n as usize]; // too small: the host said how big, ask again
+        }
+    }
     pub fn sprite(name: &str) -> Sprite {
         unsafe {
             let id = ffi::sprite(name.as_ptr() as u32, name.len() as u32);
@@ -323,40 +373,64 @@ mod sys {
     }
 }
 
-// ---- a native build: kit keeps its own screen -------------------------------------------
-// The standalone runner that shows it in a terminal comes in milestone 2; until then a
-// native build draws off-screen (handy for testing game logic with `cargo test`).
+// ---- a native build: the standalone runner ---------------------------------------------
+// `cargo run --release` in a tape's folder: the same game, drawn by kit in whatever terminal
+// you're in, with sound, buttons and saves, no MABEL-OS needed.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod sys {
     use super::{Color, Sprite};
     use mabel_console::input::Buttons;
+    use mabel_console::saves::Saves;
+    use mabel_console::sound::Sound;
     use mabel_console::{Frame, Sprite as Picture, Text};
     use std::cell::RefCell;
-    use std::time::Instant;
+    use std::path::PathBuf;
 
-    struct Native {
-        frame: Frame,
-        frame_no: u32,
-        started: Instant,
-        buttons: Buttons,
+    pub(crate) struct Native {
+        pub frame: Frame,
+        pub frame_no: u32,
+        pub elapsed: f32,
+        pub buttons: Buttons,
+        pub texts: Vec<Text>,
+        pub log: Vec<String>,
+        pub root: PathBuf,
         sprites: Vec<Picture>,
-        texts: Vec<Text>,
+        sound: Option<Sound>,
+        saves: Option<Saves>,
     }
 
     thread_local! {
         static NATIVE: RefCell<Native> = RefCell::new(Native {
             frame: Frame::new(128, 72),
             frame_no: 0,
-            started: Instant::now(),
+            elapsed: 0.0,
             buttons: Buttons::default(),
-            sprites: vec![],
             texts: vec![],
+            log: vec![],
+            root: std::env::current_dir().unwrap_or_default(),
+            sprites: vec![],
+            sound: None,
+            saves: None,
         });
     }
 
-    fn with<R>(f: impl FnOnce(&mut Native) -> R) -> R {
+    pub(crate) fn with<R>(f: impl FnOnce(&mut Native) -> R) -> R {
         NATIVE.with(|n| f(&mut n.borrow_mut()))
+    }
+
+    impl Native {
+        fn sound(&mut self) -> &mut Sound {
+            let root = &self.root;
+            self.sound.get_or_insert_with(|| Sound::new(root, 44100))
+        }
+        fn saves(&mut self) -> &mut Saves {
+            let key = self.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            self.saves.get_or_insert_with(|| Saves::open(&key))
+        }
+        pub fn stop_sound(&mut self) {
+            self.sound = None;
+        }
     }
 
     pub fn cls(c: Color) {
@@ -389,20 +463,45 @@ mod sys {
     pub fn print(col: i32, row: i32, text: &str, color: Color) {
         with(|n| n.texts.push(Text { col, row, text: text.to_string(), color }))
     }
-    pub fn sprite(name: &str) -> Sprite {
-        let path = std::path::Path::new("art").join(format!("{name}.mpx"));
-        match Picture::load(&path) {
-            Ok(p) => with(|n| {
-                let s =
-                    Sprite { id: n.sprites.len() as i32, w: p.w as i32, h: p.h as i32, frames: p.frames.len() as i32 };
-                n.sprites.push(p);
-                s
-            }),
-            Err(e) => {
-                log(&format!("sprite {name}: {e}"));
-                Sprite { id: -1, w: 0, h: 0, frames: 0 }
+    pub fn pprint(x: i32, y: i32, text: &str, c: Color) {
+        with(|n| mabel_console::font::pprint(&mut n.frame, x, y, text, c))
+    }
+    pub fn save(key: &str, value: &str) {
+        with(|n| {
+            if let Err(e) = n.saves().set(key, value) {
+                n.log.push(e);
             }
-        }
+        })
+    }
+    pub fn load(key: &str) -> Option<String> {
+        with(|n| n.saves().get(key).map(str::to_string))
+    }
+    pub fn sprite(name: &str) -> Sprite {
+        with(|n| {
+            let art = n.root.join("art");
+            let path =
+                [art.join(format!("{name}.mpx")), art.join(format!("{name}.png"))].into_iter().find(|p| p.exists());
+            match path.map(|p| Picture::load(&p)) {
+                Some(Ok(p)) => {
+                    let s = Sprite {
+                        id: n.sprites.len() as i32,
+                        w: p.w as i32,
+                        h: p.h as i32,
+                        frames: p.frames.len() as i32,
+                    };
+                    n.sprites.push(p);
+                    s
+                }
+                other => {
+                    let why = match other {
+                        Some(Err(e)) => e,
+                        _ => format!("no art/{name}.mpx or art/{name}.png"),
+                    };
+                    n.log.push(format!("sprite {name}: {why}"));
+                    Sprite { id: -1, w: 0, h: 0, frames: 0 }
+                }
+            }
+        })
     }
     pub fn spr(id: i32, frame: i32, x: i32, y: i32, flags: u32) {
         with(|n| {
@@ -417,9 +516,27 @@ mod sys {
     pub fn btnp(b: i32) -> bool {
         with(|n| n.buttons.btnp(b as usize))
     }
-    pub fn music(_name: &str) {}
-    pub fn music_stop() {}
-    pub fn sfx(_name: &str, _phrase: i32) {}
+    pub fn music(name: &str) {
+        with(|n| {
+            if let Err(e) = n.sound().music(name) {
+                n.log.push(e);
+            }
+        })
+    }
+    pub fn music_stop() {
+        with(|n| {
+            if let Some(s) = &mut n.sound {
+                s.music_stop();
+            }
+        })
+    }
+    pub fn sfx(name: &str, phrase: i32) {
+        with(|n| {
+            if let Err(e) = n.sound().sfx(name, phrase as i64) {
+                n.log.push(e);
+            }
+        })
+    }
     pub fn width() -> i32 {
         with(|n| n.frame.w as i32)
     }
@@ -427,22 +544,106 @@ mod sys {
         with(|n| n.frame.h as i32)
     }
     pub fn time() -> f32 {
-        with(|n| n.started.elapsed().as_secs_f32())
+        with(|n| n.elapsed)
     }
     pub fn frame() -> u32 {
         with(|n| n.frame_no)
     }
     pub fn log(msg: &str) {
-        eprintln!("{msg}");
+        with(|n| n.log.push(msg.to_string()))
     }
 }
 
-/// The standalone runner (a game in any terminal) arrives in milestone 2.
+/// The standalone runner: `tape!` makes `main()` call this in a native build.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native {
+    use std::time::{Duration, Instant};
+
+    use mabel_console::input::{Keymap, key_name};
+    use mabel_console::ratatui;
+    use mabel_console::ratatui::crossterm::event::{
+        self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    };
+    use mabel_console::ratatui::crossterm::execute;
+    use mabel_console::tapefile::TapeInfo;
+
+    use super::sys::with;
+
+    /// Play the tape in this terminal until ctrl+q (or ctrl+c, ctrl+]).
     pub fn run<T: super::Tape>() {
-        eprintln!("mabel-kit: the standalone build comes in milestone 2. Build the tape for TAPES with:");
-        eprintln!("  cargo build --release --target wasm32-unknown-unknown");
+        let root = std::env::current_dir().unwrap_or_default();
+        let info = match TapeInfo::read(&root) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
+        };
+        let keymap = Keymap::new(&info.keys);
+        let period = Duration::from_secs_f64(1.0 / info.fps as f64);
+
+        let mut term = ratatui::init(); // restores the terminal on a panic too
+        let kitty = ratatui::crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        if kitty {
+            let flags =
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+            let _ = execute!(std::io::stdout(), PushKeyboardEnhancementFlags(flags));
+        }
+        let mut place = mabel_console::place(info.screen, term.get_frame().area());
+        with(|n| n.frame.resize(place.w, place.h));
+        let mut game = T::init();
+
+        let (mut next, mut last) = (Instant::now(), Instant::now());
+        'play: loop {
+            // Keys until the next frame is due.
+            while let Ok(true) = event::poll(next.saturating_duration_since(Instant::now())) {
+                match event::read() {
+                    Ok(Event::Key(k)) => {
+                        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+                        if ctrl && matches!(k.code, KeyCode::Char('q' | 'c' | ']' | '5')) {
+                            break 'play;
+                        }
+                        if let Some(b) = key_name(&k).and_then(|name| keymap.button(&name)) {
+                            with(|n| match k.kind {
+                                KeyEventKind::Release => n.buttons.release(b),
+                                kind => n.buttons.press(b, kind == KeyEventKind::Repeat, Instant::now()),
+                            });
+                        }
+                    }
+                    Ok(Event::Resize(..)) => {
+                        let _ = term.autoresize();
+                        place = mabel_console::place(info.screen, term.get_frame().area());
+                        with(|n| n.frame.resize(place.w, place.h));
+                    }
+                    _ => {}
+                }
+            }
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.25);
+            (last, next) = (now, (next + period).max(now));
+            with(|n| {
+                n.buttons.begin_frame(now);
+                n.texts.clear();
+                n.elapsed += dt;
+            });
+            game.update(dt);
+            game.draw();
+            let _ = term.draw(|f| {
+                with(|n| mabel_console::render(&n.frame, &n.texts, f.buffer_mut(), place.cells, place.scale));
+            });
+            with(|n| n.frame_no = n.frame_no.wrapping_add(1));
+        }
+        if kitty {
+            let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        ratatui::restore();
+        with(|n| {
+            n.stop_sound();
+            for line in n.log.drain(..) {
+                eprintln!("{line}");
+            }
+        });
     }
 }
 

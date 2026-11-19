@@ -15,6 +15,7 @@ use std::time::Instant;
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, TypedFunc};
 
 use crate::input::Buttons;
+use crate::saves::Saves;
 use crate::sound::Sound;
 use crate::{Frame, Rgb, Sprite, Text};
 
@@ -33,6 +34,8 @@ pub struct Options {
     pub root: PathBuf,
     /// Sound sample rate.
     pub rate: u32,
+    /// Whose saves `save`/`load` use (the tape's folder name).
+    pub save_key: String,
 }
 
 /// What the tape's imports can see.
@@ -50,9 +53,16 @@ pub struct Host {
     sprites: Vec<Sprite>,
     sprite_ids: HashMap<String, i32>,
     sound: Option<Sound>,
+    save_key: String,
+    saves: Option<Saves>,
 }
 
 impl Host {
+    fn saves(&mut self) -> &mut Saves {
+        let key = &self.save_key;
+        self.saves.get_or_insert_with(|| Saves::open(key))
+    }
+
     fn note(&mut self, line: String) {
         self.log.push(line);
         if self.log.len() > LOG_KEEP {
@@ -156,6 +166,36 @@ fn link(linker: &mut Linker<Host>) -> Result<(), String> {
             host.texts.push(Text { col, row, text: s, color });
         }
     });
+    wrap!(linker, "pprint", |mut c: Caller<'_, Host>, x: i32, y: i32, ptr: u32, len: u32, color: u32| {
+        if let Some((s, host)) = text(&mut c, ptr, len) {
+            crate::font::pprint(&mut host.frame, x, y, &s, color);
+        }
+    });
+    // ── saves ──
+    wrap!(linker, "save", |mut c: Caller<'_, Host>, kp: u32, kl: u32, vp: u32, vl: u32| {
+        let Some((key, _)) = text(&mut c, kp, kl) else { return -1 };
+        let Some((value, host)) = text(&mut c, vp, vl) else { return -1 };
+        match host.saves().set(&key, &value) {
+            Ok(()) => 0,
+            Err(e) => {
+                host.note(e);
+                -1
+            }
+        }
+    });
+    // load: copies the value into the tape's buffer [out, out+cap) and returns its length
+    // (-1 when there's no such key). A length over `cap` means: call again with a bigger buffer.
+    wrap!(linker, "load", |mut c: Caller<'_, Host>, kp: u32, kl: u32, out: u32, cap: u32| -> i32 {
+        let Some((key, host)) = text(&mut c, kp, kl) else { return -1 };
+        let Some(value) = host.saves().get(&key).map(|v| v.as_bytes().to_vec()) else { return -1 };
+        if value.len() <= cap as usize
+            && let Some(mem) = c.get_export("memory").and_then(|e| e.into_memory())
+            && let Some(dst) = mem.data_mut(&mut c).get_mut(out as usize..out as usize + value.len())
+        {
+            dst.copy_from_slice(&value);
+        }
+        value.len() as i32
+    });
     // ── sprites ──
     wrap!(linker, "sprite", |mut c: Caller<'_, Host>, ptr: u32, len: u32| {
         text(&mut c, ptr, len).map_or(-1, |(name, host)| host.sprite(&name))
@@ -236,6 +276,8 @@ impl Tape {
             sprites: vec![],
             sprite_ids: HashMap::new(),
             sound: None,
+            save_key: opts.save_key,
+            saves: None,
         };
         let mut store = Store::new(&engine, host);
         let mut linker = Linker::new(&engine);

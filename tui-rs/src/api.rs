@@ -218,6 +218,32 @@ impl Mabel {
 
     // ── Beeper, relayed by Mabel ─────────────────────────────────────────
 
+    // ── the DreamTape repo (/api/tapes) ──────────────────────────────────
+
+    /// The tapes on Mabel: name, title, author, description, screen, fps, size, sha, published.
+    pub async fn tapes(&self) -> Result<Vec<Value>> {
+        let data = self.get_json("/api/tapes", &[]).await?;
+        Ok(data["tapes"].as_array().cloned().unwrap_or_default())
+    }
+
+    pub async fn tape_download(&self, name: &str) -> Result<Vec<u8>> {
+        let path = format!("/api/tapes/{name}.dtape");
+        let resp = self.req(Method::GET, &path).timeout(Duration::from_secs(120)).send().await?;
+        Ok(Self::checked(&path, resp).await?.bytes().await?.to_vec())
+    }
+
+    pub async fn tape_publish(&self, name: &str, dtape: Vec<u8>) -> Result<Value> {
+        let path = format!("/api/tapes/{name}");
+        let resp = self.req(Method::PUT, &path).timeout(Duration::from_secs(120)).body(dtape).send().await?;
+        Ok(Self::checked(&path, resp).await?.json().await?)
+    }
+
+    pub async fn tape_unpublish(&self, name: &str) -> Result<()> {
+        let path = format!("/api/tapes/{name}");
+        let resp = self.req(Method::DELETE, &path).send().await?;
+        Self::checked(&path, resp).await.map(|_| ())
+    }
+
     pub async fn beeper_status(&self) -> Result<Value> {
         self.get_json("/api/beeper/status", &[]).await
     }

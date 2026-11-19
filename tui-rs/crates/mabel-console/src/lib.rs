@@ -16,9 +16,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+pub use ratatui;
+
+pub mod font;
 #[cfg(feature = "host")]
 pub mod host;
 pub mod input;
+pub mod saves;
 pub mod sound;
 pub mod tapefile;
 
@@ -229,6 +233,37 @@ pub struct Text {
     pub row: i32,
     pub text: String,
     pub color: Rgb,
+}
+
+/// Where a tape's screen goes in a body of cells, and how big.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// The tape's screen in pixels.
+    pub w: usize,
+    pub h: usize,
+    /// Each pixel drawn `scale` times as big (the fixed 128×72 mode on a big terminal).
+    pub scale: usize,
+    /// The cells it covers, centred in the body.
+    pub cells: Rect,
+}
+
+/// `fill`: the whole body, 1×2 pixels per cell. `128x72`: centred, scaled by whole numbers.
+pub fn place(screen: tapefile::Screen, body: Rect) -> Placement {
+    let (w, h, scale) = match screen {
+        tapefile::Screen::Fill => (body.width.max(1) as usize, body.height.max(1) as usize * 2, 1),
+        tapefile::Screen::Fixed => {
+            let (w, h) = tapefile::FIXED;
+            (w, h, (body.width as usize / w).min(body.height as usize * 2 / h).max(1))
+        }
+    };
+    let (cols, rows) = ((w * scale) as u16, (h * scale).div_ceil(2) as u16);
+    let cells = Rect {
+        x: body.x + body.width.saturating_sub(cols) / 2,
+        y: body.y + body.height.saturating_sub(rows) / 2,
+        width: cols.min(body.width),
+        height: rows.min(body.height),
+    };
+    Placement { w, h, scale, cells }
 }
 
 fn color(c: Rgb) -> Color {

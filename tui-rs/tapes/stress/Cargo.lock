@@ -690,6 +690,7 @@ dependencies = [
  "mabel-media",
  "ratatui",
  "serde",
+ "serde_json",
  "toml",
 ]
 

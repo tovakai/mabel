@@ -80,6 +80,24 @@ impl Default for Keymap {
     }
 }
 
+/// A terminal key as the name `tape.toml` and the keymap use: "left", "z", "space", "enter".
+pub fn key_name(key: &ratatui::crossterm::event::KeyEvent) -> Option<String> {
+    use ratatui::crossterm::event::KeyCode;
+    Some(match key.code {
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Enter => "enter".into(),
+        KeyCode::Backspace => "backspace".into(),
+        KeyCode::Tab => "tab".into(),
+        KeyCode::Esc => "esc".into(),
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(c) => c.to_lowercase().to_string(),
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Buttons {
     /// Down since (the last press or repeat), until released.

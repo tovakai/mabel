@@ -14,7 +14,7 @@ use crate::pixel;
 use crate::tracker::{self, NOTE_OFF, Song, Step};
 
 /// The kit release new tapes are made with.
-pub const KIT_TAG: &str = "kit-v0.1";
+pub const KIT_TAG: &str = "kit-v0.2";
 const KIT_GIT: &str = "https://github.com/tovakai/mabel";
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -58,6 +58,8 @@ pub fn run(args: &[String]) -> Result<()> {
     println!();
     println!("  Then open TAPES (F9 / alt+9) in MABEL-OS and press enter on it.");
     println!("  Leave it running: every `cargo tape` restarts it with your new code.");
+    println!("  `cargo run --release` plays it on its own, in any terminal (ctrl+q quits).");
+    println!("  `mabel-os tape publish` puts it on Mabel, so the deck can install it.");
     println!("  art/hero.mpx opens in PIXEL, music/*.mtk in TRACKER.");
     match registered {
         Registered::Added(cfg) => println!("\n  (Added to tapes_dev in {}.)", cfg.display()),
@@ -132,6 +134,8 @@ struct Game {
     facing_left: bool,
     walking: bool,
     hero: Sprite,
+    /// How many times this tape has been started (kept with save/load).
+    plays: u32,
 }
 
 /// How fast the hero walks, in pixels per second.
@@ -140,12 +144,18 @@ const SPEED: f32 = 30.0;
 impl Tape for Game {
     fn init() -> Self {
         music("theme"); // music/theme.mtk loops in the background
+
+        // `load` gives back text (or None the very first time); `parse` turns it into a number.
+        let plays: u32 = load("plays").and_then(|s| s.parse().ok()).unwrap_or(0) + 1;
+        save("plays", &plays.to_string());
+
         Game {
             x: 20.0,
             y: 20.0,
             facing_left: false,
             walking: false,
             hero: sprite("hero"), // art/hero.mpx
+            plays,
         }
     }
 
@@ -191,6 +201,10 @@ impl Tape for Game {
 
         print(1, 0, "◘ my first DreamTape", AMBER);
         print(1, 1, "arrows / wasd: walk   z: blip   ctrl+]: pause", AMBER_DIM);
+
+        // The pixel font can go anywhere, even right under the hero's feet.
+        let label = format!("play {}", self.plays);
+        pprint(self.x as i32 + 4 - text_width(&label) / 2, self.y as i32 + 10, &label, AMBER_DIM);
     }
 }
 

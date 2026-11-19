@@ -35,7 +35,7 @@ impl Write for Count {
 
 fn opts(path: &str, w: usize, h: usize) -> Options {
     let root = std::path::Path::new(path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    Options { w, h, root, rate: 44100 }
+    Options { w, h, root, rate: 44100, save_key: "tape-bench".into() }
 }
 
 fn ms(d: Duration) -> f64 {
