@@ -11,9 +11,12 @@
 //! (the pause menu: resume, reset, screenshot, console, quit) and alt+1–9 (switching channel
 //! pauses it). A crash or an endless loop shows an error card.
 
-pub mod cli; // `mabel-os tape …`
-pub mod dtape; // .dtape files
-pub mod newtape; // `mabel-os new-tape`
+/// `mabel-os tape …`
+pub mod cli;
+/// .dtape files
+pub mod dtape;
+/// `mabel-os new-tape`
+pub mod newtape;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

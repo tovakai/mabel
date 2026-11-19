@@ -4,9 +4,12 @@
 //! Her reply streams in as Markdown. Tool calls show as one dim line each; an "Allow this
 //! action?" card takes y (allow once) or n (deny), or a click, and resumes the turn.
 
-pub mod course; // COMMS ▸ COURSE: the screen
-pub mod courses; // COURSE's model: courses in the vault
-pub mod inbox; // COMMS ▸ INBOX: Beeper chats
+/// COMMS ▸ COURSE: the screen
+pub mod course;
+/// COURSE's model: courses in the vault
+pub mod courses;
+/// COMMS ▸ INBOX: Beeper chats
+pub mod inbox;
 
 use std::time::{Duration, Instant};
 

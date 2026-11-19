@@ -6,7 +6,8 @@
 //! Every page is a menu: j/k move · enter does the line · h/l (or -/+) adjust a value · r
 //! refresh · a line's own keys are shown at the bottom. Commands run on a background thread.
 
-pub mod sysinfo; // asking the system: Wi-Fi, Bluetooth, audio, time
+/// asking the system: Wi-Fi, Bluetooth, audio, time
+pub mod sysinfo;
 
 use std::time::{Duration, Instant};
 

@@ -268,7 +268,7 @@ enum Registered {
 }
 
 /// Add `dir` to `tapes_dev` in config.toml. Only when the key isn't there yet (a new line at
-/// the top, before any [section]), so the file's comments and layout stay as they are.
+/// the top, before any `[section]`), so the file's comments and layout stay as they are.
 fn register(dir: &Path) -> Result<Registered> {
     let path = crate::os::config::config_path();
     let Ok(text) = std::fs::read_to_string(&path) else { return Ok(Registered::Manual(path)) };

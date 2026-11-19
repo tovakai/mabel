@@ -104,7 +104,7 @@ With `[navidrome]` in the config, the client talks Subsonic to Navidrome directl
 
 ## TAPES (`tapes`), the DreamTape repo
 
-Server: `routes/tape_routes.py`. Client: `tui-rs/src/api.rs` (`tapes`, `tape_download`, `tape_publish`, `tape_unpublish`), used by `src/tapes.rs` (LIBRARY) and `src/tapecli.rs` (`mabel-os tape …`).
+Server: `routes/tape_routes.py`. Client: `tui-rs/src/os/api.rs` (`tapes`, `tape_download`, `tape_publish`, `tape_unpublish`), used by `src/channels/tapes/mod.rs` (LIBRARY) and `src/channels/tapes/cli.rs` (`mabel-os tape …`).
 
 | Method | Path | Body / answer |
 |---|---|---|
@@ -139,7 +139,7 @@ Server: `routes/tape_routes.py`. Client: `tui-rs/src/api.rs` (`tapes`, `tape_dow
 - **POST `/api/items/{id}/nickname`** takes `{add}`.
 - **GET `/api/undo`** returns `{last}`, and **POST `/api/undo`** undoes it.
 
-The place model (routes, redirects, titles) is ported from tk-index's web UI. See `tui-rs/src/tkindex.rs`.
+The place model (routes, redirects, titles) is ported from tk-index's web UI. See `tui-rs/src/channels/inventory/tkindex.rs`.
 
 ## Print server (the deck, `mabel-print`)
 

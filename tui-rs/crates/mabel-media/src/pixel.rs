@@ -726,7 +726,7 @@ pub fn load_avatar(folder: &Path) -> Result<Doc> {
     Ok(doc)
 }
 
-/// Each tag back to its strip (<tag>.png unless the manifest names the file) and its timings.
+/// Each tag back to its strip (`<tag>.png` unless the manifest names the file) and its timings.
 pub fn save_avatar(doc: &Doc, folder: &Path) -> Result<()> {
     let path = folder.join("avatar.json");
     let mut manifest: Map<String, Value> =

@@ -21,7 +21,7 @@ pub struct Note {
     pub path: PathBuf,
     /// Vault-relative, with .md.
     pub rel: String,
-    /// The file stem (what [[links]] use).
+    /// The file stem (what `[[links]]` use).
     pub name: String,
     pub mtime: SystemTime,
     /// Raw link targets (names or paths), no .md.
@@ -193,7 +193,7 @@ impl Vault {
 
     // ── links ────────────────────────────────────────────────────────────
 
-    /// A [[target]] → the note's rel: by path if it has a slash, else by name (the source's
+    /// A `[[target]]` → the note's rel: by path if it has a slash, else by name (the source's
     /// folder first when several share the name).
     pub fn resolve(&self, target: &str, source: Option<&Note>) -> Option<String> {
         let t = target.trim().trim_end_matches(".md");
@@ -333,7 +333,7 @@ impl Vault {
         Ok(rel)
     }
 
-    /// Rename in place and rewrite [[links]] to it across the vault (Obsidian's "always update
+    /// Rename in place and rewrite `[[links]]` to it across the vault (Obsidian's "always update
     /// links"). Returns (new rel, notes changed).
     pub fn rename(&mut self, rel: &str, new_name: &str) -> Result<(String, usize)> {
         let new_name = new_name.trim().trim_end_matches(".md");

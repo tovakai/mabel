@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! palette = "deck"
-//! [colors]
+//! `[colors]`
 //! amber = "#ff7000"
 //! ```
 

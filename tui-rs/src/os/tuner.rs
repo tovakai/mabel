@@ -2,7 +2,7 @@
 //!
 //! Made for the deck's 7" panel, which shows colours its own way and has no settings of its own.
 //! j/k pick a colour · h/l hue · - + lightness · [ ] or < > saturation · g the whole amber family
-//! together · e type a hex · s save to config.toml [colors] · r back to the saved colours · esc close.
+//! together · e type a hex · s save to config.toml `[colors]` · r back to the saved colours · esc close.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -97,7 +97,7 @@ fn nudge(c: Color, dh: f64, dl: f64, ds: f64) -> Color {
     from_hls(h + dh, l + dl, s + ds)
 }
 
-/// Write the colours that differ from the chosen preset as [colors] in config.toml (keeping
+/// Write the colours that differ from the chosen preset as `[colors]` in config.toml (keeping
 /// everything else in the file as it is).
 pub fn save_colours(pal: &Palette, text: &str, preset: &Palette) -> String {
     let mut lines: Vec<&str> = vec![];

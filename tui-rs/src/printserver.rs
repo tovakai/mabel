@@ -9,7 +9,7 @@
 //!   POST /print    raw ESC/POS bytes → {"route": "usb" | "bluetooth", "bytes": n} (503 if the printer is away)
 //!   GET  /status   {"printer", "usb", "keepalive_minutes", "last_ok", "last_error", "last_route"}
 //!
-//! Both need "Authorization: Bearer <token>". It listens on the tailnet address only
+//! Both need "Authorization: Bearer `<token>`". It listens on the tailnet address only
 //! (MABEL_PRINT_HOST overrides). Config: ~/.config/mabel-tui/printserver.toml, the same file as
 //! the Python version's:
 //!

@@ -1,6 +1,6 @@
 //! Offline music: songs downloaded to this machine, played from disk when they're here.
 //!
-//! Files live in ~/Music/mabel-os-offline/<artist>/<album>/<track> - <title>.<ext> with an index
+//! Files live in `~/Music/mabel-os-offline/<artist>/<album>/<track> - <title>.<ext>` with an index
 //! (index.json) of the song metadata, so the library browses with no network at all, and of the
 //! collections you downloaded (an album, a playlist, a single song). Covers are saved beside
 //! them. The same layout and index as the Python client, so both share one download folder.

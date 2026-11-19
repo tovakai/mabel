@@ -10,8 +10,10 @@
 //! o loose ends · on an item: e edit, m move, c check out, r return, k nickname, p its place ·
 //! u undo · g reload · in the inbox: a apply, x tick off, v open the note in VAULT.
 
-pub mod housekeeping; // the daily housekeeping rounds
-pub mod tkindex; // the Gremlin Index's places and items
+/// the daily housekeeping rounds
+pub mod housekeeping;
+/// the Gremlin Index's places and items
+pub mod tkindex;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;

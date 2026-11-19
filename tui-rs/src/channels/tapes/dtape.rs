@@ -16,7 +16,7 @@ use anyhow::{Context, Result, bail};
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 
-/// May `name` be in a tape? (tape.toml, tape.wasm, art/<file>.mpx|png, music/<file>.mtk)
+/// May `name` be in a tape? (tape.toml, tape.wasm, `art/<file>.mpx|png`, `music/<file>.mtk`)
 pub fn allowed(name: &str) -> bool {
     let plain = |f: &str| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c));
     match name.split_once('/') {

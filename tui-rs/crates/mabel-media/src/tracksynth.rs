@@ -1,6 +1,6 @@
 //! TRACKER's engine: a tick sequencer driving a small chip synth and MIDI out.
 //!
-//! Time runs in ticks, 24 per beat (LSDJ's tempo): a step lasts groove[i] ticks (6 = a 16th).
+//! Time runs in ticks, 24 per beat (LSDJ's tempo): a step lasts `groove[i]` ticks (6 = a 16th).
 //! `Engine::render(n)` makes n stereo samples and runs every tick that falls inside them, so the
 //! same code plays live (`Output`: a thread piping to `aplay` or `pw-cat`) and renders files
 //! offline (`export_wav`, `export_midi`) with no sound card at all.

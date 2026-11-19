@@ -54,7 +54,7 @@ class Fake(BaseHTTPRequestHandler):
             sid = path.rsplit("/", 1)[1]
             return self.reply({"history": SESSIONS.get(sid, {}).get("history", [])})
         if path == "/api/tui/life":
-            return self.reply({"state": "resting", "doing": "pretending to be Mabel", "journal": [], "lists": {}})
+            return self.reply({"state": "resting", "doing": ["pretending to be Mabel"], "journal": [], "lists": {}})
         if path == "/api/tapes":
             tapes = [{"name": n, "title": n, "author": "", "description": "(on the fake Mabel)", "screen": "fill",
                       "fps": 30, "size": len(b), "sha": f"{hash(b) & 0xffffffffffffffff:016x}", "published": 0}

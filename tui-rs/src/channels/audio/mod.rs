@@ -5,10 +5,14 @@
 //! (cover, now playing, queue). space pause, [ ] or < > previous/next, ← → seek, + - volume,
 //! z shuffle, R a random mix.
 
-pub mod mpris; // the desktop's media keys and widget
-pub mod music; // where music comes from: Mabel's proxy or Navidrome
-pub mod offline; // downloaded music
-pub mod player; // mpv, playing the queue
+/// the desktop's media keys and widget
+pub mod mpris;
+/// where music comes from: Mabel's proxy or Navidrome
+pub mod music;
+/// downloaded music
+pub mod offline;
+/// mpv, playing the queue
+pub mod player;
 
 use std::time::Instant;
 

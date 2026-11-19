@@ -147,7 +147,7 @@ impl App {
         result
     }
 
-    /// The tuner's s: the colours that differ from the preset, as [colors] in config.toml.
+    /// The tuner's s: the colours that differ from the preset, as `[colors]` in config.toml.
     fn save_colours(&mut self) {
         let path = crate::os::config::config_path();
         let mut base = self.cfg.raw.clone();

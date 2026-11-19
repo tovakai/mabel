@@ -2,6 +2,9 @@
 //! file browser. The file formats and the synth live in the `mabel-media` crate, so tapes
 //! and standalone games can read them too; these files are the screens.
 
-pub mod browser; // ctrl+o: open and save files, with previews
-pub mod pixelview; // PIXEL
-pub mod trackerview; // TRACKER
+/// ctrl+o: open and save files, with previews
+pub mod browser;
+/// PIXEL
+pub mod pixelview;
+/// TRACKER
+pub mod trackerview;

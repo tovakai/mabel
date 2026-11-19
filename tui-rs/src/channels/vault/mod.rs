@@ -6,7 +6,8 @@
 //! D today's daily note · n new note · R rename · V switch vault (core of truth / Mabel's
 //! journal) · M ask Mabel about this note · O outline on/off · backspace back.
 
-pub mod notes; // reading the vault: notes, links, tags, frontmatter
+/// reading the vault: notes, links, tags, frontmatter
+pub mod notes;
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -55,7 +56,7 @@ fn icon(kind: &str) -> &'static str {
     }
 }
 
-/// Obsidian's extras as plain Markdown: properties as a quote, callouts with an icon, [[links]]
+/// Obsidian's extras as plain Markdown: properties as a quote, callouts with an icon, `[[links]]`
 /// by their label, #tags as code, ==highlights== bold.
 pub fn obsidian_to_markdown(text: &str) -> String {
     let (fm, body, _) = split_frontmatter(text);

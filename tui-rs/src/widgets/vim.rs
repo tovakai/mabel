@@ -71,7 +71,7 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Word spans of a line, like the regex \w+|[^\w\s]+.
+/// Word spans of a line, like the regex `\w+|[^\w\s]+`.
 fn word_spans(line: &[char]) -> Vec<(usize, usize)> {
     let mut spans = vec![];
     let mut i = 0;
