@@ -17,10 +17,12 @@ pub fn ch(key: &KeyEvent) -> Option<char> {
     }
 }
 
+/// Is this key the character `c`?
 pub fn is(key: &KeyEvent, c: char) -> bool {
     ch(key) == Some(c)
 }
 
+/// Is this ctrl+`c` (either case)?
 pub fn ctrl(key: &KeyEvent, c: char) -> bool {
     match key.code {
         KeyCode::Char(k) => key.modifiers == KeyModifiers::CONTROL && k.eq_ignore_ascii_case(&c),
@@ -41,6 +43,7 @@ pub fn alt_digit(key: &KeyEvent) -> Option<usize> {
     }
 }
 
+/// Which F-key, if it's one.
 pub fn fkey(key: &KeyEvent) -> Option<u8> {
     match key.code {
         KeyCode::F(n) => Some(n),

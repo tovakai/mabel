@@ -22,6 +22,7 @@ pub enum Note {
     Installed { ok: bool, tail: String },
 }
 
+/// Where the installer puts MABEL-OS: ~/.local/share/mabel-tui.
 pub fn app_dir() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -36,6 +37,8 @@ pub fn installed() -> Option<String> {
     Some(text.trim().to_string()).filter(|t| !t.is_empty())
 }
 
+/// Is an update on offer? Any difference counts (builds are names, not numbers); never for a
+/// copy run from source.
 pub fn newer(installed: Option<&str>, served: Option<&str>) -> bool {
     matches!((installed, served), (Some(i), Some(s)) if i != s)
 }
@@ -45,6 +48,7 @@ pub fn build_for(version: &serde_json::Value, arch: &str) -> Option<String> {
     version.get("rs")?.get(arch)?.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
+/// Ask Mabel which build she serves for this machine's CPU (None if she can't be reached).
 pub async fn served(base_url: String) -> Option<String> {
     let client = reqwest::Client::builder().timeout(Duration::from_secs(15)).build().ok()?;
     let resp = client.get(format!("{}/tui/version", base_url.trim_end_matches('/'))).send().await.ok()?;

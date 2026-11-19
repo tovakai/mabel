@@ -20,6 +20,7 @@ use crate::widgets::popup::frame_box;
 /// The ambers move together with g (the deck's panel shifts them all alike).
 const FAMILY: [&str; 6] = ["amber", "amber_hi", "amber_dim", "amber_faint", "orange", "sand"];
 
+/// What a colour is used for, shown next to it.
 fn usage(key: &str) -> &'static str {
     match key {
         "amber" => "most text",
@@ -40,6 +41,7 @@ fn usage(key: &str) -> &'static str {
     }
 }
 
+/// A colour as "#rrggbb".
 pub fn to_hex(c: Color) -> String {
     match c {
         Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
@@ -69,6 +71,7 @@ fn to_hls(c: Color) -> (f64, f64, f64) {
     ((h / 6.0).rem_euclid(1.0), l, s)
 }
 
+/// Hue, lightness, saturation (each 0-1) back to a colour.
 fn from_hls(h: f64, l: f64, s: f64) -> Color {
     let (h, l, s) = (h.rem_euclid(1.0), l.clamp(0.0, 1.0), s.clamp(0.0, 1.0));
     let to = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -92,6 +95,7 @@ fn from_hls(h: f64, l: f64, s: f64) -> Color {
     Color::Rgb(to(v(h + 1.0 / 3.0)), to(v(h)), to(v(h - 1.0 / 3.0)))
 }
 
+/// Shift a colour's hue, lightness and saturation a little.
 fn nudge(c: Color, dh: f64, dl: f64, ds: f64) -> Color {
     let (h, l, s) = to_hls(c);
     from_hls(h + dh, l + dl, s + ds)
@@ -125,6 +129,7 @@ pub fn save_colours(pal: &Palette, text: &str, preset: &Palette) -> String {
     out
 }
 
+/// What a key did: the tuner stays open, closes, or the app should save or reset the colours.
 pub enum Outcome {
     Open,
     Close,
@@ -134,24 +139,33 @@ pub enum Outcome {
     Reset,
 }
 
+/// The tuner's state.
 pub struct Tuner {
+    /// The colour picked (an index into the palette's keys).
     row: usize,
+    /// g: change the whole amber family together.
     group: bool,
+    /// Colours changed since the last save.
     pub dirty: bool,
+    /// e: the hex being typed.
     hex: Option<Input>,
+    /// Where it was drawn.
     rect: Rect,
 }
 
 impl Tuner {
+    /// Closed, on the first colour.
     pub fn new() -> Self {
         Tuner { row: 0, group: false, dirty: false, hex: None, rect: Rect::default() }
     }
 
+    /// The colours a change applies to: the picked one, or its family with g on.
     fn targets(&self) -> Vec<&'static str> {
         let key = KEYS[self.row];
         if self.group && FAMILY.contains(&key) { FAMILY.to_vec() } else { vec![key] }
     }
 
+    /// Nudge the target colours.
     fn adjust(&mut self, pal: &mut Palette, dh: f64, dl: f64, ds: f64) {
         for k in self.targets() {
             if let Some(c) = pal.get(k) {

@@ -16,6 +16,7 @@ pub enum Focus {
     Inside(usize),
 }
 
+/// h j k l as a direction (x, y).
 pub fn dir(key: char) -> Option<(i32, i32)> {
     match key {
         'h' => Some((-1, 0)),

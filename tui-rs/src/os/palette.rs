@@ -84,6 +84,7 @@ pub struct Palette {
     pub rust: Color,
 }
 
+/// "#rrggbb" as a colour (None if it isn't one).
 pub fn hex(value: &str) -> Option<Color> {
     let v = value.strip_prefix('#')?;
     if v.len() != 6 || !v.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -152,11 +153,13 @@ impl Palette {
         }
     }
 
+    /// A colour by its config name ("amber", "teal"…).
     pub fn get(&self, key: &str) -> Option<Color> {
         let mut copy = *self;
         copy.slot(key).map(|c| *c)
     }
 
+    /// The field behind a config name, to read or change.
     fn slot(&mut self, key: &str) -> Option<&mut Color> {
         Some(match key {
             "bg" => &mut self.bg,

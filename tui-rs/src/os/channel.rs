@@ -24,12 +24,15 @@ pub struct View<'a> {
     pub pal: &'a Palette,
     /// The 7" deck layout (under 140 columns): panels stack.
     pub narrow: bool,
+    /// Where the keys go: nav mode (maybe with a section lit), or inside a section.
     pub focus: Focus,
     pub now: Instant,
+    /// The music player, for anything showing what's playing.
     pub player: &'a Player,
 }
 
 impl View<'_> {
+    /// How to draw section `section`'s border: lit (nav is on it), inside, or idle.
     pub fn panel_state(&self, section: usize) -> ui::PanelState {
         match self.focus {
             Focus::Nav(Some(lit)) if lit == section => ui::PanelState::Lit,
@@ -38,6 +41,7 @@ impl View<'_> {
         }
     }
 
+    /// Are the keys inside section `section`?
     pub fn inside(&self, section: usize) -> bool {
         self.focus == Focus::Inside(section)
     }
@@ -112,6 +116,7 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
+    /// The app builds one of these for every call into a channel.
     pub fn new(
         api: &'a Mabel,
         cfg: &'a Config,
@@ -132,18 +137,22 @@ impl<'a> Ctx<'a> {
         });
     }
 
+    /// A toast: a note in the corner that fades.
     pub fn toast(&mut self, title: &str, text: &str) {
         self.requests.push(Request::Toast { title: title.into(), text: text.into(), error: false });
     }
 
+    /// A toast in the error colour.
     pub fn error(&mut self, title: &str, text: &str) {
         self.requests.push(Request::Toast { title: title.into(), text: text.into(), error: true });
     }
 
+    /// Set the status line's text.
     pub fn status(&mut self, text: &str) {
         self.requests.push(Request::Status(text.into()));
     }
 
+    /// Put the keys inside section `section` (only if this channel is the one on screen).
     pub fn focus(&mut self, section: usize) {
         self.requests.push(Request::Focus(section));
     }
@@ -162,12 +171,16 @@ impl<'a> Ctx<'a> {
     }
 }
 
+/// What a channel did with a key: used it, or ignored it (so the app may use it instead).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     Used,
     Ignored,
 }
 
+/// A channel (or an app inside a suite): what MABEL-OS asks of it. Only `id`, `tab` and
+/// `render` are required; the rest do nothing unless a channel fills them in.
+/// See `channels/example.rs` for a small one to copy.
 pub trait Channel {
     /// "comms", "mabel", "life", …: help lookups and messages.
     fn id(&self) -> &'static str;
@@ -244,6 +257,7 @@ pub trait Channel {
 
 // ── the channels ─────────────────────────────────────────────────────────
 
+/// A channel in a box, so channels of different types can sit in one list.
 fn boxed(c: impl Channel + 'static) -> Box<dyn Channel> {
     Box::new(c)
 }

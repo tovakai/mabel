@@ -21,6 +21,7 @@ pub enum PanelState {
     Inside,
 }
 
+/// Bold text in this colour.
 pub fn bold(colour: ratatui::style::Color) -> Style {
     Style::new().fg(colour).add_modifier(Modifier::BOLD)
 }
@@ -194,6 +195,7 @@ pub fn help_card(frame: &mut Frame, area: Rect, pal: &Palette, id: &str, scroll:
     frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(block).scroll((*scroll, 0)), card);
 }
 
+/// A note in the corner: its title and text, error colour or not, and when it goes away.
 pub struct Toast {
     pub title: String,
     pub text: String,

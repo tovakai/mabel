@@ -37,18 +37,23 @@ const COUNTER: usize = 0;
 const MABEL: usize = 1;
 
 /// What comes back from background work (see `on_msg`).
+/// What background work sends back (here: LIFE's answer, or an error).
 enum Got {
     Life(Result<String, String>),
 }
 
+/// The channel's state: everything it remembers between frames.
 pub struct Example {
+    /// A counter, changed with + and -.
     count: i32,
     /// What Mabel said she's doing, once asked.
     doing: Option<String>,
+    /// When it was made (the spinner turns from this).
     started: Instant,
 }
 
 impl Example {
+    /// A fresh channel: count 0, nothing asked yet.
     pub fn new() -> Self {
         Example { count: 0, doing: None, started: Instant::now() }
     }

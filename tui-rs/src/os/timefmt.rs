@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 
+/// One of her timestamps as local time.
 pub fn parse_local(value: &str) -> Option<DateTime<Local>> {
     if let Ok(t) = DateTime::parse_from_rfc3339(value) {
         return Some(t.with_timezone(&Local));

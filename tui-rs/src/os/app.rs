@@ -25,6 +25,8 @@ use crate::os::ui::{self, Toast};
 pub const NARROW_BELOW: u16 = 140;
 const TOAST_FOR: Duration = Duration::from_secs(5);
 
+/// Everything MABEL-OS is while it runs: config, colours, the channels, focus, toasts, the
+/// player. `main.rs` feeds it events; it hands them on to the channels.
 pub struct App {
     pub cfg: Config,
     pub pal: Palette,

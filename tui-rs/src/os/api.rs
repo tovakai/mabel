@@ -330,6 +330,7 @@ fn clip(text: &str, max: usize) -> String {
 
 // ── server-sent events ──────────────────────────────────────────────────
 
+/// One item from the reply stream: an event, or the end.
 enum SseItem {
     Event(ChatEvent),
     Done,

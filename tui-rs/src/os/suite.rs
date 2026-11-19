@@ -15,12 +15,17 @@ use ratatui::widgets::Paragraph;
 use crate::os::channel::{Channel, Ctx, Outcome, View};
 use crate::os::palette::Palette;
 
+/// One app's entry in the bar.
 pub struct SuiteApp {
+    /// Its id (for help, and for `show_app`).
     pub key: &'static str,
+    /// Its name in the bar.
     pub label: &'static str,
+    /// A line about the app on screen, at the end of the bar.
     pub hint: &'static str,
 }
 
+/// A channel made of apps: their entries and the apps themselves, and which one is on screen.
 pub struct Suite {
     id: &'static str,
     tab: &'static str,
@@ -28,10 +33,12 @@ pub struct Suite {
     fkey: &'static str,
     apps: Vec<(SuiteApp, Box<dyn Channel>)>,
     current: usize,
+    /// Where the bar was drawn (for clicks).
     bar: Rect,
 }
 
 impl Suite {
+    /// A suite showing its first app.
     pub fn new(
         id: &'static str,
         tab: &'static str,
@@ -41,6 +48,7 @@ impl Suite {
         Suite { id, tab, fkey, apps, current: 0, bar: Rect::default() }
     }
 
+    /// The app on screen.
     fn app(&mut self) -> &mut Box<dyn Channel> {
         &mut self.apps[self.current].1
     }

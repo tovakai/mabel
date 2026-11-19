@@ -26,14 +26,17 @@ const BUILTIN: &[(&str, &[u8])] = &[
     ("still.png", include_bytes!("../../assets/avatar/still.png")),
 ];
 
+/// One state's animation (idle, talk, think…).
 struct Animation {
     frames: Vec<Frame>,
+    /// How long each frame shows (the last value repeats for the rest).
     ms: Vec<u64>,
     /// The first frame is held this long (a random pick in the range) before each loop.
     hold: Option<(u64, u64)>,
 }
 
 impl Animation {
+    /// How long frame `i` shows (frame 0 held a random time from `hold`, for blinking).
     fn duration(&self, i: usize) -> Duration {
         let base = self.ms.get(i).or(self.ms.last()).copied().unwrap_or(250);
         let ms = match (i, self.hold) {
@@ -50,13 +53,17 @@ fn pseudo_random() -> u64 {
     (nanos as u64).wrapping_mul(6364136223846793005).rotate_left(17)
 }
 
+/// Mabel's avatar in COMMS: her animations, the state she's in, and the frame on screen.
 pub struct Avatar {
     animations: HashMap<String, Animation>,
     state: String,
     frame: usize,
+    /// When the next frame is due.
     next: Option<Instant>,
 }
 
+/// A PNG as frames: a strip of square frames if its width divides by its height, else one
+/// frame. Mostly-transparent pixels become empty.
 fn decode(bytes: &[u8]) -> Result<Vec<Frame>> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
@@ -89,12 +96,14 @@ impl Avatar {
         Avatar { animations, state: "idle".into(), frame: 0, next: None }
     }
 
+    /// The avatar built into the program.
     fn builtin() -> Result<HashMap<String, Animation>> {
         Self::from_manifest(BUILTIN_JSON, |name| {
             BUILTIN.iter().find(|(n, _)| *n == name).map(|(_, b)| b.to_vec()).ok_or_else(|| anyhow!("no {name}"))
         })
     }
 
+    /// An avatar from disk: one PNG (as idle, at `fps`), or a folder with avatar.json.
     fn from_path(path: &Path, fps: f64) -> Result<HashMap<String, Animation>> {
         if path.is_file() {
             let frames = decode(&std::fs::read(path)?)?;
@@ -105,6 +114,8 @@ impl Avatar {
         Self::from_manifest(&manifest, |name| Ok(std::fs::read(path.join(name))?))
     }
 
+    /// Read avatar.json: each state's file, frame times and hold. A missing idle state comes
+    /// from still.png (or any other state).
     fn from_manifest(json: &str, read: impl Fn(&str) -> Result<Vec<u8>>) -> Result<HashMap<String, Animation>> {
         let manifest: serde_json::Value = serde_json::from_str(json)?;
         let mut states = HashMap::new();
@@ -124,6 +135,7 @@ impl Avatar {
         Ok(states)
     }
 
+    /// The animation for her state now (idle if she has none for it).
     fn animation(&self) -> &Animation {
         self.animations.get(&self.state).unwrap_or(&self.animations["idle"])
     }
@@ -159,6 +171,7 @@ impl Avatar {
         self.next
     }
 
+    /// Its size in terminal cells (two pixels per cell, one above the other).
     pub fn size(&self) -> (u16, u16) {
         let f = &self.animation().frames[0];
         (f.first().map_or(0, |r| r.len()) as u16, f.len().div_ceil(2) as u16)

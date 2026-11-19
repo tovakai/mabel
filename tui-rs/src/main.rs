@@ -119,11 +119,14 @@ fn key_releases(on: bool, now: bool) -> bool {
     on
 }
 
+/// Give the terminal back as it was (keyboard modes, mouse, paste, screen).
 fn leave() {
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags, DisableMouseCapture, DisableBracketedPaste);
     ratatui::restore();
 }
 
+/// The main loop: draw, then wait for whichever comes first (a key or mouse event, the half-
+/// second tick, a message from background work, an animation frame), hand it to the app, repeat.
 async fn run(
     terminal: &mut DefaultTerminal,
     app: &mut App,
@@ -164,6 +167,7 @@ async fn run(
     }
 }
 
+/// Sleep until `when`; with no time, forever (so `select!` simply waits on the rest).
 async fn sleep_until(when: Option<tokio::time::Instant>) {
     match when {
         Some(t) => tokio::time::sleep_until(t).await,

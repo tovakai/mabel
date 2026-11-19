@@ -72,6 +72,8 @@ pub fn config_path() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("mabel-tui").join("config.toml")
 }
 
+/// ~/.cache/mabel-tui: small things worth keeping but fine to lose (covers, PIXEL and
+/// TRACKER's last-opened file, the player's socket if there is no runtime dir).
 pub fn cache_dir() -> PathBuf {
     xdg("XDG_CACHE_HOME", ".cache").join("mabel-tui")
 }
