@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -175,9 +176,28 @@ def read_presence(get=None) -> tuple[str, str]:
     return "unknown", entity
 
 
+def window_inhibits_idle(run=subprocess.run) -> bool | None:
+    """A window (a playing video) is holding Wayland idle inhibit; None if unknown.
+
+    Her hypridle ignores Wayland inhibits (2026-11-19: quickshell's keep-awake
+    toggle, a 0x0 panel, froze the idle file for a day), so watching a video
+    is checked here. Panels aren't clients, so keep-awake never shows up.
+    """
+    try:
+        out = run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=5)
+        if out.returncode:
+            return None
+        return any(c.get("inhibitingIdle") for c in json.loads(out.stdout or "[]"))
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return None
+
+
 def collect() -> Signals:
     sig = Signals()
     sig.idle, sig.idle_minutes = read_idle()
+    if sig.idle == "idle" and window_inhibits_idle():
+        sig.idle, sig.idle_minutes = "active", 0.0
+        sig.notes.append("a window is inhibiting idle (video): counted as present")
     sig.gpu, sig.gpu_reason = read_gpu()
     sig.chat_active = any_chat_active()
     sig.strata = strata_up()

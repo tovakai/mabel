@@ -307,3 +307,26 @@ def test_the_news_goes_before_a_dream(monkeypatch):
     monkeypatch.setattr(runner, "status", lambda: {"running": False})
     asyncio.run(daemon.tick(now=NOW, read=lambda: _sig()))
     assert dreamt == []
+
+
+def test_a_video_window_counts_as_present_but_keep_awake_does_not(monkeypatch):
+    # 2026-11-19: her hypridle now ignores Wayland inhibits (quickshell keep-awake froze
+    # the idle file for a day); a client inhibiting idle (video) is checked here instead.
+    import json as _json
+    import subprocess as _sp
+
+    def fake_run(clients):
+        return lambda *a, **k: _sp.CompletedProcess(a, 0, _json.dumps(clients), "")
+
+    assert signals.window_inhibits_idle(fake_run([{"class": "mpv", "inhibitingIdle": True}])) is True
+    assert signals.window_inhibits_idle(fake_run([{"class": "kitty", "inhibitingIdle": False}])) is False
+    assert signals.window_inhibits_idle(lambda *a, **k: _sp.CompletedProcess(a, 1, "", "")) is None
+
+    for watching, expected in ((True, "active"), (False, "idle"), (None, "idle")):
+        monkeypatch.setattr(signals, "read_idle", lambda: ("idle", 30.0))
+        monkeypatch.setattr(signals, "window_inhibits_idle", lambda w=watching: w)
+        for name in ("read_gpu", "read_presence"):
+            monkeypatch.setattr(signals, name, lambda: ("unknown", ""))
+        monkeypatch.setattr(signals, "any_chat_active", lambda: False)
+        monkeypatch.setattr(signals, "strata_up", lambda: True)
+        assert signals.collect().idle == expected
