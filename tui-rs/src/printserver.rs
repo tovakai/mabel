@@ -38,8 +38,12 @@ const MAX_JOB: usize = 4 * 1024 * 1024;
 const AF_BLUETOOTH: libc::c_int = 31;
 const BTPROTO_RFCOMM: libc::c_int = 3;
 
+/// The print server's settings (its own config file, see `config_path`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrintConfig {
+    // token: what callers must send; bluetooth: the printer's address; usb: its device file
+    // (tried first if set); port: where to listen; keepalive_minutes: ping it this often
+    // so it doesn't fall asleep (0: never).
     pub token: String,
     pub bluetooth: String,
     pub usb: String,
@@ -47,10 +51,12 @@ pub struct PrintConfig {
     pub keepalive_minutes: f64,
 }
 
+/// ~/.config/mabel-tui/printserver.toml.
 pub fn config_path() -> PathBuf {
     crate::os::config::config_path().with_file_name("printserver.toml")
 }
 
+/// A new random token (24 random bytes as URL-safe text), for a fresh config.
 fn token() -> Result<String> {
     let mut raw = [0u8; 24];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut raw)?;
@@ -98,6 +104,7 @@ pub fn load_config(path: &Path) -> Result<PrintConfig> {
 
 // ── the printer ──────────────────────────────────────────────────────────
 
+/// Write a job to the printer's USB device file.
 fn send_usb(device: &str, data: &[u8]) -> std::io::Result<()> {
     let mut f = std::fs::OpenOptions::new().write(true).open(device)?;
     for chunk in data.chunks(CHUNK) {
@@ -114,6 +121,7 @@ fn bdaddr(address: &str) -> Option<[u8; 6]> {
     Some(out)
 }
 
+/// A Bluetooth RFCOMM address, as the kernel wants it (Rust's std has no Bluetooth sockets).
 #[repr(C)]
 struct SockaddrRc {
     family: libc::sa_family_t,
@@ -121,6 +129,7 @@ struct SockaddrRc {
     channel: u8,
 }
 
+/// Send a job over Bluetooth (RFCOMM channel 1), with a raw socket.
 fn send_bt(address: &str, data: &[u8]) -> std::io::Result<()> {
     let bd = bdaddr(address).ok_or_else(|| std::io::Error::other(format!("not a Bluetooth address: {address}")))?;
     // SAFETY: plain socket calls on a descriptor we own; the address struct matches sockaddr_rc.
@@ -187,6 +196,7 @@ pub fn send(cfg: &PrintConfig, data: &[u8]) -> Result<&'static str, String> {
 
 pub type SendFn = Arc<dyn Fn(&PrintConfig, &[u8]) -> Result<&'static str, String> + Send + Sync>;
 
+/// What /status reports: the last success, the last error, and which way it went (usb/bt).
 #[derive(Default)]
 struct State {
     last_ok: Option<String>,
@@ -194,6 +204,7 @@ struct State {
     last_route: Option<String>,
 }
 
+/// The print server: settings, how to send, and its state.
 pub struct Server {
     cfg: PrintConfig,
     send: SendFn,
@@ -202,19 +213,23 @@ pub struct Server {
     state: Mutex<State>,
 }
 
+/// A line to stderr (the systemd journal on the deck).
 fn log(msg: &str) {
     eprintln!("mabel-print INFO {msg}");
 }
 
+/// The time, for the log and /status.
 fn now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
 }
 
 impl Server {
+    /// A server that prints with `send` (tests pass a fake).
     pub fn new(cfg: PrintConfig, send: SendFn) -> Arc<Self> {
         Arc::new(Server { cfg, send, wire: Mutex::new(()), state: Mutex::new(State::default()) })
     }
 
+    /// Print a job, one at a time: USB if configured, else Bluetooth. Returns which way.
     fn print(&self, data: &[u8]) -> Result<&'static str, String> {
         let result = {
             let _wire = self.wire.lock().unwrap_or_else(|e| e.into_inner());
@@ -228,6 +243,7 @@ impl Server {
         result
     }
 
+    /// /status's answer.
     fn status(&self) -> Value {
         let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         json!({
@@ -240,6 +256,7 @@ impl Server {
         })
     }
 
+    /// Every `keepalive_minutes`, send the printer a status request so it stays awake.
     fn keepalive(self: Arc<Self>) {
         let minutes = self.cfg.keepalive_minutes;
         if minutes <= 0.0 {
@@ -253,6 +270,7 @@ impl Server {
         }
     }
 
+    /// Answer connections, one thread each.
     pub fn serve(self: Arc<Self>, listener: TcpListener) {
         for stream in listener.incoming().flatten() {
             let me = self.clone();
@@ -260,6 +278,7 @@ impl Server {
         }
     }
 
+    /// Read one HTTP request (headers, then the body) and answer it.
     fn handle(&self, stream: TcpStream) {
         let peer = stream.peer_addr().map_or("?".into(), |a| a.ip().to_string());
         let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
@@ -309,6 +328,7 @@ impl Server {
         );
     }
 
+    /// Does the Authorization header carry the token?
     fn authorized(&self, auth: &str) -> bool {
         let sent = auth.strip_prefix("Bearer ").unwrap_or("").as_bytes();
         let want = self.cfg.token.as_bytes();
@@ -316,6 +336,7 @@ impl Server {
         !want.is_empty() && sent.len() == want.len() && sent.iter().zip(want).fold(0, |acc, (a, b)| acc | (a ^ b)) == 0
     }
 
+    /// GET /status and POST /print (both need the token); everything else is 404.
     fn route(&self, method: &str, path: &str, auth: &str, length: usize, data: &[u8]) -> (u16, Value) {
         let unauthorized = (401, json!({"error": "unauthorized"}));
         match (method, path) {
@@ -333,6 +354,7 @@ impl Server {
     }
 }
 
+/// This machine's tailnet address (the server listens there only).
 fn tailnet_address() -> Option<String> {
     let out = std::process::Command::new("tailscale").args(["ip", "-4"]).output().ok()?;
     String::from_utf8_lossy(&out.stdout).split_whitespace().next().map(str::to_string)

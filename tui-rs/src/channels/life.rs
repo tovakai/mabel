@@ -28,11 +28,13 @@ const JOURNAL: usize = 2;
 const LISTS: usize = 3;
 const REFRESH_EVERY: Duration = Duration::from_secs(60);
 
+/// Background work reporting back.
 enum Got {
     Life(Result<Value, String>),
     Dream { at: String, bytes: Option<Vec<u8>> },
 }
 
+/// A job's name as LIFE shows it (her internal names → words).
 fn job_name(job: &str) -> &str {
     match job {
         "letters" => "tova letters",
@@ -45,6 +47,7 @@ fn job_name(job: &str) -> &str {
     }
 }
 
+/// A text field ("" if missing).
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
 }
@@ -58,6 +61,7 @@ fn clip(text: &str, max: usize) -> String {
     }
 }
 
+/// What she's doing now, and each job's last run and what's holding it back.
 fn status_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     let doing: Vec<&str> = data["doing"].as_array().into_iter().flatten().filter_map(|d| d.as_str()).collect();
     let mut out = vec![Line::from(vec![
@@ -92,6 +96,7 @@ fn status_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     out
 }
 
+/// Her latest journal entries (dream, day account…).
 fn journal_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     let mut out = vec![];
     let head = |out: &mut Vec<Line<'static>>, label: &str, when: Option<&str>| {
@@ -125,6 +130,7 @@ fn journal_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     out
 }
 
+/// His lists: to do, groceries.
 fn list_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     let mut out = vec![Line::styled("GROCERIES", bold(pal.beige))];
     let items = data["groceries"].as_array().cloned().unwrap_or_default();
@@ -159,6 +165,7 @@ fn list_lines(data: &Value, pal: &Palette) -> Vec<Line<'static>> {
     out
 }
 
+/// CH-02 LIFE: her day at a glance.
 pub struct Life {
     data: Option<Value>,
     error: Option<String>,
@@ -172,6 +179,7 @@ pub struct Life {
 }
 
 impl Life {
+    /// Empty until the first fetch.
     pub fn new() -> Self {
         Life {
             data: None,
@@ -184,11 +192,13 @@ impl Life {
         }
     }
 
+    /// Fetch LIFE (and the dream picture) again.
     fn refresh(&mut self, ctx: &Ctx) {
         self.last_refresh = Some(Instant::now());
         ctx.spawn(ID, |api| async move { Got::Life(api.life().await.map_err(|e| e.to_string())) });
     }
 
+    /// v / p: open her note for this part (the dream, the page) in VAULT, in her journal.
     fn open_in_vault(&self, part: &str, ctx: &mut Ctx) {
         let note = self.data.as_ref().map(|d| s(&d[part], "note")).unwrap_or("");
         if note.is_empty() {
@@ -231,6 +241,7 @@ impl Life {
         frame.render_widget(Paragraph::new(wrapped).scroll((self.scroll[section] as u16, 0)), inner);
     }
 
+    /// Her last dream: its picture and text.
     fn dream_panel(&mut self, frame: &mut Frame, area: Rect, view: &View) {
         let pal = view.pal;
         let dream = self.data.as_ref().map(|d| d["dream"].clone()).unwrap_or(Value::Null);
@@ -274,6 +285,7 @@ impl Life {
         frame.render_widget(Paragraph::new(wrapped).scroll((text_skip as u16, 0)), rest);
     }
 
+    /// Her journal entries.
     fn journal_panel(&mut self, frame: &mut Frame, area: Rect, view: &View) {
         let pal = view.pal;
         let data = self.data.clone().unwrap_or(Value::Null);

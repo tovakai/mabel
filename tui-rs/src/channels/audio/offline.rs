@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::channels::audio::music::Music;
 
+/// One downloaded song: its Navidrome JSON, its file (relative to the root), its size.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Entry {
     pub song: Value,
@@ -23,6 +24,7 @@ pub struct Entry {
     pub size: u64,
 }
 
+/// A downloaded album, playlist or song: its name, artist, songs and cover.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Collection {
     #[serde(default)]
@@ -37,6 +39,7 @@ pub struct Collection {
     pub cover: Option<String>,
 }
 
+/// index.json: every song and collection (shared with the Python client's format).
 #[derive(Serialize, Deserialize, Default)]
 struct Index {
     #[serde(default)]
@@ -61,10 +64,12 @@ pub fn safe(text: &str, limit: usize) -> String {
     if trimmed.is_empty() { "unknown".into() } else { trimmed }
 }
 
+/// A text field ("" if missing).
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
 }
 
+/// The offline library: its folder and index.
 pub struct Offline {
     root: PathBuf,
     index: Index,
@@ -74,6 +79,7 @@ pub struct Offline {
 pub type Shared = Arc<Mutex<Offline>>;
 
 impl Offline {
+    /// Read index.json under `root` (empty if there isn't one).
     pub fn load(root: PathBuf) -> Self {
         let mut index: Index = std::fs::read_to_string(root.join("index.json"))
             .ok()
@@ -83,6 +89,7 @@ impl Offline {
         Offline { root, index }
     }
 
+    /// Write index.json.
     pub fn save(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)?;
         let tmp = self.root.join("index.tmp");
@@ -91,6 +98,7 @@ impl Offline {
         Ok(())
     }
 
+    /// Is this song in the offline index?
     pub fn has(&self, song_id: &str) -> bool {
         self.index.songs.contains_key(song_id)
     }
@@ -100,6 +108,7 @@ impl Offline {
         self.index.songs.get(song_id).map(|e| self.root.join(&e.path).to_string_lossy().into_owned())
     }
 
+    /// Every downloaded collection, by key.
     pub fn collections(&self) -> Vec<(String, Collection)> {
         let mut out: Vec<(String, Collection)> =
             self.index.collections.iter().map(|(k, c)| (k.clone(), c.clone())).collect();
@@ -107,14 +116,17 @@ impl Offline {
         out
     }
 
+    /// One collection.
     pub fn collection(&self, key: &str) -> Option<&Collection> {
         self.index.collections.get(key)
     }
 
+    /// How many songs are downloaded.
     pub fn song_count(&self) -> usize {
         self.index.songs.len()
     }
 
+    /// How much space they take.
     pub fn size_mb(&self) -> f64 {
         self.index.songs.values().map(|e| e.size).sum::<u64>() as f64 / 1e6
     }
@@ -125,20 +137,24 @@ impl Offline {
         (ids.iter().filter(|i| self.has(i)).count(), ids.len())
     }
 
+    /// A collection's songs that are on disk.
     pub fn collection_songs(&self, key: &str) -> Vec<Value> {
         let ids = self.collection(key).map(|c| c.song_ids.clone()).unwrap_or_default();
         ids.iter().filter_map(|i| self.index.songs.get(i)).map(|e| e.song.clone()).collect()
     }
 
+    /// Where a cover is (or would be) saved.
     pub fn cover_path(&self, cover_id: &str) -> PathBuf {
         self.root.join("covers").join(format!("{}.jpg", safe(cover_id, 60)))
     }
 
+    /// A saved cover, if there is one.
     pub fn cover_file(&self, cover_id: &str) -> Option<PathBuf> {
         let p = self.cover_path(cover_id);
         p.exists().then_some(p)
     }
 
+    /// A song's file path: artist/album/NN - title.ext (the transcode's extension if transcoded).
     fn path_for(song: &Value, transcoded: bool) -> PathBuf {
         let ext = Some(s(song, "transcodedSuffix"))
             .filter(|e| transcoded && !e.is_empty())
@@ -220,6 +236,8 @@ fn fix_suffix(root: &Path, rel: PathBuf) -> PathBuf {
 /// Download a set of songs as one collection: what isn't here yet is fetched. `progress` hears
 /// (n, total, title). Returns (downloaded, already here). Recorded first with every song it
 /// should have, so a broken download shows up half-done and O again finishes it.
+/// Download songs as collection `key` (skipping ones already there), with its cover,
+/// reporting progress as (done, total, title). Returns (got, total).
 #[allow(clippy::too_many_arguments)]
 pub async fn download(
     offline: &Shared,

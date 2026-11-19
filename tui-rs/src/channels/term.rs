@@ -36,24 +36,32 @@ fn size_of(parser: &vt100::Parser) -> (u16, u16) {
 /// Set in TERM's shells: MABEL-OS started there would be one inside another.
 pub const INSIDE_ENV: &str = "MABEL_OS_TERM";
 
+/// A shell's output, read on a background thread, and its end.
 enum Got {
     Output { tab: u64, bytes: Vec<u8> },
     Ended { tab: u64 },
 }
 
+/// One shell tab: a pseudo-terminal running $SHELL, and a vt100 screen that its output is
+/// played into (so vim, htop, ssh all draw correctly).
 struct Shell {
     id: u64,
+    /// The tab's title (the shell sets it).
     title: String,
+    /// Its screen, as the program drew it.
     parser: vt100::Parser,
+    /// The pseudo-terminal, the way to type into it, and the shell process.
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
     child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    /// Still running (false: "shell ended", enter starts a new one).
     alive: bool,
     /// Lines scrolled back (shift+PageUp).
     scrolled: usize,
 }
 
 impl Shell {
+    /// Start a shell in a pseudo-terminal of this size (marked so MABEL-OS can't start inside it).
     fn new(id: u64, rows: u16, cols: u16) -> Self {
         Shell {
             id,
@@ -117,6 +125,7 @@ impl Shell {
         });
     }
 
+    /// Type bytes into the shell.
     fn write(&mut self, bytes: &[u8]) {
         if let Some(w) = &mut self.writer {
             let _ = w.write_all(bytes);
@@ -124,6 +133,7 @@ impl Shell {
         }
     }
 
+    /// The panel changed size: tell the program (it redraws).
     fn resize(&mut self, rows: u16, cols: u16) {
         if size_of(&self.parser) == (rows, cols) || rows == 0 || cols == 0 {
             return;
@@ -134,6 +144,7 @@ impl Shell {
         }
     }
 
+    /// End the shell.
     fn close(&mut self) {
         if let Some(child) = &mut self.child {
             let _ = child.kill();
@@ -141,6 +152,7 @@ impl Shell {
         self.alive = false;
     }
 
+    /// Scroll back through what scrolled off the top (shift+PgUp/PgDn).
     fn scroll(&mut self, lines: isize) {
         let screen = self.parser.screen_mut();
         let want = (self.scrolled as isize + lines).max(0) as usize;
@@ -250,20 +262,24 @@ fn colour(c: vt100::Color, pal: &Palette, fallback: Color) -> Color {
     }
 }
 
+/// CH-06 TERM: shell tabs.
 pub struct Term {
     shells: Vec<Shell>,
     current: usize,
     next_id: u64,
     /// The last drawn size, for new shells.
     size: (u16, u16),
+    /// The first shell has been started (on the first visit).
     started: bool,
 }
 
 impl Term {
+    /// No shells yet; the first starts when TERM is first shown.
     pub fn new() -> Self {
         Term { shells: vec![], current: 0, next_id: 1, size: (24, 80), started: false }
     }
 
+    /// N: a new shell tab.
     fn new_tab(&mut self, ctx: &Ctx) {
         let mut shell = Shell::new(self.next_id, self.size.0, self.size.1);
         self.next_id += 1;
@@ -272,6 +288,7 @@ impl Term {
         self.current = self.shells.len() - 1;
     }
 
+    /// X: close the shell tab (the last one is replaced by a fresh shell).
     fn close_tab(&mut self, ctx: &Ctx) {
         if self.shells.is_empty() {
             return;
@@ -283,6 +300,7 @@ impl Term {
         self.current = self.current.min(self.shells.len() - 1);
     }
 
+    /// [ ] or < >: the previous or next tab.
     fn step(&mut self, by: isize) {
         let n = self.shells.len() as isize;
         if n > 0 {
