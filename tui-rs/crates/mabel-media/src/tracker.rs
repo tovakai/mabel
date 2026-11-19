@@ -17,12 +17,18 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+/// Steps in a phrase (and in a chain, and rows in a table).
 pub const STEPS: usize = 16;
+/// Rows in the song.
 pub const ROWS: usize = 256;
+/// Tracks at most.
 pub const MAX_TRACKS: usize = 8;
+/// The note value that means "note off" (shown as OFF).
 pub const NOTE_OFF: i32 = -1;
+/// Instrument kinds (what sound it makes) and outputs (synth, MIDI, both).
 pub const KINDS: [&str; 6] = ["pulse", "tri", "saw", "wave", "noise", "midi"];
 pub const OUTS: [&str; 3] = ["synth", "midi", "both"];
+/// Note names as TRACKER shows them (C-4, C#4…).
 const NAMES: [&str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
 /// Commands (phrase and table): letter → what the value means. Small and LSDJ-flavoured.
@@ -42,10 +48,12 @@ pub const COMMANDS: [(&str, &str); 13] = [
     ("W", "pulse width / wave number XX"),
 ];
 
+/// What a command letter does (None: not a command).
 pub fn command_help(cmd: &str) -> Option<&'static str> {
     COMMANDS.iter().find(|(c, _)| *c == cmd).map(|(_, h)| *h)
 }
 
+/// A note as TRACKER shows it: "C-4", "OFF", or "---" for none.
 pub fn note_name(n: Option<i32>) -> String {
     match n {
         None => "---".into(),
@@ -55,6 +63,7 @@ pub fn note_name(n: Option<i32>) -> String {
     }
 }
 
+/// A byte as two hex digits, "--" for none.
 pub fn hx(v: Option<i64>) -> String {
     v.map_or("--".into(), |v| format!("{:02X}", v & 0xFF))
 }
@@ -183,6 +192,7 @@ fn inst(
     }
 }
 
+/// The instruments a new song starts with (lead, bass, drums, Miku…).
 pub fn default_instruments() -> BTreeMap<i64, Instrument> {
     BTreeMap::from([
         (0, inst("lead", "pulse", 0xC0, 0, 10, 0x90, 8, 0x80)),
@@ -196,10 +206,12 @@ pub fn default_instruments() -> BTreeMap<i64, Instrument> {
     ])
 }
 
+/// A sine as a 32-sample wave (0-15).
 pub fn sine_wave() -> Vec<i64> {
     (0..32).map(|i| (7.5 + 7.5 * (i as f64 / 32.0 * std::f64::consts::TAU).sin()).round() as i64).collect()
 }
 
+/// An empty phrase/chain/table: `STEPS` default entries.
 fn blank<T: Default + Clone>() -> Vec<T> {
     vec![T::default(); STEPS]
 }
@@ -226,6 +238,7 @@ impl Default for Song {
 impl Song {
     // ── lookup that creates on demand (editing an empty id makes it) ─────
 
+    /// Chain `i` (made empty if it doesn't exist yet). The same for the four below.
     pub fn chain(&mut self, i: i64) -> &mut Vec<ChainStep> {
         self.chains.entry(i).or_insert_with(blank)
     }
@@ -248,6 +261,7 @@ impl Song {
 
     // ── ids ──────────────────────────────────────────────────────────────
 
+    /// The chain ids that hold something.
     pub fn used_chains(&self) -> std::collections::BTreeSet<i64> {
         let mut used: std::collections::BTreeSet<i64> =
             self.chains.iter().filter(|(_, c)| c.iter().any(|s| s.phrase.is_some())).map(|(k, _)| *k).collect();
@@ -255,6 +269,7 @@ impl Song {
         used
     }
 
+    /// The phrase ids that hold something.
     pub fn used_phrases(&self) -> std::collections::BTreeSet<i64> {
         let mut used: std::collections::BTreeSet<i64> = self
             .phrases
@@ -266,22 +281,26 @@ impl Song {
         used
     }
 
+    /// The lowest id (00-FE) not in `used`.
     fn free(used: &std::collections::BTreeSet<i64>) -> Option<i64> {
         (0..=0xFF).find(|i| !used.contains(i))
     }
 
+    /// n in SONG: an empty chain with a free id.
     pub fn new_chain(&mut self) -> Option<i64> {
         let i = Self::free(&self.used_chains())?;
         self.chains.insert(i, blank());
         Some(i)
     }
 
+    /// n in CHAIN: an empty phrase with a free id.
     pub fn new_phrase(&mut self) -> Option<i64> {
         let i = Self::free(&self.used_phrases())?;
         self.phrases.insert(i, blank());
         Some(i)
     }
 
+    /// N: a copy of chain `i` under a free id.
     pub fn clone_chain(&mut self, i: i64) -> Option<i64> {
         let src = self.chain(i).clone();
         let j = self.new_chain()?;
@@ -289,6 +308,7 @@ impl Song {
         Some(j)
     }
 
+    /// N: a copy of phrase `i` under a free id.
     pub fn clone_phrase(&mut self, i: i64) -> Option<i64> {
         let src = self.phrase(i).clone();
         let j = self.new_phrase()?;
@@ -354,10 +374,12 @@ pub fn demo() -> Song {
 
 // ── files ────────────────────────────────────────────────────────────────
 
+/// A map of id → steps as JSON with hex keys, leaving empty ones out (small files).
 fn dense<T: Serialize>(map: &BTreeMap<i64, Vec<T>>, empty: impl Fn(&[T]) -> bool) -> Value {
     Value::Object(map.iter().filter(|(_, v)| !empty(v)).map(|(k, v)| (format!("{k:02X}"), json!(v))).collect())
 }
 
+/// A song as .mtk JSON (the same as the Python client wrote).
 pub fn to_json(song: &Song) -> Value {
     let rows: Map<String, Value> = song
         .rows
@@ -382,10 +404,12 @@ pub fn to_json(song: &Song) -> Value {
     })
 }
 
+/// A JSON object with hex keys → (id, value) pairs.
 fn ids(v: &Value) -> Vec<(i64, &Value)> {
     v.as_object().into_iter().flatten().filter_map(|(k, v)| Some((i64::from_str_radix(k, 16).ok()?, v))).collect()
 }
 
+/// A JSON list of steps, padded or cut to exactly `STEPS`.
 fn steps<T: for<'de> Deserialize<'de> + Default + Clone>(v: &Value) -> Vec<T> {
     let mut items: Vec<T> = v
         .as_array()
@@ -398,6 +422,7 @@ fn steps<T: for<'de> Deserialize<'de> + Default + Clone>(v: &Value) -> Vec<T> {
     items
 }
 
+/// A song from .mtk JSON (missing parts get defaults, so old files still open).
 pub fn from_json(data: &Value, path: Option<PathBuf>) -> Song {
     let mut song = Song {
         title: data["title"].as_str().unwrap_or("untitled").to_string(),
@@ -443,6 +468,7 @@ pub fn from_json(data: &Value, path: Option<PathBuf>) -> Song {
     song
 }
 
+/// Save as .mtk (to `path`, or where it came from), replacing the file in one rename.
 pub fn save(song: &mut Song, path: Option<&Path>) -> Result<PathBuf> {
     let mut path = path
         .map(Path::to_path_buf)
@@ -461,6 +487,7 @@ pub fn save(song: &mut Song, path: Option<&Path>) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Open a .mtk file.
 pub fn load(path: &Path) -> Result<Song> {
     let text = std::fs::read_to_string(path)?;
     Ok(from_json(&serde_json::from_str(&text)?, Some(path.to_path_buf())))

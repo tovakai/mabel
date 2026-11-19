@@ -21,10 +21,12 @@ use serde_json::{Map, Value, json};
 pub type Px = Option<[u8; 3]>;
 pub type Grid = Vec<Vec<Px>>;
 
+/// Colours a palette holds at most, a picture's biggest side, and undo steps kept.
 pub const MAX_PALETTE: usize = 64;
 pub const MAX_SIDE: usize = 256;
 const UNDO_DEPTH: usize = 100;
 
+/// The built-in palettes (:palette NAME).
 pub const PALETTES: [(&str, &[&str]); 6] = [
     (
         "pico8",
@@ -71,19 +73,23 @@ pub fn parse_color(s: &str) -> Px {
     Some([b(0)?, b(2)?, b(4)?])
 }
 
+/// A colour as "#rrggbb".
 pub fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
+/// A built-in palette's colours (db32 if the name isn't known).
 pub fn palette(name: &str) -> Vec<[u8; 3]> {
     let colors = PALETTES.iter().find(|(n, _)| *n == name).map_or(PALETTES[2].1, |(_, c)| *c);
     colors.iter().filter_map(|c| parse_color(c)).collect()
 }
 
+/// A transparent `w`×`h` grid.
 pub fn blank(w: usize, h: usize) -> Grid {
     vec![vec![None; w]; h]
 }
 
+/// A side length kept within 1..=`MAX_SIDE`.
 fn side(n: i64) -> usize {
     n.clamp(1, MAX_SIDE as i64) as usize
 }
@@ -132,6 +138,7 @@ pub struct Doc {
 }
 
 impl Doc {
+    /// A new transparent picture: one layer, one frame.
     pub fn new(w: i64, h: i64, palette_name: &str) -> Self {
         let (w, h) = (side(w), side(h));
         Doc {
@@ -148,10 +155,12 @@ impl Doc {
 
     // ── pixels ───────────────────────────────────────────────────────────
 
+    /// Is (x, y) on the picture?
     pub fn inside(&self, x: i64, y: i64) -> bool {
         x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h
     }
 
+    /// One pixel of one layer of one frame (transparent off the picture).
     pub fn get(&self, frame: usize, layer: usize, x: i64, y: i64) -> Px {
         if self.inside(x, y) { self.frames[frame].cels[layer][y as usize][x as usize] } else { None }
     }
@@ -179,6 +188,7 @@ impl Doc {
         n
     }
 
+    /// A frame with its visible layers merged, bottom to top.
     pub fn composite(&self, frame: usize) -> Grid {
         let mut out = blank(self.w, self.h);
         for (layer, cel) in self.layers.iter().zip(&self.frames[frame].cels) {
@@ -196,6 +206,7 @@ impl Doc {
         out
     }
 
+    /// Every colour the picture uses, in first-seen order.
     pub fn colors_used(&self) -> Vec<[u8; 3]> {
         let mut seen = vec![];
         let mut set = BTreeSet::new();
@@ -222,6 +233,7 @@ impl Doc {
 
     // ── structure ────────────────────────────────────────────────────────
 
+    /// A new empty layer above `above` (in every frame). Returns its index.
     pub fn add_layer(&mut self, above: usize) -> usize {
         let at = above + 1;
         let n = self.layers.len() + 1;
@@ -233,6 +245,7 @@ impl Doc {
         at
     }
 
+    /// Delete layer `i` (never the last one). Returns the layer to select.
     pub fn remove_layer(&mut self, i: usize) -> usize {
         if self.layers.len() == 1 {
             return i;
@@ -244,6 +257,7 @@ impl Doc {
         i.min(self.layers.len() - 1)
     }
 
+    /// Move layer `i` up or down. Returns where it went.
     pub fn move_layer(&mut self, i: usize, step: isize) -> usize {
         let j = i as isize + step;
         if j < 0 || j as usize >= self.layers.len() {
@@ -257,6 +271,7 @@ impl Doc {
         j
     }
 
+    /// A new frame after `after` (empty, or a copy), growing a tag it lands inside. Returns its index.
     pub fn add_frame(&mut self, after: usize, copy_current: bool) -> usize {
         let src = &self.frames[after];
         let cels =
@@ -275,6 +290,7 @@ impl Doc {
         after + 1
     }
 
+    /// Delete frame `i` (never the last one), shrinking tags. Returns the frame to select.
     pub fn remove_frame(&mut self, i: usize) -> usize {
         if self.frames.len() == 1 {
             return i;
@@ -295,6 +311,7 @@ impl Doc {
         i.min(self.frames.len() - 1)
     }
 
+    /// Move frame `i` left or right. Returns where it went.
     pub fn move_frame(&mut self, i: usize, step: isize) -> usize {
         let j = i as isize + step;
         if j < 0 || j as usize >= self.frames.len() {
@@ -304,18 +321,21 @@ impl Doc {
         j as usize
     }
 
+    /// The tag (named animation range) a frame is in.
     pub fn tag_at(&self, frame: usize) -> Option<&Tag> {
         self.tags.iter().find(|t| t.start <= frame && frame <= t.end)
     }
 
     // ── whole picture ────────────────────────────────────────────────────
 
+    /// Change every layer of every frame the same way (flip, rotate, resize).
     fn each_cel(&mut self, f: impl Fn(&Grid) -> Grid) {
         for frame in &mut self.frames {
             frame.cels = frame.cels.iter().map(&f).collect();
         }
     }
 
+    /// :flip h|v: mirror the whole picture.
     pub fn flip(&mut self, horizontal: bool) {
         if horizontal {
             self.each_cel(|c| c.iter().map(|row| row.iter().rev().copied().collect()).collect());
@@ -324,6 +344,7 @@ impl Doc {
         }
     }
 
+    /// :rotate cw|ccw: turn the whole picture a quarter (width and height swap).
     pub fn rotate(&mut self, clockwise: bool) {
         let (w, h) = (self.w, self.h);
         self.each_cel(|c| {
@@ -376,6 +397,7 @@ pub fn line(mut x0: i64, mut y0: i64, x1: i64, y1: i64) -> Vec<(i64, i64)> {
     }
 }
 
+/// The pixels of a rectangle between two corners (outline, or filled).
 pub fn rect(x0: i64, y0: i64, x1: i64, y1: i64, filled: bool) -> Vec<(i64, i64)> {
     let (xa, xb, ya, yb) = (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1));
     let mut out = vec![];
@@ -447,6 +469,7 @@ pub struct History {
 }
 
 impl History {
+    /// Remember the picture before a change (clears redo).
     pub fn push(&mut self, doc: &Doc) {
         self.undo.push(doc.clone());
         if self.undo.len() > UNDO_DEPTH {
@@ -469,6 +492,7 @@ impl History {
 
 // ── files ────────────────────────────────────────────────────────────────
 
+/// A picture as .mpx JSON (the same as the Python client wrote).
 pub fn to_json(doc: &Doc) -> Value {
     let px = |c: &Px| c.map_or(Value::Null, |c| Value::String(hex(c)));
     json!({
@@ -488,6 +512,7 @@ pub fn to_json(doc: &Doc) -> Value {
     })
 }
 
+/// A picture from .mpx JSON (missing parts get defaults).
 pub fn from_json(data: &Value, path: Option<PathBuf>) -> Doc {
     let (w, h) = (side(data["w"].as_i64().unwrap_or(32)), side(data["h"].as_i64().unwrap_or(32)));
     let mut layers: Vec<Layer> = data["layers"]
@@ -596,6 +621,7 @@ fn image(grids: &[Grid], scale: usize) -> image::RgbaImage {
     img
 }
 
+/// Open a picture: an avatar folder, a .png (a strip of frames), or an .mpx.
 pub fn open_any(path: &Path) -> Result<Doc> {
     if path.is_dir() {
         return load_avatar(path);
@@ -648,6 +674,7 @@ pub fn save(doc: &mut Doc, path: Option<&Path>) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// :export's kinds.
 pub enum Export {
     /// One frame.
     Png(usize),
@@ -657,6 +684,7 @@ pub enum Export {
     Sheet(usize),
 }
 
+/// Export as PNG: one frame, a strip, or a sheet, each pixel `scale` times bigger.
 pub fn export(doc: &Doc, path: &Path, how: Export, scale: usize) -> Result<PathBuf> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -688,6 +716,7 @@ pub fn export(doc: &Doc, path: &Path, how: Export, scale: usize) -> Result<PathB
     Ok(path.to_path_buf())
 }
 
+/// Mabel's avatar folder (avatar.json + a PNG strip per state) as one picture, states as tags.
 pub fn load_avatar(folder: &Path) -> Result<Doc> {
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(folder.join("avatar.json"))?)?;
     let (mut frames, mut tags, mut size) = (vec![], vec![], None);
