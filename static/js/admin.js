@@ -3336,6 +3336,7 @@ const _TOKEN_SCOPES = [
   { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
   { key: 'images:generate',   label: 'Images generate',   detail: 'Queue pictures on the GPU swap (TK Index); she steps aside to make them' },
   { key: 'messages',          label: 'Messages',          detail: 'Beeper chats via /api/beeper (MABEL-OS INBOX)' },
+  { key: 'tapes',             label: 'Tapes',             detail: 'his DreamTape repo via /api/tapes (MABEL-OS TAPES)' },
 ];
 
 function _renderTokenScopeRows(t) {
