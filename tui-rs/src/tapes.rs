@@ -81,6 +81,15 @@ impl Entry {
     }
 }
 
+/// `tapes_dev = ["~/code/tapes/snake", …]` from config.toml.
+fn dev_dirs(table: &toml::Table) -> Vec<PathBuf> {
+    table
+        .get("tapes_dev")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).map(crate::config::expand).collect())
+        .unwrap_or_default()
+}
+
 /// A dev tape's wasm: cargo's release build, named after the package.
 fn dev_wasm(dir: &Path) -> PathBuf {
     let name = std::fs::read_to_string(dir.join("Cargo.toml"))
@@ -145,12 +154,7 @@ pub struct Tapes {
 
 impl Tapes {
     pub fn new(cfg: &crate::config::Config) -> Self {
-        let dev_dirs = cfg
-            .raw
-            .get("tapes_dev")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str()).map(crate::config::expand).collect())
-            .unwrap_or_default();
+        let dev_dirs = dev_dirs(&cfg.raw);
         let played =
             std::fs::read_to_string(played_file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         Tapes {
@@ -168,6 +172,12 @@ impl Tapes {
     }
 
     fn scan(&mut self) {
+        // config.toml again: `mabel-os new-tape` adds to tapes_dev while MABEL-OS runs.
+        let fresh =
+            std::fs::read_to_string(crate::config::config_path()).ok().and_then(|t| t.parse::<toml::Table>().ok());
+        if let Some(table) = fresh {
+            self.dev_dirs = dev_dirs(&table);
+        }
         let keep = self.entries.get(self.sel).map(|e| e.dir.clone());
         let mut entries: Vec<Entry> =
             self.dev_dirs.iter().filter(|d| d.is_dir()).map(|d| Entry::read(d, true)).collect();
@@ -350,6 +360,7 @@ impl Tapes {
             lines.push(Line::styled(" No DreamTapes yet.", bold(pal.beige)));
             lines.push(Line::raw(""));
             lines.push(Line::styled(" Make one:  mabel-os new-tape snake", Style::new().fg(pal.amber)));
+            lines.push(Line::styled(" (on the PC or laptop; then r here)", Style::new().fg(pal.amber_dim)));
             lines.push(Line::styled(" Installed tapes live in", Style::new().fg(pal.amber_dim)));
             lines.push(Line::styled(format!(" {}", installed_dir().display()), Style::new().fg(pal.amber_dim)));
         }
@@ -541,6 +552,9 @@ impl Channel for Tapes {
                 self.sel = (self.sel + 1).min(self.entries.len().saturating_sub(1));
             }
             (Some('k'), _) | (_, KeyCode::Up) if section == LIST => self.sel = self.sel.saturating_sub(1),
+            // h / l hop between LIBRARY and the TAPE card.
+            (Some('l'), _) | (_, KeyCode::Right) if section == LIST => ctx.focus(CARD),
+            (Some('h'), _) | (_, KeyCode::Left) if section == CARD => ctx.focus(LIST),
             (_, KeyCode::Enter) => self.start(ctx, self.area),
             (Some('r'), _) => {
                 self.scan();
@@ -560,8 +574,9 @@ impl Channel for Tapes {
         Outcome::Ignored
     }
 
+    /// Inside while a tape runs (its keys are raw); otherwise nav mode like LIFE or AUDIO.
     fn lands_inside(&self, _narrow: bool) -> Option<usize> {
-        Some(LIST)
+        self.run.is_some().then_some(0)
     }
 
     fn raw_keys(&self, _section: usize) -> bool {
