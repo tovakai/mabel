@@ -18,6 +18,7 @@ const FILE_MAX: usize = 12_000;
 /// What separates the attached material from his question (also used to show only the question).
 pub const QUESTION_MARK: &str = "=== His question ===";
 
+/// One lesson: its id and file, what its frontmatter says, and its text.
 #[derive(Clone, Debug)]
 pub struct Lesson {
     /// "01-first-light/01-hello-tape": how progress refers to it.
@@ -33,15 +34,18 @@ pub struct Lesson {
 }
 
 impl Lesson {
+    /// Its tutor manual: `NN-lesson.tutor.md` next to it.
     pub fn tutor_path(&self) -> PathBuf {
         self.path.with_extension("tutor.md")
     }
 
+    /// Its starter files: `NN-lesson.files/` next to it.
     pub fn starter_dir(&self) -> PathBuf {
         self.path.with_extension("files")
     }
 }
 
+/// A module: its title, introduction and lessons (in number order).
 #[derive(Clone, Debug)]
 pub struct Module {
     pub title: String,
@@ -49,6 +53,7 @@ pub struct Module {
     pub lessons: Vec<Lesson>,
 }
 
+/// A course: its folder, what course.md says, and its modules.
 #[derive(Clone, Debug)]
 pub struct Course {
     pub dir: PathBuf,
@@ -61,10 +66,12 @@ pub struct Course {
 }
 
 impl Course {
+    /// Every lesson, in order.
     pub fn lessons(&self) -> impl Iterator<Item = &Lesson> {
         self.modules.iter().flat_map(|m| m.lessons.iter())
     }
 
+    /// The lesson with this id.
     pub fn lesson(&self, id: &str) -> Option<&Lesson> {
         self.lessons().find(|l| l.id == id)
     }
@@ -77,15 +84,18 @@ impl Course {
         }
     }
 
+    /// Its progress.md.
     pub fn progress_path(&self) -> PathBuf {
         self.dir.join("progress.md")
     }
 }
 
+/// A frontmatter key's values.
 fn get<'a>(pairs: &'a [(String, Vec<String>)], key: &str) -> Option<&'a Vec<String>> {
     pairs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
+/// A frontmatter key's first value ("" if missing).
 fn one(pairs: &[(String, Vec<String>)], key: &str) -> String {
     get(pairs, key).and_then(|v| v.first()).cloned().unwrap_or_default()
 }
@@ -112,6 +122,7 @@ fn numbered(dir: &Path, want_dir: bool) -> Vec<PathBuf> {
     out
 }
 
+/// Read a lesson file (its title from the file name if the frontmatter has none).
 fn read_lesson(module: &str, path: &Path) -> Option<Lesson> {
     let text = std::fs::read_to_string(path).ok()?;
     let (pairs, body, _) = split_frontmatter(&text);
@@ -130,6 +141,7 @@ fn read_lesson(module: &str, path: &Path) -> Option<Lesson> {
     })
 }
 
+/// Read a course folder: course.md, then its numbered modules and lessons.
 fn read_course(dir: &Path) -> Option<Course> {
     let text = std::fs::read_to_string(dir.join("course.md")).ok()?;
     let (pairs, body, _) = split_frontmatter(&text);
@@ -191,12 +203,14 @@ pub struct Progress {
 }
 
 impl Progress {
+    /// Read a course's progress (from progress.md's json block; empty if none).
     pub fn load(course: &Course) -> Progress {
         let text = std::fs::read_to_string(course.progress_path()).unwrap_or_default();
         let json = text.split("```json").nth(1).and_then(|rest| rest.split("```").next());
         json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
     }
 
+    /// Write progress.md: a checklist to read in Obsidian, and the json block MABEL-OS reads.
     pub fn save(&self, course: &Course) -> std::io::Result<()> {
         let mut out = format!(
             "---\nmabel-os: course progress\n---\n\n# {}: progress\n\nWritten by MABEL-OS's COURSE app. Tick lessons there (`d`), not here.\n\n",
@@ -213,6 +227,7 @@ impl Progress {
     }
 }
 
+/// A file's text, cut at `FILE_MAX` characters (so one huge file can't fill her context).
 fn read_capped(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     Some(if text.chars().count() > FILE_MAX {

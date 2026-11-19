@@ -16,6 +16,7 @@ pub static WIKILINK: LazyLock<Regex> =
 pub static INLINE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(^|[^\w/#&])#(\p{L}[\w/\-]*)").expect("regex"));
 static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+?)\s*#*\s*$").expect("regex"));
 
+/// One note, as the scan found it.
 #[derive(Debug, Clone)]
 pub struct Note {
     pub path: PathBuf,
@@ -32,6 +33,7 @@ pub struct Note {
 }
 
 impl Note {
+    /// The folder it's in ("" at the top).
     pub fn folder(&self) -> &str {
         self.rel.rsplit_once('/').map_or("", |(f, _)| f)
     }
@@ -118,6 +120,7 @@ pub fn scan_text(text: &str) -> Scan {
     (fm, links, tags, heads)
 }
 
+/// A vault: every note, and a lookup by name (what `[[links]]` use).
 pub struct Vault {
     pub root: PathBuf,
     /// rel → note.
@@ -125,21 +128,25 @@ pub struct Vault {
     by_name: HashMap<String, Vec<String>>,
 }
 
+/// A link target's last part, lowercase, without .md ("Projects/Mabel.md" → "mabel").
 fn last_segment(target: &str) -> String {
     target.trim().trim_end_matches(".md").rsplit('/').next().unwrap_or("").to_lowercase()
 }
 
 impl Vault {
+    /// A vault at `root`, not scanned yet.
     pub fn new(root: PathBuf) -> Self {
         Vault { root, notes: BTreeMap::new(), by_name: HashMap::new() }
     }
 
+    /// Is the folder there?
     pub fn exists(&self) -> bool {
         self.root.is_dir()
     }
 
     // ── scanning ─────────────────────────────────────────────────────────
 
+    /// Read every note (skipping hidden folders like .obsidian and .trash).
     pub fn scan(mut self) -> Self {
         let mut stack = vec![self.root.clone()];
         while let Some(dir) = stack.pop() {
@@ -162,6 +169,7 @@ impl Vault {
         self
     }
 
+    /// Read one note: its links, tags and headings.
     fn read_note(&self, path: &Path) -> Note {
         let rel = path.strip_prefix(&self.root).unwrap_or(path).to_string_lossy().into_owned();
         let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -171,6 +179,7 @@ impl Vault {
         Note { path: path.to_path_buf(), rel, name, mtime, links, tags, headings }
     }
 
+    /// Rebuild the lookup by name.
     fn index(&mut self) {
         self.by_name.clear();
         for note in self.notes.values() {
@@ -178,6 +187,7 @@ impl Vault {
         }
     }
 
+    /// Read one note again after it changed (or forget it if it's gone).
     pub fn refresh_note(&mut self, rel: &str) -> Option<&Note> {
         let path = self.root.join(rel);
         if !path.exists() {
@@ -213,6 +223,7 @@ impl Vault {
         found.first().map(|r| (*r).clone())
     }
 
+    /// The notes that link to `note`.
     pub fn backlinks(&self, note: &Note) -> Vec<&Note> {
         let name = note.name.to_lowercase();
         let mut out: Vec<&Note> = self
@@ -300,6 +311,7 @@ impl Vault {
 
     // ── files ────────────────────────────────────────────────────────────
 
+    /// A note's text ("" if it can't be read).
     pub fn read(&self, rel: &str) -> String {
         std::fs::read_to_string(self.root.join(rel)).unwrap_or_default()
     }
@@ -317,6 +329,8 @@ impl Vault {
         Ok(())
     }
 
+    /// Make a new note with `text` (if it already exists it's left as it is, so it simply
+    /// opens); returns its path inside the vault.
     pub fn create(&mut self, rel: &str, text: &str) -> Result<String> {
         let rel = if rel.ends_with(".md") { rel.to_string() } else { format!("{rel}.md") };
         if rel.split('/').any(|p| p == ".." || p.is_empty()) {
@@ -398,6 +412,7 @@ impl Vault {
 
 // ── Obsidian's (moment.js) date formats ─────────────────────────────────
 
+/// 1 → "1st", 12 → "12th", 22 → "22nd" (for daily-note titles like Obsidian's).
 fn ordinal(d: u32) -> String {
     let suffix = if (11..=13).contains(&(d % 100)) {
         "th"

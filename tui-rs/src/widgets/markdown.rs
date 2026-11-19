@@ -27,10 +27,12 @@ fn is_blank(line: &Line) -> bool {
     line.spans.iter().all(|s| s.content.chars().all(|c| c == ' ' || c == '▌'))
 }
 
+/// One list being rendered (lists can nest).
 struct ListState {
     next: Option<u64>, // Some(n) for ordered lists
 }
 
+/// Turns Markdown events into wrapped, styled lines.
 struct Renderer<'p> {
     pal: &'p Palette,
     base: Style,
@@ -38,16 +40,20 @@ struct Renderer<'p> {
     out: Vec<Line<'static>>,
     /// The paragraph (or heading, or item) being collected.
     spans: Vec<Span<'static>>,
+    /// Styles in effect (bold inside a heading…), innermost last.
     styles: Vec<Style>,
     lists: Vec<ListState>,
     /// A new list item's bullet, waiting for its first text.
     bullet: Option<String>,
+    /// How many quotes deep we are (each adds a ▌ bar).
     quote: usize,
+    /// A code block being collected, a link's address, a table being collected.
     code: Option<String>,
     link: Option<String>,
     table: Option<Table>,
 }
 
+/// A table: column alignments, rows of cells, and how many rows are the header.
 #[derive(Default)]
 struct Table {
     align: Vec<Alignment>,
@@ -56,6 +62,7 @@ struct Table {
 }
 
 impl<'p> Renderer<'p> {
+    /// A renderer for lines `max` cells wide.
     fn new(pal: &'p Palette, base: Style, max: usize) -> Self {
         Renderer {
             pal,
@@ -73,15 +80,18 @@ impl<'p> Renderer<'p> {
         }
     }
 
+    /// The style in effect now.
     fn style(&self) -> Style {
         *self.styles.last().unwrap_or(&self.base)
     }
 
+    /// Start a style (on top of the current one).
     fn push_style(&mut self, f: impl FnOnce(Style) -> Style) {
         let s = f(self.style());
         self.styles.push(s);
     }
 
+    /// End the innermost style.
     fn pop_style(&mut self) {
         if self.styles.len() > 1 {
             self.styles.pop();
@@ -112,6 +122,7 @@ impl<'p> Renderer<'p> {
         (first, rest)
     }
 
+    /// Wrap the collected paragraph into lines (with its bullet or quote bars) and add them.
     fn flush(&mut self) {
         if self.spans.is_empty() && self.bullet.is_none() {
             return;
@@ -121,6 +132,7 @@ impl<'p> Renderer<'p> {
         self.out.extend(wrap::wrap(&spans, self.max, &first, &rest));
     }
 
+    /// An empty line between blocks (never two in a row).
     fn blank(&mut self) {
         if self.out.last().is_some_and(|l| !is_blank(l)) {
             let (_, rest) = self.prefixes_peek();
@@ -135,6 +147,7 @@ impl<'p> Renderer<'p> {
         (rest.clone(), rest)
     }
 
+    /// Add text in the current style.
     fn text(&mut self, s: &str) {
         if let Some(code) = &mut self.code {
             code.push_str(s);
@@ -151,6 +164,7 @@ impl<'p> Renderer<'p> {
         }
     }
 
+    /// One Markdown event (start/end of a heading, list, quote, emphasis…, or text).
     fn event(&mut self, event: Event) {
         let pal = self.pal;
         match event {
@@ -314,6 +328,8 @@ impl<'p> Renderer<'p> {
         }
     }
 
+    /// A code block: bright on a faint background, tabs as spaces, long lines cut into pieces
+    /// (not word-wrapped, so code keeps its shape).
     fn code_block(&mut self, code: &str) {
         let style = Style::new().fg(self.pal.amber_hi).bg(self.pal.amber_faint);
         let (_, rest) = self.prefixes_peek();
@@ -339,6 +355,7 @@ impl<'p> Renderer<'p> {
         }
     }
 
+    /// A table, with columns as wide as they need (shrunk to fit) and a rule under the header.
     fn table_lines(&mut self, t: Table) {
         let pal = self.pal;
         let cols = t.rows.iter().map(|r| r.len()).max().unwrap_or(0);
@@ -404,6 +421,7 @@ impl<'p> Renderer<'p> {
     }
 }
 
+/// How many cells some spans take.
 fn width_of(spans: &[Span]) -> usize {
     spans.iter().map(|s| width(&s.content)).sum()
 }
