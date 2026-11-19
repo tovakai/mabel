@@ -7,14 +7,10 @@
 # `mabel` and `mabel-os` into ~/.local/bin and, if this device has no working config yet, pairs it
 # with Mabel through its Tailscale login. Needs only sh, curl or wget, and awk/sed.
 # Run it again to update (or press F12 in MABEL-OS when it says UPDATE); a working config is kept.
-#
-# A machine Mabel has no Rust build for (not x86_64 or aarch64) gets the old Python TUI instead,
-# which needs Python 3.12+.
+# Builds exist for x86_64 and aarch64 (scripts/tui_rs_dist.sh on the PC).
 set -eu
 
 BASE="@@BASE@@"
-WHEEL="@@WHEEL@@"
-BUILD="@@BUILD@@"
 RS_BUILDS="@@RS_BUILDS@@"                                 # arch:build pairs (scripts/tui_rs_dist.sh)
 APP="${XDG_DATA_HOME:-$HOME/.local/share}/mabel-tui"
 BIN="$HOME/.local/bin"
@@ -93,40 +89,6 @@ install_rust() {
     printf '%s\n' "$rs" > "$APP/build-rs"                 # what mabel-os compares with /tui/version (F12)
 }
 
-find_python() {
-    for c in python3.14 python3.13 python3.12 python3; do
-        if command -v "$c" >/dev/null 2>&1 &&
-           "$c" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 12))' >/dev/null 2>&1; then
-            command -v "$c"; return 0
-        fi
-    done
-    return 1
-}
-
-# The old Python TUI, for machines without a Rust build.
-install_python() {
-    tmp=$1
-    say "no Rust build for $(uname -m): installing the Python TUI ${D}($WHEEL)${R}"
-    fetch "$BASE/tui/$WHEEL" "$tmp/$WHEEL" || die "couldn't download $BASE/tui/$WHEEL (is this device on the tailnet?)"
-    if [ -x "$APP/venv/bin/python" ] &&
-       ! "$APP/venv/bin/python" -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null; then
-        rm -rf "$APP/venv"                                     # an old interpreter: start over
-    fi
-    if command -v uv >/dev/null 2>&1; then
-        [ -x "$APP/venv/bin/python" ] || uv venv -q --python '>=3.12' "$APP/venv" </dev/null
-        uv pip install -q --python "$APP/venv/bin/python" --reinstall-package mabel-tui "$tmp/$WHEEL" </dev/null
-    elif py=$(find_python); then
-        [ -x "$APP/venv/bin/python" ] || "$py" -m venv "$APP/venv" </dev/null
-        pip="$APP/venv/bin/python -m pip -q --disable-pip-version-check"
-        $pip install --force-reinstall --no-deps "$tmp/$WHEEL" </dev/null
-        $pip install "$tmp/$WHEEL" </dev/null                  # its dependencies, if any are missing
-    else
-        die "needs Python 3.12+ with venv here (no Rust build for $(uname -m))"
-    fi
-    ln -sf "$APP/venv/bin/mabel" "$BIN/mabel"
-    printf '%s\n' "$BUILD" > "$APP/build"                 # what the TUI compares with /tui/version (F12)
-}
-
 config_works() {
     [ -f "$CONF" ] || return 1
     url=$(conf_value url) token=$(conf_value token)
@@ -179,11 +141,8 @@ main() {
     mkdir -p "$APP" "$BIN"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    if found=$(rust_build); then
-        install_rust "$tmp" ${found}
-    else
-        install_python "$tmp"
-    fi
+    found=$(rust_build) || die "no MABEL-OS build for $(uname -m) here (Mabel makes x86_64 and aarch64)"
+    install_rust "$tmp" ${found}
     if config_works; then
         say "kept your config ${D}($CONF)${R}"
     else

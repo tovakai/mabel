@@ -1,5 +1,0 @@
-{
-  "_": "Mabel's avatar: one PNG strip of 28x28 frames per state, timings in ms per frame (from the .aseprite files). idle_hold: idle holds its first frame this long (random, ms) before each loop, so blinks come irregularly.",
-  "idle": {"file": "idle.png", "ms": [100, 100, 100, 100, 100, 100, 100, 100, 33, 33, 33], "hold": [2000, 5000]},
-  "talk": {"file": "talk.png", "ms": [100, 100, 100, 100, 100, 100, 100, 100, 33, 33, 33]}
-}

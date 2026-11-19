@@ -1,14 +1,14 @@
 # MABEL-OS client contract
 
-The HTTP surface both MABEL-OS clients speak: the Python prototype (`tui/`) and the Rust port
-(`tui-rs/`). They share no code, so this file is the shared part. When a client starts using an
-endpoint or a field, add it here; when the server changes one, both clients change with it.
+The HTTP surface MABEL-OS (`tui-rs/`) speaks. When the client starts using an endpoint or a field,
+add it here; when the server changes one, the client changes with it.
 
-Written 2026-11-18 from the Python client as it stood at ea6082d6.
+Written 2026-11-18 from the Python client as it stood at ea6082d6. The Python client (`tui/`) was
+retired 2026-11-19 once the Rust one matched it; it's in git history before that date.
 
 ## Config (client side, not HTTP)
 
-`~/.config/mabel-tui/config.toml` (honours `$XDG_CONFIG_HOME`), mode 600. Both clients read the same file.
+`~/.config/mabel-tui/config.toml` (honours `$XDG_CONFIG_HOME`), mode 600.
 
 | key | type | default | meaning |
 |---|---|---|---|
@@ -31,8 +31,9 @@ Written 2026-11-18 from the Python client as it stood at ea6082d6.
 | `[colors]` | table | — | per-colour overrides, `#rrggbb`, keys as in the palette |
 | `[navidrome]` | table | — | `url`, `user`, `password` (all three, or the section is an error): AUDIO goes straight to Navidrome |
 
-Install state: `~/.local/share/mabel-tui/build` holds the build id an installed copy came from.
-A copy run from source has no such file and never offers updates.
+Install state: `~/.local/share/mabel-tui/build-rs` holds the build id an installed copy came from
+(the installer puts the binary next to it as `mabel-os` and links `mabel` and `mabel-os` into
+`~/.local/bin`). A copy run from source has no such file and never offers updates.
 
 ## Auth
 
@@ -102,11 +103,13 @@ With `[navidrome]` in the config, the client talks Subsonic to Navidrome directl
 
 ## Updates and install (no auth)
 
-- **GET `/tui/version`** returns `{"build": "<hash of tui/>"}`.
-- **GET `/tui/install.sh`** returns the installer.
+- **GET `/tui/version`** returns `{"build": "rust", "rs": {"x86_64": "<hash>", "aarch64": "<hash>"}}`.
+  The client compares `rs[<its arch>]` with `build-rs`. (`build` only exists so that a leftover
+  Python copy offers F12, which installs the Rust one.)
+- **GET `/tui/rs/mabel-os-<arch>`** returns that binary. They're made on the PC by
+  `scripts/tui_rs_dist.sh` into `tui-rs/dist/`.
+- **GET `/tui/install.sh`** returns the installer (plain sh: curl or wget, awk, sed).
 - **GET `/api/tui/whoami`** and **POST `/api/tui/pair`** handle tailnet pairing.
-
-The installer and versioning will need a per-architecture Rust binary later (phase 6). Until then these routes serve only the Python build.
 
 ## tk-index (INVENTORY), separate service at `index_url`, no auth
 
@@ -120,8 +123,9 @@ The installer and versioning will need a per-architecture Rust binary later (pha
 - **POST `/api/items/{id}/nickname`** takes `{add}`.
 - **GET `/api/undo`** returns `{last}`, and **POST `/api/undo`** undoes it.
 
-The place model (routes, redirects, titles) is ported from tk-index's web UI. See `tui/mabel_tui/tkindex.py`.
+The place model (routes, redirects, titles) is ported from tk-index's web UI. See `tui-rs/src/tkindex.rs`.
 
 ## Print server (the deck, `mabel-print`)
 
-`GET /status` and `POST /print` live on the deck, not on Mabel. See `tui/mabel_tui/printserver.py`.
+`GET /status` and `POST /print` live on the deck, not on Mabel: `mabel-os print-server`
+(`mabel-print.service`). See `tui-rs/src/printserver.rs`.

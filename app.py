@@ -279,7 +279,7 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
-        # MABEL-OS install over the tailnet (routes/tui_install_routes.py): the script and wheel
+        # MABEL-OS install over the tailnet (routes/tui_install_routes.py): the script and binaries
         # hold no secrets; pairing checks Tailscale Serve's identity headers itself.
         "/tui/install.sh",
         "/tui/version",
@@ -298,7 +298,6 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
-        _re.compile(r"^/tui/mabel_tui-[\w.]+-py3-none-any\.whl$"),
         _re.compile(r"^/tui/rs/mabel-os-(x86_64|aarch64)$"),
     ]
 

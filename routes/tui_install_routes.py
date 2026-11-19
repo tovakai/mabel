@@ -1,19 +1,18 @@
-"""Install MABEL-OS (tui/) on any device of his tailnet with one line:
+"""Install MABEL-OS (tui-rs/, the Rust build) on any device of his tailnet with one line:
 
     curl -fsSL https://tovakai.tail4312a5.ts.net/tui/install.sh | sh
 
 GET  /tui/install.sh                       the installer, with this server's address filled in
-GET  /tui/mabel_tui-<ver>-py3-none-any.whl  the TUI as a wheel, built from tui/ (cached until a file changes)
-GET  /tui/rs/mabel-os-<arch>                 the Rust build (tui-rs/) for x86_64 or aarch64, if one is made
-GET  /tui/version                           the current build ids, for the TUI's update check (F12)
+GET  /tui/rs/mabel-os-<arch>                 the build for x86_64 or aarch64 (made by scripts/tui_rs_dist.sh)
+GET  /tui/version                           the current build ids, for the update check (F12)
 GET  /api/tui/whoami                        which tailnet login Tailscale Serve says the caller is
 POST /api/tui/pair                          a "tui" profile API token for a device of an allowed login
 
-The Rust builds are made on the PC by scripts/tui_rs_dist.sh (into tui-rs/dist/); compiling
-is too heavy to do inside a request. Until one exists, the installer installs only the Python TUI.
+The builds are made on the PC by scripts/tui_rs_dist.sh (into tui-rs/dist/); compiling is too
+heavy to do inside a request. (The Python TUI in tui/ was retired 2026-11-19.)
 
 None of these take a session or token (they're in app.py's AUTH_EXEMPT_EXACT). The script and
-wheel hold no secrets. Pairing trusts Tailscale Serve's identity headers: the app is reached on
+binaries hold no secrets. Pairing trusts Tailscale Serve's identity headers: the app is reached on
 the tailnet only through `tailscale serve` (127.0.0.1:7000, tailnet only, no Funnel), which
 proxies from loopback, sets X-Forwarded-For to the caller's tailnet address and sets
 Tailscale-User-Login itself, replacing any the caller sent (verified 2026-11-18 from the deck;
@@ -28,9 +27,6 @@ import ipaddress
 import logging
 import re
 import secrets
-import shutil
-import subprocess
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -40,7 +36,6 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 logger = logging.getLogger(__name__)
 _REPO = Path(__file__).resolve().parents[1]
-TUI_DIR = _REPO / "tui"
 INDEX_PORT = 8765                         # tk-index over the tailnet (tailscale serve)
 TOKEN_PROFILE = "tui"
 PAIRS_PER_HOUR = 10
@@ -48,7 +43,6 @@ PAIRS_PER_HOUR = 10
 _TAILNET_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 RS_DIST = _REPO / "tui-rs" / "dist"
 RS_ARCHES = ("x86_64", "aarch64")
-_build_lock = threading.Lock()
 _pairs: list[float] = []
 
 
@@ -60,62 +54,7 @@ def _setting(key, default):
         return default
 
 
-# --- the wheel ---------------------------------------------------------------------------------
-
-def _source_files() -> list[Path]:
-    files = [TUI_DIR / "pyproject.toml"]
-    for path in sorted((TUI_DIR / "mabel_tui").rglob("*")):
-        if path.is_file() and "__pycache__" not in path.parts:
-            files.append(path)
-    return files
-
-
-_fp_cache: tuple[tuple, str] | None = None
-
-
-def _fingerprint() -> str:
-    """The build id: a hash of tui/'s contents (not mtimes, so touching a file isn't an update).
-    Recomputed only when a file's size or mtime moved."""
-    global _fp_cache
-    files = _source_files()
-    stamp = tuple((str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files)
-    if _fp_cache and _fp_cache[0] == stamp:
-        return _fp_cache[1]
-    digest = hashlib.sha256()
-    for path in files:
-        digest.update(str(path.relative_to(TUI_DIR)).encode() + b"\0" + path.read_bytes() + b"\0")
-    _fp_cache = (stamp, digest.hexdigest()[:16])
-    return _fp_cache[1]
-
-
-def _cache_dir() -> Path:
-    from src.constants import DATA_DIR
-    return Path(DATA_DIR) / "cache" / "tui-wheel"
-
-
-def build_wheel() -> Path:
-    """The current tui/ as a wheel, rebuilt only when a source file changed."""
-    with _build_lock:
-        out = _cache_dir() / _fingerprint()
-        wheels = sorted(out.glob("mabel_tui-*.whl")) if out.is_dir() else []
-        if wheels:
-            return wheels[-1]
-        uv = shutil.which("uv") or "/usr/bin/uv"
-        tmp = out.with_name(out.name + ".tmp")
-        shutil.rmtree(tmp, ignore_errors=True)
-        result = subprocess.run([uv, "build", "--wheel", "--out-dir", str(tmp), str(TUI_DIR)],
-                                capture_output=True, text=True, timeout=180)
-        built = sorted(tmp.glob("mabel_tui-*.whl"))
-        if result.returncode or not built:
-            raise RuntimeError(f"uv build failed: {(result.stderr or result.stdout)[-400:]}")
-        for old in _cache_dir().iterdir():           # keep only the newest build
-            if old != tmp:
-                shutil.rmtree(old, ignore_errors=True)
-        tmp.rename(out)
-        return out / built[-1].name
-
-
-# --- the Rust builds (made by scripts/tui_rs_dist.sh) ---------------------------------------------
+# --- the builds (made by scripts/tui_rs_dist.sh) ---------------------------------------------
 
 _rs_cache: dict[str, tuple[tuple, str]] = {}
 
@@ -209,11 +148,10 @@ def mint_token(owner: str, device: str) -> dict:
 
 # --- the installer ---------------------------------------------------------------------------------
 
-def install_script(base: str, wheel_name: str, build: str, rs: dict[str, str] | None = None) -> str:
+def install_script(base: str, rs: dict[str, str] | None = None) -> str:
     rs_line = " ".join(f"{arch}:{build_id}" for arch, build_id in (rs or {}).items())
     return (_REPO / "scripts" / "tui_install.sh").read_text(encoding="utf-8") \
-        .replace("@@BASE@@", base).replace("@@WHEEL@@", wheel_name).replace("@@BUILD@@", build) \
-        .replace("@@RS_BUILDS@@", rs_line)
+        .replace("@@BASE@@", base).replace("@@RS_BUILDS@@", rs_line)
 
 
 def setup_tui_install_routes() -> APIRouter:
@@ -221,17 +159,13 @@ def setup_tui_install_routes() -> APIRouter:
 
     @router.get("/tui/install.sh")
     def installer(request: Request):
-        try:
-            wheel = build_wheel()
-        except Exception as exc:
-            logger.warning("[tui-install] wheel build failed: %s", exc)
-            raise HTTPException(503, "Couldn't build the TUI package on the server")
-        return PlainTextResponse(install_script(base_url(request), wheel.name, wheel.parent.name, rs_builds()),
-                                 media_type="text/x-shellscript")
+        return PlainTextResponse(install_script(base_url(request), rs_builds()), media_type="text/x-shellscript")
 
     @router.get("/tui/version")
     def version():
-        return {"build": _fingerprint(), "rs": rs_builds()}
+        # "build" is what the retired Python TUI compares with its own: a value it never has, so
+        # any Python copy still out there offers F12, and that installer run moves it to Rust.
+        return {"build": "rust", "rs": rs_builds()}
 
     @router.get("/tui/rs/{filename}")
     def rust_binary(filename: str):
@@ -240,13 +174,6 @@ def setup_tui_install_routes() -> APIRouter:
         if path is None or not path.is_file():
             raise HTTPException(404)
         return FileResponse(path, filename=filename, media_type="application/octet-stream")
-
-    @router.get("/tui/{filename}")
-    def wheel_file(filename: str):
-        if not re.fullmatch(r"mabel_tui-[\w.]+-py3-none-any\.whl", filename):
-            raise HTTPException(404)
-        wheel = build_wheel()
-        return FileResponse(wheel, filename=wheel.name, media_type="application/octet-stream")
 
     @router.get("/api/tui/whoami")
     def whoami(request: Request):

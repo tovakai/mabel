@@ -1,4 +1,4 @@
-"""Read-only snapshot of Mabel's day for the terminal client's LIFE tab (tui/).
+"""Read-only snapshot of Mabel's day for the terminal client's LIFE tab (MABEL-OS, tui-rs/).
 
 GET /api/tui/life          what she's doing, each job's last run and what holds it back,
                            her latest dream, song, paper note, book and news, his lists.

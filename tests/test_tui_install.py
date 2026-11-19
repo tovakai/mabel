@@ -1,9 +1,6 @@
 """MABEL-OS install over the tailnet (routes/tui_install_routes.py, scripts/tui_install.sh)."""
 import subprocess
-import zipfile
 from types import SimpleNamespace
-
-import pytest
 
 from routes import tui_install_routes as ti
 
@@ -36,13 +33,12 @@ def test_device_names_are_tidy():
 
 
 def test_install_script_points_at_this_server():
-    script = ti.install_script("https://box.tail1.ts.net", "mabel_tui-0.1.0-py3-none-any.whl", "abc123")
+    script = ti.install_script("https://box.tail1.ts.net")
     assert "@@" not in script and 'BASE="https://box.tail1.ts.net"' in script
-    assert 'BUILD="abc123"' in script
     assert ti.index_url("https://box.tail1.ts.net") == "https://box.tail1.ts.net:8765"
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode == 0
-    assert 'RS_BUILDS=""' in script, "no Rust builds yet: the installer skips them"
-    with_rs = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
+    assert 'RS_BUILDS=""' in script
+    with_rs = ti.install_script("https://b", {"x86_64": "x1", "aarch64": "a1"})
     assert 'RS_BUILDS="x86_64:x1 aarch64:a1"' in with_rs
 
 
@@ -59,7 +55,7 @@ def _sh(tmp_path, script, extra, env=None):
 def test_the_installer_picks_the_rust_build_for_this_arch(tmp_path):
     """rust_build + install_rust against a fake download: the right binary, linked as mabel and
     mabel-os, its build recorded."""
-    script = ti.install_script("https://b", "w.whl", "abc", {"x86_64": "x1", "aarch64": "a1"})
+    script = ti.install_script("https://b", {"x86_64": "x1", "aarch64": "a1"})
     done, home = _sh(tmp_path, script, """
 fetch() { printf 'binary from %s' "$1" > "$2"; }
 uname() { echo aarch64; }
@@ -74,11 +70,11 @@ found=$(rust_build); echo "found $found"; install_rust "$t" $found
     for name in ("mabel-os", "mabel"):
         assert (home / ".local" / "bin" / name).resolve() == app / "mabel-os"
     done, _ = _sh(tmp_path, script, "uname() { echo armv7l; }; rust_build || echo none")
-    assert done.stdout.strip() == "none", "a 32-bit Pi gets the Python TUI"
+    assert done.stdout.strip() == "none", "a 32-bit Pi has no build"
 
 
 def test_pairing_writes_the_config_and_keeps_the_rest(tmp_path):
-    script = ti.install_script("https://b", "w.whl", "abc", {})
+    script = ti.install_script("https://b", {})
     conf = tmp_path / "home" / "cfg" / "mabel-tui" / "config.toml"
     conf.parent.mkdir(parents=True)
     conf.write_text('url = "http://old"\ntoken = "ody_old"\npalette = "deck"\n\n[colors]\nurl = "kept: not top-level"\n')
@@ -99,7 +95,7 @@ echo "url=$(conf_value url) token=$(conf_value token)"
 
 
 def test_a_refused_pairing_says_why(tmp_path):
-    script = ti.install_script("https://b", "w.whl", "abc", {})
+    script = ti.install_script("https://b", {})
     done, _ = _sh(tmp_path, script, """
 post_json() { printf '{"detail":"This device\\047s tailnet login isn\\047t allowed to pair"}' > "$3"; echo 403; }
 t=$(mktemp -d); pair "$t"
@@ -116,28 +112,3 @@ def test_rust_builds_are_listed_by_content(tmp_path, monkeypatch):
     assert list(first) == ["aarch64"]
     (tmp_path / "mabel-os-aarch64").write_bytes(b"elf two")
     assert ti.rs_builds()["aarch64"] != first["aarch64"]
-
-
-def test_the_wheel_is_built_once_and_carries_the_assets(tmp_path, monkeypatch):
-    monkeypatch.setattr(ti, "_cache_dir", lambda: tmp_path / "cache")
-    wheel = ti.build_wheel()
-    assert ti.build_wheel() == wheel, "cached until a source file changes"
-    names = zipfile.ZipFile(wheel).namelist()
-    assert "mabel_tui/app.py" in names and "mabel_tui/theme.tcss" in names
-    assert any(n.startswith("mabel_tui/assets/avatar/") for n in names)
-    assert not any("__pycache__" in n for n in names)
-
-
-def test_build_id_follows_contents_not_mtimes(tmp_path, monkeypatch):
-    src = tmp_path / "tui"
-    (src / "mabel_tui").mkdir(parents=True)
-    (src / "pyproject.toml").write_text("[project]\n")
-    app = src / "mabel_tui" / "app.py"
-    app.write_text("print(1)\n")
-    monkeypatch.setattr(ti, "TUI_DIR", src)
-    monkeypatch.setattr(ti, "_fp_cache", None)
-    first = ti._fingerprint()
-    app.write_text("print(1)\n")                     # touched, same content
-    assert ti._fingerprint() == first
-    app.write_text("print(2)\n")
-    assert ti._fingerprint() != first

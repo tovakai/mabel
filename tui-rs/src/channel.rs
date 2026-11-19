@@ -1,19 +1,13 @@
 //! A channel is one tab (CH-01 COMMS … CH-08 SYS). The app owns the frame around it and the
 //! nav mode; a channel draws its panels, says where its sections are, and handles keys inside.
 //! A suite (suite.rs) is a channel made of several apps, each of them a channel too.
-//!
-//! Until a channel is ported, `Placeholder` stands in: the same panels as the Python layout
-//! (wide on the PC, stacked on the deck), so h j k l, i and esc can be tried on every channel.
 
 use std::any::Any;
 use std::time::Instant;
 
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
-use ratatui::text::Line;
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::Mabel;
@@ -234,74 +228,7 @@ pub trait Channel {
     fn tick(&mut self, _now: Instant, _visible: bool, _ctx: &mut Ctx) {}
 }
 
-// ── stand-ins until each channel is ported ──────────────────────────────
-
-/// Places panels for a width; the bool is the narrow (deck) layout.
-type Arrange = fn(Rect, bool) -> Vec<Rect>;
-
-pub struct Placeholder {
-    id: &'static str,
-    tab: &'static str,
-    phase: u8,
-    panels: &'static [(&'static str, &'static str)],
-    arrange: Arrange,
-    lands: Option<usize>,
-}
-
-impl Placeholder {
-    fn new(
-        id: &'static str,
-        tab: &'static str,
-        phase: u8,
-        panels: &'static [(&'static str, &'static str)],
-        arrange: Arrange,
-    ) -> Self {
-        Placeholder { id, tab, phase, panels, arrange, lands: None }
-    }
-
-    fn lands(mut self, section: usize) -> Self {
-        self.lands = Some(section);
-        self
-    }
-}
-
-impl Channel for Placeholder {
-    fn id(&self) -> &'static str {
-        self.id
-    }
-
-    fn tab(&self) -> &'static str {
-        self.tab
-    }
-
-    fn render(&mut self, frame: &mut Frame, area: Rect, view: &View) -> Vec<Rect> {
-        let pal = view.pal;
-        let rects = (self.arrange)(area, view.narrow);
-        for (i, (rect, (title, what))) in rects.iter().zip(self.panels.iter()).enumerate() {
-            let block = ui::panel(pal, title, view.panel_state(i))
-                .title_bottom(Line::from(format!(" phase {} ", self.phase)).right_aligned());
-            let text = vec![
-                Line::styled(*what, Style::new().fg(pal.amber)),
-                Line::raw(""),
-                Line::styled("not ported yet: the Python MABEL-OS (mabel) has it.", Style::new().fg(pal.amber_dim)),
-            ];
-            frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }).block(block), *rect);
-        }
-        rects
-    }
-
-    fn lands_inside(&self, _narrow: bool) -> Option<usize> {
-        self.lands
-    }
-}
-
-fn split_h(area: Rect, c: &[Constraint]) -> Vec<Rect> {
-    Layout::horizontal(c.to_vec()).split(area).to_vec()
-}
-
-fn split_v(area: Rect, c: &[Constraint]) -> Vec<Rect> {
-    Layout::vertical(c.to_vec()).split(area).to_vec()
-}
+// ── the channels ─────────────────────────────────────────────────────────
 
 fn boxed(c: impl Channel + 'static) -> Box<dyn Channel> {
     Box::new(c)

@@ -240,7 +240,7 @@ def _send_bt(address: str, data: bytes) -> None:
 
 
 def print_server() -> tuple[str, str]:
-    """(url, token) of the deck's print server (tui/mabel_tui/printserver.py), or ("", "") to print directly."""
+    """(url, token) of the deck's print server (`mabel-os print-server`, tui-rs/src/printserver.rs), or ("", "") to print directly."""
     return str(_setting("printer_server_url", "") or "").rstrip("/"), str(_setting("printer_server_token", "") or "")
 
 

@@ -149,5 +149,3 @@ _scratch/
 # Machine-specific Syncthing runtime metadata is never committed.
 /.stfolder
 /.stversions/
-# …and MABEL-OS assets (her avatar strips; PIXEL :avatar writes them)
-!tui/mabel_tui/assets/**/*.png
