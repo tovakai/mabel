@@ -11,19 +11,23 @@ use mabel_media::tracker::{self, Song};
 use mabel_media::tracksynth::{Engine, Midi, Output, Source};
 
 /// At most this many sound effects at once; a new one replaces the oldest.
+/// Sound effects at once (a fifth replaces the oldest), and samples per block sent to the player.
 const MAX_SFX: usize = 4;
 const BLOCK: usize = 512;
 
+/// One sound effect: a phrase playing once.
 struct Sfx {
     engine: Engine,
     /// Samples of release tail left once the phrase came round.
     tail: Option<usize>,
 }
 
+/// Mixes the music and the effects into one stream (what the player thread reads).
 pub struct Mixer {
     sr: u32,
     music: Option<Engine>,
     sfx: Vec<Sfx>,
+    /// Silent while the tape is paused.
     pub paused: bool,
 }
 
@@ -66,6 +70,7 @@ impl Source for Mixer {
     }
 }
 
+/// A tape's sound: the mixer, the player, and the songs it has loaded.
 pub struct Sound {
     root: PathBuf,
     mix: Arc<Mutex<Mixer>>,
@@ -80,6 +85,7 @@ impl Sound {
         Sound { root: root.to_path_buf(), mix: Arc::new(Mutex::new(mix)), out: None, songs: HashMap::new() }
     }
 
+    /// `music/<name>.mtk`, loaded once and kept.
     fn song(&mut self, name: &str) -> Result<Song, String> {
         if let Some(s) = self.songs.get(name) {
             return Ok(s.clone());
@@ -93,6 +99,7 @@ impl Sound {
         Ok(song)
     }
 
+    /// The sample rate.
     fn sr(&self) -> u32 {
         self.mix.lock().map(|m| m.sr).unwrap_or(44100)
     }
@@ -117,6 +124,7 @@ impl Sound {
         Ok(())
     }
 
+    /// Stop the music (its notes fade out as they're released).
     pub fn music_stop(&mut self) {
         if let Ok(mut m) = self.mix.lock()
             && let Some(e) = &mut m.music

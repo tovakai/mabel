@@ -15,6 +15,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::os::keys;
 
 #[derive(Debug, PartialEq, Eq)]
+/// What a key did: edited the text, pressed enter, or wasn't for the input.
 pub enum InputResult {
     Used,
     Submit,
@@ -34,25 +35,31 @@ pub struct Input {
 }
 
 impl Input {
+    /// An empty input showing `placeholder` until something is typed.
     pub fn new(placeholder: &str) -> Self {
         Input { placeholder: placeholder.into(), ..Default::default() }
     }
 
+    /// Empty it.
     pub fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;
         self.offset = 0;
     }
 
+    /// Replace the text, cursor at the end.
     pub fn set(&mut self, value: &str) {
         self.value = value.into();
         self.cursor = self.value.chars().count();
     }
 
+    /// Where character `char_index` starts in the string's bytes (Rust strings are UTF-8,
+    /// so å or ⏎ take more than one byte).
     fn byte(&self, char_index: usize) -> usize {
         self.value.char_indices().nth(char_index).map_or(self.value.len(), |(i, _)| i)
     }
 
+    /// Insert text at the cursor (newlines become spaces).
     pub fn insert(&mut self, text: &str) {
         let at = self.byte(self.cursor);
         // A paste with newlines becomes one line.
@@ -61,12 +68,14 @@ impl Input {
         self.cursor += clean.chars().count();
     }
 
+    /// Delete characters `from..to`.
     fn delete_range(&mut self, from: usize, to: usize) {
         let (a, b) = (self.byte(from), self.byte(to));
         self.value.replace_range(a..b, "");
         self.cursor = from;
     }
 
+    /// A key: typing, arrows, backspace, and the shell's ctrl+a/e/u/k/w.
     pub fn key(&mut self, key: &KeyEvent) -> InputResult {
         let len = self.value.chars().count();
         if keys::ctrl(key, 'a') {

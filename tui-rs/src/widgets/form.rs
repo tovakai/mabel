@@ -19,22 +19,27 @@ use crate::widgets::popup::{Answer, frame_box};
 
 const BREAK: &str = " ⏎ ";
 
+/// What a field holds: one line, one of a few choices, or multi-line text.
 pub enum Kind {
     Line,
+    /// ← → or space step through the options.
     Choice(Vec<String>),
     /// Multi-line text, edited on one line.
     Text,
 }
 
+/// One field: its key in the answer, its label, and what's in it.
 pub struct Field {
     pub key: String,
     label: String,
     kind: Kind,
+    /// The text (Line and Text), or the option picked (Choice).
     input: Input,
     choice: usize,
 }
 
 impl Field {
+    /// A field filled with `value` (newlines shown as ⏎ in Text fields).
     pub fn new(key: &str, label: &str, value: &str, kind: Kind) -> Self {
         let mut input = Input::default();
         let mut choice = 0;
@@ -46,6 +51,7 @@ impl Field {
         Field { key: key.into(), label: label.into(), kind, input, choice }
     }
 
+    /// What it holds now (⏎ back to newlines).
     fn value(&self) -> String {
         match &self.kind {
             Kind::Choice(options) => options.get(self.choice).cloned().unwrap_or_default(),
@@ -55,22 +61,28 @@ impl Field {
     }
 }
 
+/// A popup of fields (INVENTORY's edit, move, check out). Answers with (key, value) pairs.
 pub struct Form {
     title: String,
     fields: Vec<Field>,
+    /// The field being edited, and how far the list is scrolled.
     at: usize,
     scroll: usize,
 }
 
 impl Form {
+    /// A form on its first field.
     pub fn new(title: &str, fields: Vec<Field>) -> Self {
         Form { title: title.into(), fields, at: 0, scroll: 0 }
     }
 
+    /// The answer: every field's key and value.
     fn done(&self) -> Answer<Vec<(String, String)>> {
         Answer::Chosen(self.fields.iter().map(|f| (f.key.clone(), f.value())).collect())
     }
 
+    /// tab/↓ and shift+tab/↑ move between fields, enter moves on (and submits on the last),
+    /// ctrl+s submits, esc cancels; other keys edit the field.
     pub fn key(&mut self, key: &KeyEvent) -> Answer<Vec<(String, String)>> {
         let n = self.fields.len();
         if keys::ctrl(key, 's') {
@@ -106,12 +118,14 @@ impl Form {
         Answer::Open
     }
 
+    /// Paste into the field being edited.
     pub fn paste(&mut self, text: &str) {
         if let Some(f) = self.fields.get_mut(self.at) {
             f.input.insert(&text.replace('\n', BREAK));
         }
     }
 
+    /// Draw it as a centred popup.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, pal: &Palette) {
         let want = self.fields.len() as u16 * 2 + 2;
         let inner =

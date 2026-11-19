@@ -32,6 +32,7 @@ pub type Rgb = u32;
 /// In pictures passed to `blit` and in sprites: a see-through pixel.
 pub const TRANSPARENT: Rgb = 0xff00_0000;
 
+/// Is this colour see-through (anything in the top byte)?
 fn see_through(c: Rgb) -> bool {
     c >> 24 != 0
 }
@@ -44,6 +45,7 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// A black screen `w`×`h` pixels.
     pub fn new(w: usize, h: usize) -> Self {
         Frame { w, h, px: vec![0; w * h] }
     }
@@ -60,10 +62,12 @@ impl Frame {
         }
     }
 
+    /// Fill the screen with one colour.
     pub fn cls(&mut self, c: Rgb) {
         self.px.fill(c);
     }
 
+    /// Set one pixel (off the screen: nothing happens).
     pub fn pset(&mut self, x: i32, y: i32, c: Rgb) {
         if x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h {
             self.px[y as usize * self.w + x as usize] = c;
@@ -135,6 +139,7 @@ impl Frame {
         self.circle(cx, cy, r, c, true);
     }
 
+    /// A circle, outline or filled (the midpoint algorithm: integers only).
     fn circle(&mut self, cx: i32, cy: i32, r: i32, c: Rgb, fill: bool) {
         if r < 0 {
             return;
@@ -266,6 +271,7 @@ pub fn place(screen: tapefile::Screen, body: Rect) -> Placement {
     Placement { w, h, scale, cells }
 }
 
+/// A 0xRRGGBB colour as a terminal colour.
 fn color(c: Rgb) -> Color {
     Color::Rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }

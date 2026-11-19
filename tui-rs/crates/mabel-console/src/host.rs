@@ -58,11 +58,13 @@ pub struct Host {
 }
 
 impl Host {
+    /// The tape's saves (opened on first use).
     fn saves(&mut self) -> &mut Saves {
         let key = &self.save_key;
         self.saves.get_or_insert_with(|| Saves::open(key))
     }
 
+    /// A line for the tape's log (`log()` in kit), keeping the last `LOG_KEEP`.
     fn note(&mut self, line: String) {
         self.log.push(line);
         if self.log.len() > LOG_KEEP {
@@ -70,6 +72,7 @@ impl Host {
         }
     }
 
+    /// The tape's sound (made on first use, so silent tapes never start a player).
     fn sound(&mut self) -> &mut Sound {
         let (root, rate) = (&self.root, self.rate);
         self.sound.get_or_insert_with(|| Sound::new(root, rate))
@@ -114,6 +117,7 @@ pub struct Tape {
     draw: TypedFunc<(), ()>,
 }
 
+/// Any error as text (the host reports errors as strings).
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -132,6 +136,7 @@ macro_rules! wrap {
     };
 }
 
+/// Offer the tape every `mabel` import kit calls: drawing, text, input, sound, saves, time.
 fn link(linker: &mut Linker<Host>) -> Result<(), String> {
     // ── drawing ──
     wrap!(linker, "cls", |mut c: Caller<'_, Host>, col: u32| c.data_mut().frame.cls(col));
@@ -318,14 +323,17 @@ impl Tape {
         out.map_err(|e| self.explain(e))
     }
 
+    /// The picture the tape drew this frame.
     pub fn frame(&self) -> &Frame {
         &self.store.data().frame
     }
 
+    /// The text it printed this frame (drawn as real terminal text over the picture).
     pub fn texts(&self) -> &[Text] {
         &self.store.data().texts
     }
 
+    /// The buttons, for the runner to press and release.
     pub fn buttons(&mut self) -> &mut Buttons {
         &mut self.store.data_mut().buttons
     }
